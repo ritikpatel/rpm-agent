@@ -115,6 +115,9 @@ class Simulator:
                 dev.gen.manual_every_s = 300  # patient is prompted for extra home readings
         log.info("scenario started", extra={"device_id": dev.device_id, "patient_id": dev.member.patient_id,
                                             "scenario": name, "duration_s": dev.scenario.duration_s})
+        if spec.emit_event:  # a button press / fall is published immediately, not on the next telemetry tick
+            dev.scenario.event_emitted = True
+            self._event(dev, spec.emit_event, {"trigger": "simulated", "scenario": spec.name})
         return True
 
     def clear_scenario(self, target: str) -> None:

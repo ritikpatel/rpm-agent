@@ -3,7 +3,7 @@ COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 P ?= p-90000001
 S ?= sepsis
 
-.PHONY: help setup test lint up seed sim sim-auto down reset logs ps scenario clear scenarios cohort board stats
+.PHONY: help setup test lint models up seed sim sim-auto down reset logs ps scenario clear scenarios cohort board stats
 
 help:            ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -17,12 +17,19 @@ test:            ## run unit + contract tests
 lint:            ## ruff lint
 	uv run ruff check .
 
-up:              ## start infra + platform services (local stack)
-	$(COMPOSE) up -d --build postgres redis mosquitto kinesis sqs fhir db-migrate iot-bridge stream-engine api
-	@echo "live board: http://localhost:8000   FHIR: http://localhost:8080/fhir   metrics: :9101/metrics"
+models:          ## train/export the baseline risk models into models/registry (data team replaces these)
+	uv run --group train python models/train_baselines.py
 
-seed:            ## load the cohort into FHIR + seed the device registry (RPM_DEMO_PATIENT=auto to reserve one for the watch)
+up:              ## start infra + platform services (local stack); LLM: RPM_LLM_PROVIDER=offline|anthropic|bedrock
+	@test -d models/registry || $(MAKE) models
+	$(COMPOSE) up -d --build postgres redis mosquitto kinesis sqs fhir mailpit db-migrate iot-bridge stream-engine \
+	  model-serving alert-service agent-service api console
+	@echo "tip: agents run offline (rules + templates) unless RPM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY) or bedrock"
+	@echo "console: http://localhost:3000   live board: http://localhost:8000   email: http://localhost:8025   FHIR: http://localhost:8080/fhir"
+
+seed:            ## FHIR + device registry + RAG index (RPM_DEMO_PATIENT=auto reserves one patient for the watch)
 	$(COMPOSE) --profile seed run --rm --build fhir-loader
+	$(COMPOSE) --profile seed run --rm --build rag-index
 
 sim:             ## start the 150-patient device fleet simulator
 	$(COMPOSE) --profile sim up -d --build simulator
@@ -46,7 +53,7 @@ stats:           ## pipeline stats (latency, bands, events)
 	@curl -s localhost:8000/api/stats | python3 -m json.tool
 
 logs:            ## follow platform logs
-	$(COMPOSE) --profile sim logs -f --tail=50 iot-bridge stream-engine api simulator
+	$(COMPOSE) --profile sim logs -f --tail=50 stream-engine alert-service agent-service api simulator
 
 ps:
 	$(COMPOSE) --profile sim --profile seed ps
@@ -70,8 +77,8 @@ cloud-down:      ## destroy the AWS environment (stops hourly charges)
 cloud-status:    ## pods and recent events in the cluster
 	kubectl -n rpm get pods,svc,jobs && kubectl -n rpm get events --sort-by=.lastTimestamp | tail -15
 
-cloud-board:     ## port-forward the live board to http://localhost:8000
-	kubectl -n rpm port-forward svc/api 8000:80
+cloud-board:     ## port-forward the clinician console to http://localhost:3000
+	kubectl -n rpm port-forward svc/console 3000:80
 
 cloud-scenario:  ## inject a scenario on AWS via IoT Core: make cloud-scenario P=p-90000001 S=sepsis [RAMP=90]
 	aws iot-data publish --topic rpm/v1/sim/control --cli-binary-format raw-in-base64-out \

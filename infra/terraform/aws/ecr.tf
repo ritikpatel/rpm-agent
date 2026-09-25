@@ -1,5 +1,6 @@
 locals {
-  images = ["stream-engine", "api", "simulator", "fhir-loader", "db-migrate"]
+  images = ["stream-engine", "api", "simulator", "fhir-loader", "db-migrate", "model-serving", "alert-service",
+  "agent-service", "rag", "console"]
 }
 
 resource "aws_ecr_repository" "img" {

@@ -46,19 +46,27 @@ step "3/7 kubeconfig"
 aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" --alias "rpm-${ENVIRONMENT}" >/dev/null
 kubectl get nodes -o wide
 
-step "4/7 dataset -> s3://${DATA_BUCKET}/mimic (SSE-KMS, TLS-only bucket)"
+step "4/7 dataset, model packages, knowledge corpus -> s3://${DATA_BUCKET} (SSE-KMS, TLS-only bucket)"
+[[ -d "$ROOT/models/registry" ]] || (cd "$ROOT" && uv run --group train python models/train_baselines.py)
 aws s3 sync "$ROOT/synthetic_mimic_150patients" "s3://${DATA_BUCKET}/mimic/" --only-show-errors
+aws s3 sync "$ROOT/models/registry" "s3://${DATA_BUCKET}/models/" --only-show-errors
+aws s3 sync "$ROOT/knowledge" "s3://${DATA_BUCKET}/knowledge/" --only-show-errors
 
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   step "5/7 build + push images (linux/arm64 for Graviton nodes) -> ${REGISTRY}"
   aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY" >/dev/null
-  for pair in stream-engine:stream-engine rpm-api:api rpm-simulator:simulator fhir-loader:fhir-loader rpm-common:db-migrate; do
+  for pair in stream-engine:stream-engine rpm-api:api rpm-simulator:simulator fhir-loader:fhir-loader \
+              rpm-common:db-migrate model-serving:model-serving alert-service:alert-service \
+              agent-service:agent-service rpm-rag:rag; do
     pkg="${pair%%:*}"; repo="${pair##*:}"
     docker build -q --platform linux/arm64 -f "$ROOT/deploy/docker/python-service.Dockerfile" \
       --build-arg PACKAGE="$pkg" -t "${REGISTRY}/rpm/${repo}:${TAG}" "$ROOT" >/dev/null
     docker push -q "${REGISTRY}/rpm/${repo}:${TAG}" >/dev/null
     echo "pushed rpm/${repo}:${TAG}"
   done
+  docker build -q --platform linux/arm64 -f "$ROOT/deploy/docker/console.Dockerfile" \
+    -t "${REGISTRY}/rpm/console:${TAG}" "$ROOT" >/dev/null
+  docker push -q "${REGISTRY}/rpm/console:${TAG}" >/dev/null && echo "pushed rpm/console:${TAG}"
 fi
 
 step "6/7 namespace, database secret, device certificates"
@@ -86,13 +94,19 @@ step "7/7 helm release (migrations -> services -> FHIR load)"
 helm upgrade --install rpm "$ROOT/deploy/helm/rpm" -n "$NS" --wait --timeout 25m \
   --set image.registry="$REGISTRY" --set image.tag="$TAG" --set aws.region="$REGION" \
   --set config.redisUrl="$(out redis_url)" --set config.mimicDir="s3://${DATA_BUCKET}/mimic" \
-  --set simulator.mqttHost="$IOT_ENDPOINT"
+  --set config.iotEndpoint="$IOT_ENDPOINT" --set simulator.mqttHost="$IOT_ENDPOINT" \
+  --set modelServing.registry="s3://${DATA_BUCKET}/models" \
+  --set ragIndex.protocols="s3://${DATA_BUCKET}/knowledge/protocols" \
+  --set alertService.emailSender="$(out alert_sender_email)" \
+  --set alertService.escalationTimeoutScale="${ESCALATION_TIMEOUT_SCALE:-0.2}" \
+  --set agentService.llmProvider="${LLM_PROVIDER:-bedrock}" \
+  ${HELM_EXTRA_ARGS:-}
 kubectl -n "$NS" get pods
 
 cat <<MSG
 
 AWS demo environment is up.
-  live board:  kubectl -n ${NS} port-forward svc/api 8000:80   ->  http://localhost:8000
+  console:     make cloud-board   ->  http://localhost:3000   (ops live board: kubectl -n ${NS} port-forward svc/api 8000:80)
   scenario:    make cloud-scenario P=p-90000001 S=sepsis
   tear down:   make cloud-down   (stops all hourly charges except the few-cent state bucket)
 MSG

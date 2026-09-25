@@ -13,10 +13,16 @@ dependencies = [
     "stream-engine",
     "fhir-loader",
     "rpm-api",
+    "rpm-alerts",
+    "alert-service",
+    "model-serving",
+    "rpm-rag",
+    "agent-service",
 ]
 
 [dependency-groups]
 dev = ["pytest>=8.3", "jsonschema>=4.23", "ruff>=0.6", "httpx>=0.27"]
+train = ["scikit-learn>=1.5", "skl2onnx>=1.17", "numpy>=1.26", "onnxruntime>=1.19"]
 
 [tool.uv]
 package = false
@@ -34,6 +40,11 @@ iot-bridge = { workspace = true }
 stream-engine = { workspace = true }
 fhir-loader = { workspace = true }
 rpm-api = { workspace = true }
+rpm-alerts = { workspace = true }
+alert-service = { workspace = true }
+model-serving = { workspace = true }
+rpm-rag = { workspace = true }
+agent-service = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["libs", "services", "simulator", "contracts"]
@@ -49,4 +60,4 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["rpm_contracts", "rpm_features", "rpm_mimic", "rpm_common", "rpm_simulator", "stream_engine",
-                     "fhir_loader", "iot_bridge", "rpm_api"]
+                     "fhir_loader", "iot_bridge", "rpm_api", "rpm_alerts", "alert_service", "model_serving", "rpm_rag", "agent_service"]

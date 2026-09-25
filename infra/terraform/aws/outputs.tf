@@ -83,3 +83,7 @@ output "sim_private_key" {
   value     = aws_iot_certificate.sim_fleet.private_key
   sensitive = true
 }
+
+output "alert_sender_email" {
+  value = var.alert_sender_email
+}

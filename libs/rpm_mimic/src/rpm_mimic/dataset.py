@@ -76,6 +76,13 @@ class MimicDataset:
             out[r["stay_id"]].append(r)
         return out
 
+    @cached_property
+    def drg_by_hadm(self) -> dict[str, list[dict[str, str]]]:
+        out: dict[str, list[dict[str, str]]] = defaultdict(list)
+        for r in self._read("drgcodes"):
+            out[r["hadm_id"]].append(r)
+        return out
+
     def table(self, name: str) -> list[dict[str, str]]:
         return self._read(name)
 

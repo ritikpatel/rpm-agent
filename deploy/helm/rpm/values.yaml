@@ -17,6 +17,9 @@ config:
   mimicDir: ""            # s3://<data-bucket>/mimic
   demoPatient: auto       # patient handed to the real Galaxy Watch (gw-demo-01)
   demoDevice: gw-demo-01
+  embeddings: titan       # titan | hash (must match between rag-index and agent-service)
+  iotEndpoint: ""         # AWS IoT Core ATS endpoint (device commands via the IoT data plane)
+  demoControls: true      # presenter scenario controls in the console
 
 secrets:
   db: rpm-db              # DATABASE_URL, JDBC_URL, DB_USER, DB_PASSWORD (created by cloud-up.sh)
@@ -64,6 +67,49 @@ fhir:
 fhirLoader:
   enabled: true
   workers: 3
+
+modelServing:
+  enabled: true
+  registry: ""            # s3://<data-bucket>/models
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+
+alertService:
+  enabled: true
+  escalationTimeoutScale: "1.0"   # 0.2 in demos: 5-minute tiers become 1 minute
+  emailBackend: ses               # ses | log
+  emailSender: ""                 # verified SES identity; empty -> log backend
+  smsBackend: log                 # sns | log (SMS needs an SNS origination setup outside the sandbox)
+  consoleUrl: "http://localhost:3000"
+  careTeam: |
+    nurse:     {name: On-call RPM nurse,   email: nurse@example.com,     phone: "+10000000001"}
+    physician: {name: On-call physician,   email: physician@example.com, phone: "+10000000002"}
+    emergency: {name: Rapid response team, email: rrt@example.com,       phone: "+10000000003", webhook: ""}
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+
+agentService:
+  enabled: true
+  llmProvider: bedrock            # bedrock | anthropic | offline
+  llmModel: claude-opus-5
+  effortAssess: medium
+  effortBrief: medium
+  workers: 4
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+
+ragIndex:
+  enabled: true
+  protocols: ""                   # s3://<data-bucket>/knowledge/protocols
+
+console:
+  enabled: true
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
 
 simulator:
   enabled: true

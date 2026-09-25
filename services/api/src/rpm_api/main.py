@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from importlib import resources
 from typing import Annotated
 
+import redis
 import redis.asyncio as aioredis
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -17,9 +18,13 @@ from fastapi.responses import HTMLResponse
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from rpm_alerts import AlertStore, EscalationPolicy
 from rpm_common.db import make_pool, wait_for_db
+from rpm_common.devices import DeviceCommander
 from rpm_common.logging import setup_logging
 from rpm_common.settings import BaseServiceSettings
+
+from . import clinical
 
 log = logging.getLogger("rpm_api")
 LIVE_CHANNEL = "rpm:live"
@@ -29,6 +34,13 @@ class ApiSettings(BaseServiceSettings):
     service_name: str = "api"
     host: str = "0.0.0.0"
     port: int = 8000
+    model_serving_url: str | None = "http://localhost:8001"
+    device_command_mode: str = "mqtt"
+    mqtt_host: str = "localhost"
+    mqtt_port: int = 1883
+    iot_endpoint: str | None = None
+    demo_controls: bool = True     # presenter scenario controls; disable outside demos
+    console_dir: str | None = None  # built clinician console (served at /console)
 
 
 settings = ApiSettings()
@@ -41,12 +53,20 @@ async def lifespan(_app: FastAPI):
     wait_for_db(settings.database_url)
     state["pool"] = make_pool(settings.database_url, max_size=10)
     state["redis"] = aioredis.from_url(settings.redis_url)
+    clinical.STATE.update(
+        pool=state["pool"], store=AlertStore(state["pool"], EscalationPolicy.load()),
+        redis=redis.Redis.from_url(settings.redis_url), settings=settings,
+        commander=DeviceCommander(mode=settings.device_command_mode, region=settings.aws_region,
+                                  iot_endpoint=settings.iot_endpoint, mqtt_host=settings.mqtt_host,
+                                  mqtt_port=settings.mqtt_port),
+        models=clinical.load_models(settings.model_serving_url))
     yield
     state["pool"].close()
     await state["redis"].aclose()
 
 
-app = FastAPI(title="RPM Platform API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="RPM Platform API", version="0.2.0", lifespan=lifespan)
+app.include_router(clinical.router)
 
 
 def _query(sql: str, params: tuple | dict = ()) -> list[dict]:

@@ -76,6 +76,11 @@ services:
     ports: ["${RPM_FHIR_PORT:-8080}:8080"]
     mem_limit: 1300m
 
+  mailpit:  # local SMTP sink: escalation emails are viewable at http://localhost:8025 (SES on AWS)
+    image: axllent/mailpit:v1.31
+    ports: ["${RPM_MAILPIT_UI_PORT:-8025}:8025", "1025:1025"]
+    mem_limit: 128m
+
   # ------------------------------------------------------------------ platform services
   db-migrate:
     build: { <<: *build, args: { PACKAGE: rpm-common } }
@@ -113,13 +118,77 @@ services:
     build: { <<: *build, args: { PACKAGE: rpm-api } }
     image: rpm/api:dev
     command: ["rpm-api"]
-    environment: *env
+    environment:
+      <<: *env
+      RPM_MODEL_SERVING_URL: http://model-serving:8001
+      RPM_MQTT_HOST: mosquitto
     ports: ["${RPM_API_PORT:-8000}:8000"]
     depends_on:
       db-migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     restart: unless-stopped
     mem_limit: 256m
+
+  model-serving:
+    build: { <<: *build, args: { PACKAGE: model-serving } }
+    image: rpm/model-serving:dev
+    command: ["model-serving"]
+    environment: { <<: *env, RPM_MODEL_REGISTRY: /models }
+    volumes: ["../../models/registry:/models:ro"]
+    ports: ["8001:8001"]
+    depends_on: { db-migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+    mem_limit: 384m
+
+  alert-service:
+    build: { <<: *build, args: { PACKAGE: alert-service } }
+    image: rpm/alert-service:dev
+    command: ["alert-service"]
+    environment:
+      <<: *env
+      RPM_METRICS_PORT: "9103"
+      RPM_EMAIL_BACKEND: smtp
+      RPM_SMTP_HOST: mailpit
+      RPM_SMTP_PORT: "1025"
+      RPM_SMS_BACKEND: log
+      RPM_MQTT_HOST: mosquitto
+      RPM_CONSOLE_URL: http://localhost:3000
+      RPM_ESCALATION_TIMEOUT_SCALE: "${RPM_ESCALATION_TIMEOUT_SCALE:-0.2}"   # demo: 5 min -> 1 min
+    ports: ["9103:9103"]
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      sqs: { condition: service_started }
+      mailpit: { condition: service_started }
+    restart: unless-stopped
+    mem_limit: 192m
+
+  agent-service:
+    build: { <<: *build, args: { PACKAGE: agent-service } }
+    image: rpm/agent-service:dev
+    command: ["agent-service"]
+    environment:
+      <<: *env
+      RPM_METRICS_PORT: "9104"
+      RPM_LLM_PROVIDER: "${RPM_LLM_PROVIDER:-offline}"      # offline | anthropic | bedrock
+      RPM_LLM_MODEL: "${RPM_LLM_MODEL:-claude-opus-5}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      RPM_MODEL_SERVING_URL: http://model-serving:8001
+      RPM_MQTT_HOST: mosquitto
+    ports: ["9104:9104"]
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      model-serving: { condition: service_started }
+      sqs: { condition: service_started }
+    restart: unless-stopped
+    mem_limit: 384m
+
+  console:
+    build: { context: ../.., dockerfile: deploy/docker/console.Dockerfile }
+    image: rpm/console:dev
+    ports: ["${RPM_CONSOLE_PORT:-3000}:8080"]
+    depends_on: [api]
+    restart: unless-stopped
+    mem_limit: 64m
 
   # ------------------------------------------------------------------ one-shots / tools (profiles)
   fhir-loader:
@@ -129,6 +198,16 @@ services:
     command: ["fhir-loader", "all"]
     environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_DEMO_PATIENT: "${RPM_DEMO_PATIENT:-}" }
     volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
+    depends_on: { db-migrate: { condition: service_completed_successfully } }
+    restart: "no"
+
+  rag-index:
+    profiles: ["seed"]
+    build: { <<: *build, args: { PACKAGE: rpm-rag } }
+    image: rpm/rag:dev
+    command: ["rpm-rag", "index"]
+    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_PROTOCOLS_DIR: /knowledge/protocols }
+    volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro", "../../knowledge:/knowledge:ro"]
     depends_on: { db-migrate: { condition: service_completed_successfully } }
     restart: "no"
 

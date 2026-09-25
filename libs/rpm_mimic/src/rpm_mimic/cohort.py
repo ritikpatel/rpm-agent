@@ -56,6 +56,10 @@ class CohortMember:
     replay_start_h: float
     hypercapnic: bool
     baseline: dict[str, float] = field(default_factory=dict)
+    los_days: float = 0.0
+    prior_admissions_12m: int = 0
+    drg_severity: int | None = None
+    discharge_disposition: str | None = None
 
     def shift(self, ts: datetime | None) -> datetime | None:
         return None if ts is None else ts + self.time_shift
@@ -106,6 +110,17 @@ def _name(seed: str, sid: str, sex: str) -> str:
     return f"{firsts[int(_h(seed, sid + 'f') * len(firsts))]} {_LAST[int(_h(seed, sid + 'l') * len(_LAST))]}"
 
 
+def prior_admissions(adms: list[dict], index: dict, days: int = 365) -> int:
+    t = parse_ts(index["admittime"])
+    return sum(1 for a in adms if a is not index and a["hadm_id"] != index["hadm_id"]
+               and parse_ts(a["admittime"]) < t and (t - parse_ts(a["admittime"])).days <= days)
+
+
+def drg_severity(ds: MimicDataset, hadm_id: str) -> int | None:
+    sev = [int(r["drg_severity"]) for r in ds.drg_by_hadm.get(hadm_id, []) if r.get("drg_severity")]
+    return max(sev) if sev else None
+
+
 def build_cohort(ds: MimicDataset, anchor: datetime, icu_count: int = 25, seed: str = "rpm-v1") -> list[CohortMember]:
     index_adm = {sid: adms[-1] for sid, adms in ds.admissions_by_subject.items() if sid in ds.patients}
     died = {sid for sid, a in index_adm.items() if a.get("hospital_expire_flag") == "1"}
@@ -149,6 +164,10 @@ def build_cohort(ds: MimicDataset, anchor: datetime, icu_count: int = 25, seed: 
             replay_start_h=ICU_REPLAY_START_H,
             hypercapnic=condition == "COPD",
             baseline=home_baseline(series, condition),
+            los_days=float(adm.get("length_of_stay_days") or 0),
+            prior_admissions_12m=prior_admissions(ds.admissions_by_subject[sid], adm),
+            drg_severity=drg_severity(ds, adm["hadm_id"]),
+            discharge_disposition=None if setting == "icu" else adm.get("discharge_location"),
         ))
     return members
 

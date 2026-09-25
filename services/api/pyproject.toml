@@ -3,7 +3,8 @@ name = "rpm-api"
 version = "0.1.0"
 description = "Backend-for-frontend: REST + WebSocket live feed for the clinician console and patient app"
 requires-python = ">=3.12"
-dependencies = ["rpm-common", "rpm-contracts", "fastapi>=0.115", "uvicorn[standard]>=0.30"]
+dependencies = ["rpm-common", "rpm-contracts", "rpm-alerts", "fastapi>=0.115", "uvicorn[standard]>=0.30",
+                "httpx>=0.27"]
 
 [project.scripts]
 rpm-api = "rpm_api.main:main"
@@ -11,6 +12,7 @@ rpm-api = "rpm_api.main:main"
 [tool.uv.sources]
 rpm-common = { workspace = true }
 rpm-contracts = { workspace = true }
+rpm-alerts = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

@@ -11,6 +11,9 @@ data "aws_iam_policy_document" "pod_trust" {
 
 locals {
   kms_use = { Effect = "Allow", Action = ["kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.main.arn }
+  titan_invoke = { Effect = "Allow", Action = ["bedrock:InvokeModel"],
+  Resource = "arn:${local.partition}:bedrock:${var.region}::foundation-model/amazon.titan-embed-text-v2:0" }
+  cmd_publish = { Effect = "Allow", Action = ["iot:Publish"], Resource = "${local.iot_arn}:topic/rpm/v1/dev/*/cmd" }
   data_read = [
     { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.data.arn },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.data.arn}/*" },
@@ -23,8 +26,21 @@ locals {
       Resource = [for q in aws_sqs_queue.q : q.arn] },
       local.kms_use,
     ]
-    "simulator"   = concat(local.data_read, [local.kms_use])
-    "fhir-loader" = concat(local.data_read, [local.kms_use])
+    "simulator"     = concat(local.data_read, [local.kms_use])
+    "fhir-loader"   = concat(local.data_read, [local.kms_use])
+    "model-serving" = concat(local.data_read, [local.kms_use])
+    "rag-index"     = concat(local.data_read, [local.kms_use, local.titan_invoke])
+    "agent-service" = concat([local.kms_use, local.titan_invoke, local.cmd_publish,
+      { Effect = "Allow", Action = ["bedrock-mantle:CreateInference"], Resource = "*" },
+      { Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility",
+      "sqs:GetQueueUrl"], Resource = aws_sqs_queue.q["rpm-clinical-events"].arn },
+    ])
+    "alert-service" = [local.kms_use, local.cmd_publish,
+      { Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility",
+      "sqs:GetQueueUrl"], Resource = aws_sqs_queue.q["rpm-alert-intake"].arn },
+      { Effect = "Allow", Action = ["ses:SendEmail"], Resource = "*" },
+      { Effect = "Allow", Action = ["sns:Publish"], Resource = "*" }, # SMS to phone numbers (no topic ARN)
+    ]
     "api" = [
       # cloud -> device commands (used from week 2 by the agents / console)
       { Effect = "Allow", Action = ["iot:Publish"], Resource = "${local.iot_arn}:topic/rpm/v1/dev/*/cmd" },

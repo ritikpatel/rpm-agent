@@ -1,0 +1,18 @@
+[project]
+name = "model-serving"
+version = "0.1.0"
+description = "Risk model serving: ONNX packages + shared feature builders + occlusion explanations + FHIR RiskAssessment"
+requires-python = ">=3.12"
+dependencies = ["rpm-common", "rpm-features", "onnxruntime>=1.19", "numpy>=1.26", "fastapi>=0.115",
+                "uvicorn[standard]>=0.30", "httpx>=0.27"]
+
+[project.scripts]
+model-serving = "model_serving.main:main"
+
+[tool.uv.sources]
+rpm-common = { workspace = true }
+rpm-features = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

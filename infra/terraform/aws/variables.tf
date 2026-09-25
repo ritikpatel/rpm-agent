@@ -72,3 +72,9 @@ variable "budget_email" {
   type        = string
   default     = ""
 }
+
+variable "alert_sender_email" {
+  description = "SES sender identity for escalation emails (verify it from the SES email; sandbox also needs verified recipients). Empty = email via log only."
+  type        = string
+  default     = ""
+}

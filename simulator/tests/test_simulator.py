@@ -96,3 +96,12 @@ def test_control_topic_starts_scenario(cohort_and_series):
     sim.on_message("rpm/v1/sim/control",
                    json.dumps({"action": "scenario", "target": "p-90000001", "scenario": "sepsis"}).encode())
     assert sim.resolve("p-90000001").scenario.spec.name == "sepsis"
+
+
+def test_sos_is_emitted_immediately_even_if_next_tick_is_late(cohort_and_series):
+    sim, sent = make_sim(cohort_and_series)
+    dev = next(d for d in sim.devices.values() if d.context == "home")
+    dev.next_due = time.monotonic() + 3600
+    assert sim.start_scenario(dev.device_id, "sos")
+    events = [DeviceEvent.model_validate_json(p) for t, p in sent if t.endswith("/events")]
+    assert [e.type for e in events] == ["SOS"]

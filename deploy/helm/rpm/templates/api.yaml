@@ -18,7 +18,9 @@ spec:
           image: {{ include "rpm.image" (list . "api") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["rpm-api"]
-          env: {{- include "rpm.env" . | nindent 12 }}
+          env:
+            {{- include "rpm.env" . | nindent 12 }}
+            - { name: RPM_DEMO_CONTROLS, value: {{ .Values.config.demoControls | quote }} }
           ports: [{ name: http, containerPort: 8000 }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20, failureThreshold: 3 }

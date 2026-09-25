@@ -46,3 +46,6 @@ edge/**/build/
 
 # --- local device certificates written by cloud-up.sh
 .secrets/
+
+# --- trained model packages (derived from the confidential dataset; publish to S3, not git)
+models/registry/

@@ -1,0 +1,34 @@
+{{- if .Values.ragIndex.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rag-index
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels: { app: rag-index }
+    spec:
+      serviceAccountName: rag-index
+      restartPolicy: OnFailure
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: index
+          image: {{ include "rpm.image" (list . "rag") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["rpm-rag", "index"]
+          env:
+            {{- include "rpm.env" . | nindent 12 }}
+            - { name: RPM_MIMIC_DIR, value: {{ .Values.config.mimicDir | quote }} }
+            - { name: RPM_PROTOCOLS_DIR, value: {{ .Values.ragIndex.protocols | quote }} }
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 768Mi } }
+      volumes: [{ name: tmp, emptyDir: {} }]
+{{- end }}

@@ -1,7 +1,7 @@
 # Agentic AI Remote Patient Monitoring — Build Plan
 
 Client brief: *An Agentic AI Platform for Remote Patient Monitoring in ICU and Post-Discharge Care* (Cloud Box Technologies, AMPBA capstone).
-Status: **approved** · Week 1 delivered locally (2026-09-25) · see §16 for progress
+Status: **approved** · Weeks 1-2 delivered locally (2026-09-25) · see §16 for progress
 
 ---
 
@@ -248,3 +248,27 @@ docs/                 PLAN, HLD, ADRs, compliance, runbook, demo script
 - Local emulators are Mosquitto + rule emulator, kinesis-mock and ElasticMQ (not LocalStack) — ADR 0003.
 - Graviton (arm64) nodes — ADR 0006.
 - Telemetry metric names: `resp_rate`, `sbp`, `dbp`, `temp`, `gcs` (see `contracts/`).
+
+### Week 2 — delivered (2026-09-25)
+- [x] Alert lifecycle on Postgres: exactly-once intake, one active alert per patient, severity-driven re-paging,
+      timed escalation nurse → physician → rapid response, reminders, transactional notification outbox (ADR 0008)
+- [x] Channels: console (live), email (Mailpit locally / SES), SMS (log / SNS), watch NOTIFY, webhook, with
+      minimum-necessary PHI in messages and sensor → hand-off latency per notification
+- [x] Model serving: ONNX package contract, occlusion explanations, FHIR RiskAssessment, `validated` flag;
+      baselines trained honestly (readmission AUROC 0.39, ICU mortality 0.65: not validated) (ADR 0009)
+- [x] RAG: 10 demo protocols + 150 deterministic discharge/ICU summaries (FHIR DocumentReference), hybrid
+      FTS + pgvector retrieval, citation checking, evidence endpoint (ADR 0010)
+- [x] Agents (LangGraph): assess → policy gate → act (spot check, check-in, sampling, escalate) → cited SBAR brief;
+      Claude via Bedrock / API with offline fallback; patient replies handled (ADR 0007)
+- [x] Clinician console (React): alert inbox, census with sparklines, patient view with vitals small multiples,
+      SBAR brief with click-through evidence, timeline, notifications, clinician actions, presenter controls,
+      light/dark
+- [x] Helm + Terraform for all week-2 services (Bedrock `bedrock-mantle:CreateInference`, Titan, SES, SNS, IoT)
+- [x] Measured locally: SOS → alert 0.45 s → rapid-response page 0.5 s → brief 0.8 s (offline agent)
+- [ ] Live Claude run (needs `ANTHROPIC_API_KEY` or Bedrock model access for `anthropic.claude-opus-5`)
+- [ ] `make cloud-up` on the AWS account
+
+### Changes vs. the plan (week 2)
+- Escalation timers on Postgres instead of Step Functions (ADR 0008).
+- `claude-opus-5` + per-route effort instead of a Sonnet/Haiku split (ADR 0007).
+- Model registry is a package format on S3 (MLflow optional for experiments) (ADR 0009).

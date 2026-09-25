@@ -1,0 +1,41 @@
+{{- if .Values.modelServing.enabled }}
+{{ include "rpm.deployment" (list . "model-serving" "model-serving" (list "model-serving") .Values.modelServing
+     (list (dict "name" "RPM_MODEL_REGISTRY" "value" .Values.modelServing.registry)) 8001) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-serving
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  selector: { app: model-serving }
+  ports: [{ name: http, port: 8001, targetPort: http }]
+{{- end }}
+{{- if .Values.alertService.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: care-team
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+data:
+  care_team.yaml: {{ .Values.alertService.careTeam | quote }}
+---
+{{- $email := ternary "ses" "log" (ne .Values.alertService.emailSender "") }}
+{{ include "rpm.deployment" (list . "alert-service" "alert-service" (list "alert-service") .Values.alertService
+     (list (dict "name" "RPM_ESCALATION_TIMEOUT_SCALE" "value" (toString .Values.alertService.escalationTimeoutScale))
+           (dict "name" "RPM_EMAIL_BACKEND" "value" $email)
+           (dict "name" "RPM_EMAIL_SENDER" "value" .Values.alertService.emailSender)
+           (dict "name" "RPM_SMS_BACKEND" "value" .Values.alertService.smsBackend)
+           (dict "name" "RPM_CONSOLE_URL" "value" .Values.alertService.consoleUrl)
+           (dict "name" "RPM_CARE_TEAM_FILE" "value" "/config/care_team.yaml")) 0) }}
+{{- end }}
+{{- if .Values.agentService.enabled }}
+---
+{{ include "rpm.deployment" (list . "agent-service" "agent-service" (list "agent-service") .Values.agentService
+     (list (dict "name" "RPM_LLM_PROVIDER" "value" .Values.agentService.llmProvider)
+           (dict "name" "RPM_LLM_MODEL" "value" .Values.agentService.llmModel)
+           (dict "name" "RPM_LLM_EFFORT_ASSESS" "value" .Values.agentService.effortAssess)
+           (dict "name" "RPM_LLM_EFFORT_BRIEF" "value" .Values.agentService.effortBrief)
+           (dict "name" "RPM_WORKERS" "value" (toString .Values.agentService.workers))) 0) }}
+{{- end }}

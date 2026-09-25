@@ -1,0 +1,18 @@
+[project]
+name = "alert-service"
+version = "0.1.0"
+description = "Alert intake (SQS), lifecycle, time-based escalation and multi-channel notification"
+requires-python = ">=3.12"
+dependencies = ["rpm-alerts", "rpm-common", "rpm-contracts"]
+
+[project.scripts]
+alert-service = "alert_service.main:main"
+
+[tool.uv.sources]
+rpm-alerts = { workspace = true }
+rpm-common = { workspace = true }
+rpm-contracts = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
