@@ -7,6 +7,9 @@ data/
 # --- secrets / certs ---
 .env
 *.pem
+*.p12
+!edge/android/shared/src/test/resources/pki/*.pem
+!edge/android/shared/src/test/resources/pki/*.p12
 *.key
 *.crt
 certs/

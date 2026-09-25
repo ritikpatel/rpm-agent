@@ -38,8 +38,10 @@ ATTACHED = Counter("rpm_alert_events_attached_total", "Events attached to an act
 RAISED = Counter("rpm_alert_severity_raised_total", "Alerts whose severity was raised")
 ESCALATED = Counter("rpm_alert_escalations_total", "Timer-driven escalations", ["tier"])
 NOTIFIED = Counter("rpm_notifications_total", "Notifications", ["channel", "status"])
-NOTIFY_LATENCY = Histogram("rpm_sensor_to_notification_seconds", "Sensor window end -> notification hand-off",
-                           ["channel"], buckets=(0.5, 1, 2, 3, 5, 8, 13, 21, 34, 60, 120, 300, 600))
+NOTIFY_LATENCY = Histogram("rpm_page_latency_seconds",
+                           "Page cause -> notification hand-off. cause=event is sensor-to-page latency; timer, agent "
+                           "and manual measure dispatch delay after the escalation was due or requested",
+                           ["channel", "cause"], buckets=(0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 60, 120))
 
 
 class AlertSettings(BaseServiceSettings):
@@ -58,6 +60,7 @@ class AlertSettings(BaseServiceSettings):
     mqtt_port: int = 1883
     iot_endpoint: str | None = None
     tick_s: float = 1.0
+    dispatch_settle_s: float = 0.25
     run_migrations: bool = True
 
 
@@ -108,7 +111,7 @@ def main() -> None:
         for n in records:
             NOTIFIED.labels(n["channel"], n["status"]).inc()
             if n["status"] == "sent" and n.get("latency_ms") is not None:
-                NOTIFY_LATENCY.labels(n["channel"]).observe(n["latency_ms"] / 1000)
+                NOTIFY_LATENCY.labels(n["channel"], n["cause"]).observe(n["latency_ms"] / 1000)
         return records
 
     def intake() -> None:
@@ -120,6 +123,7 @@ def main() -> None:
                 log.exception("receive failed")
                 stop.wait(2)
                 continue
+            woke = False
             for m in resp.get("Messages", []):
                 try:
                     ev = ClinicalEvent.model_validate(json.loads(m["Body"]))
@@ -131,11 +135,13 @@ def main() -> None:
                             ATTACHED.inc()
                         if res.severity_raised:
                             RAISED.inc()
-                        wake.set()
+                        woke = True
                         publish(r, {"type": "alert", "alert": alert_summary(store, res.alert_id)})
                     sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=m["ReceiptHandle"])
                 except Exception:
                     log.exception("alert intake failed; message will be redelivered")
+            if woke:
+                wake.set()  # once per batch, so one dispatch covers every event that arrived together
 
     def ticker() -> None:
         while not stop.is_set():
@@ -147,7 +153,11 @@ def main() -> None:
                     publish(r, {"type": "alert", "alert": alert_summary(store, row["alert_id"])})
             except Exception:
                 log.exception("escalation/dispatch tick failed")
-            wake.wait(cfg.tick_s)
+            if wake.wait(cfg.tick_s):
+                # One telemetry window often yields several alerting events (EDGE_ALERT, then SPO2_CRITICAL) that
+                # reach the queue tens of ms apart. Settling briefly lets them all raise the alert first, so the care
+                # team gets one page at the final severity instead of two back-to-back pages.
+                stop.wait(cfg.dispatch_settle_s)
             wake.clear()
 
     threading.Thread(target=intake, name="intake", daemon=True).start()

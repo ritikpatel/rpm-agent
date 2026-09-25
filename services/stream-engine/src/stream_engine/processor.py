@@ -112,8 +112,10 @@ class Processor:
                 continue
             try:
                 meta, payload = split_ingest_record(rec)
-                if payload.get("device_id") != meta.thing:
+                if payload.get("device_id") != meta.thing and not self._relayed_by(payload.get("device_id"),
+                                                                                  meta.thing):
                     # the topic is authoritative (IoT policy pins it to the cert); a mismatch is a spoof attempt
+                    # unless the registry names this thing as the device's gateway (ICU bedside monitors)
                     M.RECORDS.labels(meta.kind, "device_mismatch").inc()
                     log.warning("device_id does not match topic", extra={"thing": meta.thing,
                                                                           "payload_device": payload.get("device_id")})
@@ -132,6 +134,10 @@ class Processor:
         self.state.mark_seen(b.processed)
         self.state.publish_live(b.live)
         M.BATCH_SECONDS.observe(time.perf_counter() - t0)
+
+    def _relayed_by(self, device_id: str | None, thing: str) -> bool:
+        ref = self.registry.resolve(device_id) if device_id else None
+        return ref is not None and ref.gateway_id is not None and ref.gateway_id == thing
 
     # ------------------------------------------------------------------ telemetry
     def _telemetry(self, t: Telemetry, meta: IngestMeta, b: Batch, spot: bool = False) -> None:

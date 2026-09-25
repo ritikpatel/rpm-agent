@@ -12,6 +12,7 @@ from rpm_contracts import (
     ClinicalEvent,
     Command,
     DeviceEvent,
+    GatewayConfig,
     Metrics,
     Shadow,
     Telemetry,
@@ -30,6 +31,7 @@ MODEL_FOR_PREFIX = {
     "command": ("rpm.command.v1", Command),
     "shadow": ("rpm.shadow.v1", Shadow),
     "clinical_event": ("rpm.clinical_event.v1", ClinicalEvent),
+    "gateway_config": ("rpm.gateway_config.v1", GatewayConfig),
 }
 
 

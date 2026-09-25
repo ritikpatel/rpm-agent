@@ -69,12 +69,14 @@ class SimDevice:
 class Simulator:
     def __init__(self, members: list[CohortMember], series: dict[str, dict], publish: Publish, *,
                  window_s: int = 30, speed: float = 60.0, seed: str = "rpm-v1", tz_offset_h: float = 4.0,
-                 auto_scenarios_per_hour: float = 0.0, manual_every_s: float = 1200):
+                 auto_scenarios_per_hour: float = 0.0, manual_every_s: float = 1200,
+                 icu_period_s: int | None = None):
         self.publish = publish
         self.speed = speed
         self.tz_offset_h = tz_offset_h
         self.auto_rate = auto_scenarios_per_hour
         self.default_manual_every_s = manual_every_s
+        self.icu_period_s = icu_period_s  # bedside monitors behind the HL7 gateway report on a fixed cadence
         self.rng = random.Random(seed)
         self.t0 = time.monotonic()
         self.lock = threading.Lock()
@@ -89,8 +91,9 @@ class Simulator:
                 gen: HomeWearable | IcuReplay = IcuReplay(full, rng, m.replay_start_h, speed)
             else:
                 gen = HomeWearable(m.baseline, rng, manual_every_s=manual_every_s)
-            offset = (i * 0.37 + stagger.random()) % window_s  # spread publishes across the window
-            self.devices[m.device_id] = SimDevice(m, gen, next_due=self.t0 + offset, window_s=window_s)
+            period = icu_period_s if icu_period_s and m.care_setting == "icu" else window_s
+            offset = (i * 0.37 + stagger.random()) % period  # spread publishes across the window
+            self.devices[m.device_id] = SimDevice(m, gen, next_due=self.t0 + offset, window_s=period)
         self.by_alias: dict[str, str] = {}
         for d in self.devices.values():
             for alias in (d.device_id, d.member.patient_id, d.member.subject_id):
@@ -150,7 +153,8 @@ class Simulator:
         with self.lock:
             if cmd.cmd == "SET_PROFILE" and args.get("profile") in PROFILE_WINDOW_S:
                 dev.profile = args["profile"]
-                dev.window_s = PROFILE_WINDOW_S[dev.profile]
+                if not (self.icu_period_s and dev.context == "icu"):  # the gateway windows ICU beds itself
+                    dev.window_s = PROFILE_WINDOW_S[dev.profile]
                 dev.next_due = min(dev.next_due, now + dev.window_s)
             elif cmd.cmd == "SPOT_CHECK":
                 dev.pending.append((now + 20, "SPOT_CHECK_RESULT", {"metric": args.get("metric", "spo2"),

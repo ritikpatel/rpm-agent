@@ -1,0 +1,25 @@
+{{- /* With kube-prometheus-stack installed (cloud-up.sh OBSERVABILITY=1): scrape every platform pod's metrics
+       port and load the latency dashboard into its Grafana (sidecar picks up grafana_dashboard=1 ConfigMaps). */ -}}
+{{- if .Values.observability.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: rpm
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+    release: {{ .Values.observability.prometheusRelease }}
+spec:
+  selector: { matchLabels: { rpm.metrics: "true" } }
+  podMetricsEndpoints:
+    - { port: metrics, interval: 15s }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rpm-grafana-dashboards
+  labels:
+    {{- include "rpm.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  rpm-latency.json: |-
+{{ .Files.Get "dashboards/rpm-latency.json" | indent 4 }}
+{{- end }}

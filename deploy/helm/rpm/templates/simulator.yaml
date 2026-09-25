@@ -32,6 +32,13 @@ spec:
             - { name: RPM_SIM_WINDOW_S, value: {{ .Values.simulator.windowS | quote }} }
             - { name: RPM_SIM_EXCLUDE, value: {{ .Values.config.demoPatient | quote }} }
             - { name: RPM_SIM_AUTO_SCENARIOS, value: {{ .Values.simulator.autoScenariosPerHour | quote }} }
+            {{- with .Values.icuGateway }}
+            {{- if eq .mode "container" }}
+            - { name: RPM_SIM_ICU_HL7, value: "icu-gateway:2575" }
+            {{- else if eq .mode "greengrass" }}
+            - { name: RPM_SIM_ICU_HL7, value: {{ required "icuGateway.hl7Endpoint is required in greengrass mode" .hl7Endpoint | quote }} }
+            {{- end }}
+            {{- end }}
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             - { name: certs, mountPath: /certs, readOnly: true }

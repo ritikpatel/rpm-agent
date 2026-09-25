@@ -140,10 +140,10 @@ class Notifier:
     def __init__(self, policy: EscalationPolicy, team: CareTeam, channels: dict[str, Channel], console_url: str):
         self.policy, self.team, self.channels, self.console_url = policy, team, channels, console_url.rstrip("/")
 
-    def _deliver(self, channel_name: str, alert: dict, tier_name: str, contact: dict, link: str,
-                 first_event_at: datetime) -> dict:
+    def _deliver(self, channel_name: str, alert: dict, tier_name: str, contact: dict, link: str) -> dict:
         ch = self.channels.get(channel_name)
-        rec = {"channel": channel_name, "recipient": tier_name, "status": "skipped"}
+        rec = {"channel": channel_name, "recipient": tier_name, "status": "skipped",
+               "cause": alert.get("notify_cause") or "event"}
         if ch is None:
             rec["error"] = "channel not configured"
             return rec
@@ -153,18 +153,19 @@ class Notifier:
         except Exception as exc:  # noqa: BLE001 - record and continue with other channels
             log.warning("notification failed", extra={"channel": channel_name, "error": str(exc)[:200]})
             rec.update(status="failed", error=str(exc)[:500])
-        rec["latency_ms"] = int((utcnow() - first_event_at).total_seconds() * 1000)
+        # Measured from what caused this page (sensor time, timer due time or request time), not the alert's first
+        # event: a late SOS on a two-hour-old alert should read 1 s, not two hours.
+        cause_at: datetime = alert.get("notify_cause_at") or alert["first_event_at"]
+        rec["latency_ms"] = max(0, int((utcnow() - cause_at).total_seconds() * 1000))
         return rec
 
     def send(self, alert: dict, level: int) -> list[dict]:
         tier = self.policy.tier(level)
         contact = self.team.contact(tier.role, alert.get("care_team"))
         link = f"{self.console_url}/alerts/{alert['alert_id']}"
-        records = [self._deliver(c, alert, contact.get("name", tier.name), contact, link, alert["first_event_at"])
-                   for c in tier.channels]
+        records = [self._deliver(c, alert, contact.get("name", tier.name), contact, link) for c in tier.channels]
         first_page = alert["reminders_sent"] == 0 and level == self.policy.initial(alert["severity"]) \
             and alert["status"] == "open"
         if first_page:
-            records += [self._deliver(c, alert, "patient", {}, link, alert["first_event_at"])
-                        for c in self.policy.patient_channels_on_open]
+            records += [self._deliver(c, alert, "patient", {}, link) for c in self.policy.patient_channels_on_open]
         return records

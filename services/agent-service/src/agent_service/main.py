@@ -1,7 +1,8 @@
 """Agent service: consumes every clinical event from SQS and runs the agent graph.
 
 Concurrency: a small worker pool; one run per patient at a time (Redis lock) so a patient's events are handled in
-order. Cost control: repeated events of the same or lower severity within `debounce_s` do not re-run the model.
+order. Cost control: the events of one telemetry batch run the model once, on the most severe of them; repeated
+events of the same or lower severity within `debounce_s` do not re-run it.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
 import redis
 from prometheus_client import Counter, Histogram, start_http_server
@@ -26,10 +28,11 @@ from rpm_contracts import ClinicalEvent
 from rpm_rag import RagIndex, make_embedder
 
 from .context import ContextBuilder
-from .graph import AgentGraph, Deps, classify
+from .graph import AgentGraph, Deps, burst_lead, classify
 from .llm import make_client
 
 log = logging.getLogger("agent_service")
+BURST = timedelta(seconds=5)  # one Kinesis batch is persisted in one transaction; its events share a detected_at
 RUNS = Counter("rpm_agent_runs_total", "Agent runs", ["trigger", "status"])
 RUN_SECONDS = Histogram("rpm_agent_run_seconds", "Agent run duration", ["trigger"],
                         buckets=(0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60, 120))
@@ -92,6 +95,18 @@ def main() -> None:
         r.set(key, json.dumps({"rank": rank, "at": time.time()}), ex=cfg.debounce_s)
         return None
 
+    def lead_of(ev: ClinicalEvent) -> tuple[ClinicalEvent, list[str]]:
+        """The event to run on for this event's burst, plus the ids of the burst events that run will cover (the lead
+        included: its own message may still be queued behind this one)."""
+        with pool.connection() as c:
+            rows = c.execute(
+                "SELECT payload FROM clinical_events WHERE patient_id=%s AND detected_at BETWEEN %s AND %s",
+                (ev.patient_id, ev.detected_at - BURST, ev.detected_at + BURST)).fetchall()
+        burst = [row[0] for row in rows if classify(row[0]) in ("alert", "monitor")]
+        best = burst_lead(ev.to_dict(), burst)
+        lead = ev if best["event_id"] == str(ev.event_id) else ClinicalEvent.model_validate(best)
+        return lead, [e["event_id"] for e in burst]
+
     def handle(msg: dict) -> None:
         ev = ClinicalEvent.model_validate(json.loads(msg["Body"]))
         trigger = classify(ev.to_dict())
@@ -100,12 +115,21 @@ def main() -> None:
             sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg["ReceiptHandle"], VisibilityTimeout=5)
             return  # another run for this patient is in flight; retry shortly
         try:
-            reason = should_skip(ev, trigger)
+            covered: list[str] = []
+            if r.get(f"rpm:agent:covered:{ev.event_id}"):
+                reason = "covered"  # an earlier run on a more severe event from the same burst already saw this one
+            else:
+                if trigger in ("alert", "monitor"):
+                    ev, covered = lead_of(ev)
+                    trigger = classify(ev.to_dict())
+                reason = should_skip(ev, trigger)
             if reason:
                 SKIPPED.labels(reason).inc()
             else:
                 t0 = time.monotonic()
                 out = graph.run(ev)
+                for event_id in covered:
+                    r.set(f"rpm:agent:covered:{event_id}", "1", ex=600)
                 status = "degraded" if out.get("errors") else "ok"
                 RUNS.labels(trigger, status).inc()
                 RUN_SECONDS.labels(trigger).observe(time.monotonic() - t0)

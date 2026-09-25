@@ -10,6 +10,7 @@ COPY pyproject.toml uv.lock ./
 COPY libs libs
 COPY services services
 COPY simulator simulator
+COPY edge/icu-gateway edge/icu-gateway
 ARG PACKAGE
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --package "${PACKAGE}"
@@ -17,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.12-slim
 ARG PACKAGE
 LABEL org.opencontainers.image.title="rpm-${PACKAGE}" org.opencontainers.image.source="rpm-platform"
-RUN useradd --uid 10001 --create-home app
+RUN useradd --uid 10001 --create-home app && install -d -o app /home/app/data   # data/: volume mount point
 COPY --from=build /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 USER 10001

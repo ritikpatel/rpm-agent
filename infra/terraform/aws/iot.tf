@@ -82,10 +82,12 @@ resource "aws_iot_policy" "device" {
       ] },
       { Effect = "Allow", Action = "iot:Subscribe", Resource = [
         "${local.iot_arn}:topicfilter/rpm/v1/dev/$${iot:Connection.Thing.ThingName}/cmd",
+        "${local.iot_arn}:topicfilter/rpm/v1/dev/$${iot:Connection.Thing.ThingName}/config", # retained (gateways)
         "${local.iot_arn}:topicfilter/$aws/things/$${iot:Connection.Thing.ThingName}/shadow/*",
       ] },
       { Effect = "Allow", Action = "iot:Receive", Resource = [
         "${local.iot_arn}:topic/rpm/v1/dev/$${iot:Connection.Thing.ThingName}/cmd",
+        "${local.iot_arn}:topic/rpm/v1/dev/$${iot:Connection.Thing.ThingName}/config",
         "${local.iot_arn}:topic/$aws/things/$${iot:Connection.Thing.ThingName}/shadow/*",
       ] },
     ]

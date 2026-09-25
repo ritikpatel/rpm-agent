@@ -28,6 +28,9 @@ spec:
             - { name: RPM_MIMIC_DIR, value: {{ .Values.config.mimicDir | quote }} }
             - { name: RPM_DEMO_PATIENT, value: {{ .Values.config.demoPatient | quote }} }
             - { name: RPM_DEMO_DEVICE, value: {{ .Values.config.demoDevice | quote }} }
+            {{- if ne .Values.icuGateway.mode "off" }}
+            - { name: RPM_ICU_GATEWAY, value: {{ .Values.icuGateway.thing | quote }} }
+            {{- end }}
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts: [{ name: tmp, mountPath: /tmp }]
           resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 768Mi } }

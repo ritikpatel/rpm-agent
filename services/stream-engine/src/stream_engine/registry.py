@@ -10,7 +10,7 @@ from psycopg_pool import ConnectionPool
 
 _SQL = """
 SELECT d.patient_id, p.care_setting, p.primary_condition, p.hypercapnic_resp_failure,
-       p.on_supplemental_o2, p.thresholds
+       p.on_supplemental_o2, p.thresholds, d.gateway_id
 FROM device_assignments d JOIN patients p USING (patient_id)
 WHERE d.device_id = %s AND d.active_to IS NULL AND p.monitoring_active
 """
@@ -24,6 +24,7 @@ class PatientRef:
     hypercapnic: bool
     on_o2: bool
     thresholds: dict = field(default_factory=dict)
+    gateway_id: str | None = None  # the IoT thing that relays this device (ICU gateway), if any
 
 
 class DeviceRegistry:
@@ -42,7 +43,7 @@ class DeviceRegistry:
             return hit[1]
         with self.pool.connection() as conn:
             row = conn.execute(_SQL, (device_id,)).fetchone()
-        ref = PatientRef(row[0], row[1], row[2], row[3], row[4], row[5] or {}) if row else None
+        ref = PatientRef(row[0], row[1], row[2], row[3], row[4], row[5] or {}, row[6]) if row else None
         with self._lock:
             self._cache[device_id] = (now + (self.ttl_s if ref else self.negative_ttl_s), ref)
         return ref

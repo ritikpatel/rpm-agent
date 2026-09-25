@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Bring the AWS demo environment up (idempotent; safe to re-run to redeploy).
 #   AWS_PROFILE=... AWS_REGION=us-east-1 infra/scripts/cloud-up.sh
-# Env: AUTO_APPROVE=1 (skip terraform prompt), SKIP_INFRA=1, SKIP_BUILD=1, IMAGE_TAG=..., TFVARS=path/to/file.tfvars
+# Env: AUTO_APPROVE=1 (skip terraform prompt), SKIP_INFRA=1, SKIP_BUILD=1, IMAGE_TAG=..., TFVARS=path/to/file.tfvars,
+#      OBSERVABILITY=1 (kube-prometheus-stack + latency dashboard), ICU_GATEWAY_MODE=container|off
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -57,7 +58,7 @@ if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY" >/dev/null
   for pair in stream-engine:stream-engine rpm-api:api rpm-simulator:simulator fhir-loader:fhir-loader \
               rpm-common:db-migrate model-serving:model-serving alert-service:alert-service \
-              agent-service:agent-service rpm-rag:rag; do
+              agent-service:agent-service rpm-rag:rag rpm-icu-gateway:icu-gateway; do
     pkg="${pair%%:*}"; repo="${pair##*:}"
     docker build -q --platform linux/arm64 -f "$ROOT/deploy/docker/python-service.Dockerfile" \
       --build-arg PACKAGE="$pkg" -t "${REGISTRY}/rpm/${repo}:${TAG}" "$ROOT" >/dev/null
@@ -84,11 +85,37 @@ curl -fsS https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$SECRETS_
   out sim_cert_pem > "$SECRETS_DIR/sim-fleet.cert.pem"; out sim_private_key > "$SECRETS_DIR/sim-fleet.key.pem"
   DEMO="$(out demo_device_id)"
   out demo_watch_cert_pem > "$SECRETS_DIR/${DEMO}.cert.pem"; out demo_watch_private_key > "$SECRETS_DIR/${DEMO}.key.pem"
+  out icu_gateway_cert_pem > "$SECRETS_DIR/$(out icu_gateway_id).cert.pem"
+  out icu_gateway_private_key > "$SECRETS_DIR/$(out icu_gateway_id).key.pem"
   echo "$IOT_ENDPOINT" > "$SECRETS_DIR/iot-endpoint.txt" )
 kubectl -n "$NS" create secret generic rpm-sim-mqtt \
   --from-file=ca.pem="$SECRETS_DIR/AmazonRootCA1.pem" --from-file=cert.pem="$SECRETS_DIR/sim-fleet.cert.pem" \
   --from-file=key.pem="$SECRETS_DIR/sim-fleet.key.pem" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-echo "device certificates written to .secrets/ (git-ignored) — used by the Galaxy Watch gateway in week 3"
+GW="$(out icu_gateway_id)"
+kubectl -n "$NS" create secret generic rpm-icu-gw-mqtt \
+  --from-file=ca.pem="$SECRETS_DIR/AmazonRootCA1.pem" --from-file=cert.pem="$SECRETS_DIR/${GW}.cert.pem" \
+  --from-file=key.pem="$SECRETS_DIR/${GW}.key.pem" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+echo "device certificates written to .secrets/ (git-ignored); provision the watch with edge/android/provision.sh aws"
+# ICU gateway: a pod on EKS unless Terraform created a Greengrass core (enable_greengrass_core = true)
+GG_IP="$(out greengrass_core_private_ip)"
+if [[ -n "$GG_IP" ]]; then
+  ICU_ARGS=(--set icuGateway.mode=greengrass --set "icuGateway.hl7Endpoint=${GG_IP}:2575")
+else
+  ICU_ARGS=(--set "icuGateway.mode=${ICU_GATEWAY_MODE:-container}")
+fi
+
+OBS_ARGS=()
+if [[ "${OBSERVABILITY:-0}" == "1" ]]; then   # opt-in: ~1 GiB of cluster memory
+  step "observability: kube-prometheus-stack (Prometheus + Grafana, latency dashboard via ConfigMap)"
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+  helm repo update prometheus-community >/dev/null
+  helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring \
+    --create-namespace --wait --timeout 10m --set alertmanager.enabled=false \
+    --set prometheus.prometheusSpec.retention=2d \
+    --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+    --set grafana.sidecar.dashboards.searchNamespace=ALL >/dev/null
+  OBS_ARGS=(--set observability.enabled=true)
+fi
 
 step "7/7 helm release (migrations -> services -> FHIR load)"
 helm upgrade --install rpm "$ROOT/deploy/helm/rpm" -n "$NS" --wait --timeout 25m \
@@ -100,7 +127,11 @@ helm upgrade --install rpm "$ROOT/deploy/helm/rpm" -n "$NS" --wait --timeout 25m
   --set alertService.emailSender="$(out alert_sender_email)" \
   --set alertService.escalationTimeoutScale="${ESCALATION_TIMEOUT_SCALE:-0.2}" \
   --set agentService.llmProvider="${LLM_PROVIDER:-bedrock}" \
-  ${HELM_EXTRA_ARGS:-}
+  "${ICU_ARGS[@]}" "${OBS_ARGS[@]}" ${HELM_EXTRA_ARGS:-}
+if [[ -n "$GG_IP" ]]; then
+  step "ICU gateway component -> Greengrass core ${GW} (${GG_IP})"
+  "$ROOT/edge/icu-gateway/greengrass/deploy.sh"
+fi
 kubectl -n "$NS" get pods
 
 cat <<MSG

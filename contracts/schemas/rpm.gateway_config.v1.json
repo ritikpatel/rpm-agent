@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rpm.local/schemas/rpm.gateway_config.v1.json",
+  "title": "rpm.gateway_config.v1",
+  "description": "Per-bed clinical configuration for an ICU bedside gateway, published RETAINED on rpm/v1/dev/{gateway}/config so the gateway receives the current state on every (re)connect. Carries no patient identifiers: beds are keyed by monitor device id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "gateway_id",
+    "issued_at",
+    "beds"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rpm.gateway_config.v1"
+    },
+    "gateway_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{3,64}$"
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "beds": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_-]{3,64}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "spo2_scale": {
+            "enum": [
+              1,
+              2
+            ],
+            "description": "NEWS2 SpO2 scale; 2 for hypercapnic respiratory failure (target 88-92%)"
+          },
+          "on_supplemental_o2": {
+            "type": "boolean"
+          },
+          "gcs_baseline": {
+            "type": "number",
+            "minimum": 3,
+            "maximum": 15,
+            "description": "Best GCS this ICU episode as known to the cloud: the NEWS2 consciousness baseline, so a gateway that joins mid-episode still recognises new confusion"
+          }
+        }
+      }
+    }
+  }
+}

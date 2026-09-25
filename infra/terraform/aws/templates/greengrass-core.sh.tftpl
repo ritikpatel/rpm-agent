@@ -1,0 +1,46 @@
+#!/bin/bash
+# Greengrass v2 core device bootstrap (manual provisioning with the Terraform-created thing certificate).
+set -euo pipefail
+exec > >(tee -a /var/log/rpm-greengrass-bootstrap.log) 2>&1
+
+dnf install -y -q java-17-amazon-corretto-headless python3.12 unzip jq
+GG=/greengrass/v2
+install -d -m 755 /greengrass "$GG"
+
+# Identity from Secrets Manager (instance role, KMS): never written to user data or logs.
+umask 077
+aws secretsmanager get-secret-value --region "${region}" --secret-id "${secret_arn}" --query SecretString \
+  --output text > /root/gg-identity.json
+jq -r .certificate_pem /root/gg-identity.json > "$GG/device.pem.crt"
+jq -r .private_key /root/gg-identity.json > "$GG/private.pem.key"
+shred -u /root/gg-identity.json
+umask 022
+curl -fsS https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$GG/AmazonRootCA1.pem"
+
+curl -fsS https://d2s8p88vqu9w66.cloudfront.net/releases/greengrass-nucleus-latest.zip -o /tmp/gg.zip
+unzip -q -o /tmp/gg.zip -d /tmp/GreengrassInstaller
+NUCLEUS_VERSION=$(grep -m1 'ComponentVersion' /tmp/GreengrassInstaller/conf/recipe.yaml | awk '{print $2}' | tr -d "'\"")
+
+cat > /tmp/gg-config.yaml <<CONF
+system:
+  certificateFilePath: "$GG/device.pem.crt"
+  privateKeyPath: "$GG/private.pem.key"
+  rootCaPath: "$GG/AmazonRootCA1.pem"
+  rootpath: "$GG"
+  thingName: "${thing}"
+services:
+  aws.greengrass.Nucleus:
+    componentType: "NUCLEUS"
+    version: "$NUCLEUS_VERSION"
+    configuration:
+      awsRegion: "${region}"
+      iotRoleAlias: "${role_alias}"
+      iotDataEndpoint: "${iot_data_endpoint}"
+      iotCredEndpoint: "${iot_cred_endpoint}"
+      interpolateComponentConfiguration: true
+CONF
+
+java -Droot="$GG" -Dlog.store=FILE -jar /tmp/GreengrassInstaller/lib/Greengrass.jar \
+  --init-config /tmp/gg-config.yaml --component-default-user ggc_user:ggc_group --setup-system-service true
+rm -rf /tmp/gg.zip /tmp/GreengrassInstaller /tmp/gg-config.yaml
+echo "greengrass core ${thing} installed; deploy the ICU gateway component with edge/icu-gateway/greengrass/deploy.sh"

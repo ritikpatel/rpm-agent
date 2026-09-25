@@ -17,6 +17,7 @@ import threading
 import time
 
 import paho.mqtt.client as mqtt
+from botocore.exceptions import BotoCoreError, ClientError
 from prometheus_client import Counter, start_http_server
 
 from rpm_common.aws import client
@@ -50,7 +51,8 @@ def main() -> None:
     setup_logging(cfg.service_name, cfg.log_level)
     start_http_server(cfg.metrics_port)
     kinesis = client("kinesis", cfg.aws_region, cfg.kinesis_endpoint)
-    q: queue.Queue[tuple[str, dict]] = queue.Queue(maxsize=50_000)
+    # ~2 KB per record: 20k keeps the bridge inside its memory limit while Kinesis is slow or down
+    q: queue.Queue[tuple[str, dict]] = queue.Queue(maxsize=20_000)
     stop = threading.Event()
 
     def on_connect(c, _ud, _flags, reason, _props):
@@ -64,7 +66,10 @@ def main() -> None:
             DROPPED.labels("invalid_json").inc()
             return
         if item:
-            q.put(item)
+            try:
+                q.put_nowait(item)  # never block paho's network thread: that would stall MQTT for every device
+            except queue.Full:
+                DROPPED.labels("backpressure").inc()
 
     def forward() -> None:
         while not stop.is_set():
@@ -80,13 +85,20 @@ def main() -> None:
                     break
             records = [{"Data": json.dumps(d).encode(), "PartitionKey": key} for key, d in batch]
             for attempt in range(5):
-                resp = kinesis.put_records(StreamName=cfg.kinesis_stream, Records=records)
+                try:
+                    resp = kinesis.put_records(StreamName=cfg.kinesis_stream, Records=records)
+                except (BotoCoreError, ClientError) as exc:
+                    # an exception here used to kill this thread silently, leaving the queue to fill for ever
+                    log.warning("kinesis put failed; retrying", extra={"error": str(exc)[:200], "attempt": attempt})
+                    time.sleep(min(5.0, 0.5 * 2 ** attempt))
+                    continue
                 if not resp.get("FailedRecordCount"):
                     break
                 records = [r for r, res in zip(records, resp["Records"], strict=True) if "ErrorCode" in res]
                 time.sleep(0.2 * (attempt + 1))
             else:
                 DROPPED.labels("kinesis_error").inc(len(records))
+                log.error("records dropped after retries", extra={"count": len(records)})
             for _, d in batch:
                 FORWARDED.labels(d["kind"]).inc()
 

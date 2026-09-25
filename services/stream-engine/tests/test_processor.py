@@ -145,6 +145,21 @@ def test_spoofed_device_id_rejected(env):
     assert not pg.vitals
 
 
+def test_gateway_may_publish_only_for_its_registered_bedside_devices():
+    relayed = PatientRef("p-4", "icu", "Sepsis", False, False, {}, gateway_id="icu-gw-01")
+    reg = FakeRegistry({"sim-icu-4": relayed, "sim-icu-2": ICU, "icu-gw-01": None})
+    pg = FakePg()
+    proc = Processor(reg, FakeState(), pg, FakeSqs(), clock=lambda: NOW + timedelta(seconds=1))
+    ok = telemetry(device="sim-icu-4", context="icu")
+    ok["thing"] = "icu-gw-01"
+    not_child = telemetry(device="sim-icu-2", context="icu")
+    not_child["thing"] = "icu-gw-01"
+    other_gw = telemetry(device="sim-icu-4", context="icu")
+    other_gw["thing"] = "icu-gw-99"
+    proc.handle_batch([ok, not_child, other_gw])
+    assert [v["patient_id"] for v in pg.vitals] == ["p-4"]
+
+
 def test_unassigned_device_ignored(env):
     proc, _, pg, _ = env
     proc.handle_batch([telemetry(device="gw-unknown-9")])

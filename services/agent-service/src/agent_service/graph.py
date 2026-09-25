@@ -27,7 +27,7 @@ from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 from redis import Redis
 
-from rpm_alerts import AlertStore, clamp_severity
+from rpm_alerts import SEVERITY_RANK, AlertStore, clamp_severity
 from rpm_common.devices import DeviceCommander
 from rpm_common.live import publish
 from rpm_contracts import ClinicalEvent, utcnow, uuid7
@@ -97,6 +97,19 @@ def classify(ev: dict) -> str:
     if ev["type"] == "NEWS2_RISING":
         return "monitor"
     return "record"
+
+
+def burst_lead(ev: dict, burst: list[dict]) -> dict:
+    """Events persisted from one telemetry batch (say NEWS2_RISING + EDGE_ALERT + SPO2_CRITICAL) describe one clinical
+    change. The agent runs once, on the most severe alerting event among them. The triggering event wins ties, so a
+    run is never swapped for an equally severe sibling."""
+    def key(e: dict) -> tuple[int, int]:
+        return (1 if e["requires_alert"] else 0, SEVERITY_RANK.get(clamp_severity(e["severity"]), 0))
+    best = ev
+    for e in burst:
+        if classify(e) in ("alert", "monitor") and key(e) > key(best):
+            best = e
+    return best
 
 
 def check_citations(brief: dict, hits: list[Hit]) -> tuple[bool, list[str]]:

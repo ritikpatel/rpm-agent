@@ -3,7 +3,7 @@ name = "rpm-simulator"
 version = "0.1.0"
 description = "Virtual device fleet: MIMIC ICU replay, post-discharge wearable physiology, deterioration scenarios"
 requires-python = ">=3.12"
-dependencies = ["rpm-contracts", "rpm-mimic", "rpm-common", "paho-mqtt>=2.1"]
+dependencies = ["rpm-contracts", "rpm-mimic", "rpm-common", "rpm-icu-gateway", "paho-mqtt>=2.1"]
 
 [project.scripts]
 rpm-sim = "rpm_simulator.cli:main"
@@ -12,6 +12,7 @@ rpm-sim = "rpm_simulator.cli:main"
 rpm-contracts = { workspace = true }
 rpm-mimic = { workspace = true }
 rpm-common = { workspace = true }
+rpm-icu-gateway = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

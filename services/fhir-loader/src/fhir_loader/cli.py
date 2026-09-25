@@ -15,12 +15,13 @@ from datetime import UTC, datetime
 
 from rpm_common.data import fetch_dir
 from rpm_common.db import migrate, wait_for_db
+from rpm_common.devices import DeviceCommander
 from rpm_common.logging import setup_logging
 from rpm_mimic import CohortMember, MimicDataset, build_cohort, pick_demo_patient
 
 from .client import FhirClient
 from .mapping import PatientBundleBuilder
-from .registry import seed
+from .registry import gateway_config, seed
 
 log = logging.getLogger("fhir_loader")
 
@@ -63,6 +64,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--demo-patient", default=os.environ.get("RPM_DEMO_PATIENT"),
                     help="patient id streamed by the real watch, or 'auto'")
     ap.add_argument("--demo-device", default=os.environ.get("RPM_DEMO_DEVICE", "gw-demo-01"))
+    ap.add_argument("--icu-gateway", default=os.environ.get("RPM_ICU_GATEWAY") or None,
+                    help="IoT thing of the ICU bedside gateway that relays the ICU monitors (HL7 path)")
     ap.add_argument("--skip-labs", action="store_true")
     ap.add_argument("--workers", type=int, default=3)
     a = ap.parse_args(argv)
@@ -83,7 +86,18 @@ def main(argv: list[str] | None = None) -> None:
     if a.target in ("all", "registry"):
         wait_for_db(a.database_url)
         migrate(a.database_url)
-        print(f"registry: {seed(a.database_url, members, demo)}")
+        print(f"registry: {seed(a.database_url, members, demo, icu_gateway=a.icu_gateway)}")
+        if a.icu_gateway:
+            # retained, so the gateway gets its beds' SpO2 scale on every (re)connect, even before this job reruns
+            cfg = gateway_config(a.database_url, a.icu_gateway)
+            DeviceCommander(mode=os.environ.get("RPM_DEVICE_COMMAND_MODE", "mqtt"),
+                            region=os.environ.get("RPM_AWS_REGION", "us-east-1"),
+                            iot_endpoint=os.environ.get("RPM_IOT_ENDPOINT") or None,
+                            mqtt_host=os.environ.get("RPM_MQTT_HOST", "localhost"),
+                            mqtt_port=int(os.environ.get("RPM_MQTT_PORT", "1883"))).publish_raw(
+                f"rpm/v1/dev/{a.icu_gateway}/config", cfg.to_json(), retain=True)
+            print(f"gateway config: {a.icu_gateway} <- {len(cfg.beds)} beds, "
+                  f"{sum(1 for b in cfg.beds.values() if b.spo2_scale == 2)} on SpO2 scale 2 (retained)")
     if a.target in ("all", "fhir"):
         load_fhir(a, members, ds, anchor, demo)
 

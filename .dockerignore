@@ -8,5 +8,7 @@ synthetic_mimic_150patients
 data
 *.docx
 infra
-edge
+edge/android
 docs
+.secrets
+**/*.db

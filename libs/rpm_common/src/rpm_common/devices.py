@@ -44,16 +44,20 @@ class DeviceCommander:
                 self._client = c
             return self._client
 
-    def publish_raw(self, topic: str, payload: str) -> None:
-        """Non-device control topics (e.g. simulator presenter controls)."""
+    def publish_raw(self, topic: str, payload: str, retain: bool = False) -> None:
+        """Non-command topics: simulator presenter controls, retained gateway config (needs iot:RetainPublish)."""
         if self.mode == "iot":
-            self._iot.publish(topic=topic, qos=1, payload=payload.encode())
+            self._iot.publish(topic=topic, qos=1, retain=retain, payload=payload.encode())
         elif self.mode == "mqtt":
-            self._mqtt().publish(topic, payload, qos=1).wait_for_publish(timeout=5)
+            self._mqtt().publish(topic, payload, qos=1, retain=retain).wait_for_publish(timeout=5)
 
-    def send(self, device_id: str, cmd: str, args: dict | None, issued_by: str, ttl_s: int = 600) -> Command:
-        command = Command(cmd=cmd, args=args or {}, issued_by=issued_by, expires_at=utcnow() + timedelta(seconds=ttl_s))
-        topic = f"rpm/v1/dev/{device_id}/cmd"
+    def send(self, device_id: str, cmd: str, args: dict | None, issued_by: str, ttl_s: int = 600,
+             via: str | None = None) -> Command:
+        """via: the gateway thing that relays this device (ICU bedside monitors have no MQTT session of their own);
+        the command goes to the gateway's topic with args.device_id naming the bed."""
+        args = {**(args or {}), "device_id": device_id} if via else (args or {})
+        command = Command(cmd=cmd, args=args, issued_by=issued_by, expires_at=utcnow() + timedelta(seconds=ttl_s))
+        topic = f"rpm/v1/dev/{via or device_id}/cmd"
         payload = command.to_json()
         if self.mode == "iot":
             self._iot.publish(topic=topic, qos=1, payload=payload.encode())

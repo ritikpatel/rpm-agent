@@ -26,8 +26,12 @@ locals {
       Resource = [for q in aws_sqs_queue.q : q.arn] },
       local.kms_use,
     ]
-    "simulator"     = concat(local.data_read, [local.kms_use])
-    "fhir-loader"   = concat(local.data_read, [local.kms_use])
+    "simulator" = concat(local.data_read, [local.kms_use])
+    "fhir-loader" = concat(local.data_read, [local.kms_use,
+      # retained per-bed config for ICU gateways (rpm.gateway_config.v1); RetainPublish is a separate action
+      { Effect = "Allow", Action = ["iot:Publish", "iot:RetainPublish"],
+      Resource = "${local.iot_arn}:topic/rpm/v1/dev/*/config" },
+    ])
     "model-serving" = concat(local.data_read, [local.kms_use])
     "rag-index"     = concat(local.data_read, [local.kms_use, local.titan_invoke])
     "agent-service" = concat([local.kms_use, local.titan_invoke, local.cmd_publish,

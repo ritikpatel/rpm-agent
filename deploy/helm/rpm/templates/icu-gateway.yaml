@@ -1,0 +1,66 @@
+{{- /* ICU bedside gateway as a pod (icuGateway.mode=container). With mode=greengrass it runs on the EC2 core
+       device instead (edge/icu-gateway/greengrass) and only the simulator/loader wiring below applies. */ -}}
+{{- if eq .Values.icuGateway.mode "container" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: icu-gateway
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  replicas: 1                      # one MQTT session per thing: a second replica would take over the first
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: icu-gateway } }
+  template:
+    metadata:
+      labels: { app: icu-gateway, rpm.metrics: "true" }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "9110" }
+    spec:
+      automountServiceAccountToken: false   # no AWS API use: identity is the thing certificate
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gateway
+          image: {{ include "rpm.image" (list . "icu-gateway") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["rpm-icu-gateway"]
+          env:
+            - { name: RPM_GW_THING, value: {{ .Values.icuGateway.thing | quote }} }
+            - { name: RPM_GW_MQTT_HOST, value: {{ required "simulator.mqttHost (IoT endpoint) is required" .Values.simulator.mqttHost | quote }} }
+            - { name: RPM_GW_MQTT_PORT, value: "8883" }
+            - { name: RPM_GW_TLS_CA, value: /certs/ca.pem }
+            - { name: RPM_GW_TLS_CERT, value: /certs/cert.pem }
+            - { name: RPM_GW_TLS_KEY, value: /certs/key.pem }
+            - { name: RPM_GW_WINDOW_S, value: {{ .Values.icuGateway.windowS | quote }} }
+            - { name: RPM_GW_OUTBOX_PATH, value: /home/app/data/outbox.db }
+            - { name: RPM_GW_LOG_LEVEL, value: {{ .Values.config.logLevel | quote }} }
+          ports:
+            - { name: mllp, containerPort: 2575 }
+            - { name: status, containerPort: 8081 }
+            - { name: metrics, containerPort: 9110 }
+          readinessProbe: { httpGet: { path: /healthz, port: status }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: status }, periodSeconds: 20, failureThreshold: 6 }
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - { name: certs, mountPath: /certs, readOnly: true }
+            # The outbox survives container restarts but not rescheduling: on EKS this is a stand-in for the
+            # edge box's disk. The Greengrass form keeps it on the core device's persistent volume.
+            - { name: data, mountPath: /home/app/data }
+            - { name: tmp, mountPath: /tmp }
+          resources: {{- toYaml .Values.icuGateway.resources | nindent 12 }}
+      volumes:
+        - name: certs
+          secret: { secretName: {{ .Values.secrets.icuGatewayMqtt }}, defaultMode: 0400 }
+        - { name: data, emptyDir: { sizeLimit: 1Gi } }
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: icu-gateway
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  selector: { app: icu-gateway }
+  ports:
+    - { name: mllp, port: 2575, targetPort: mllp }
+    - { name: status, port: 8081, targetPort: status }
+    - { name: metrics, port: 9110, targetPort: metrics }
+{{- end }}

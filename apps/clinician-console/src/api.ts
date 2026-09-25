@@ -31,7 +31,7 @@ export interface Brief {
 
 export interface TimelineEntry { at: string; kind: string; actor: string; summary: string; details: unknown }
 export interface NotificationRow {
-  tier: number; channel: string; recipient: string; status: string; sent_at: string; latency_ms: number | null;
+  tier: number; channel: string; recipient: string; status: string; sent_at: string; latency_ms: number | null; cause: string | null;
   error: string | null;
 }
 

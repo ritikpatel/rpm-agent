@@ -78,3 +78,21 @@ variable "alert_sender_email" {
   type        = string
   default     = ""
 }
+
+variable "icu_gateway_id" {
+  description = "IoT thing name of the ICU bedside gateway (also the Greengrass core device name)."
+  type        = string
+  default     = "icu-gw-01"
+}
+
+variable "enable_greengrass_core" {
+  description = "Run the ICU gateway as a Greengrass v2 component on an EC2 core device (adds ~$0.02/h) instead of as a pod on EKS."
+  type        = bool
+  default     = false
+}
+
+variable "greengrass_instance_type" {
+  description = "Graviton instance for the Greengrass core (nucleus JVM + gateway fit in 2 GiB)."
+  type        = string
+  default     = "t4g.small"
+}

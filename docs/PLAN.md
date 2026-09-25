@@ -272,3 +272,80 @@ docs/                 PLAN, HLD, ADRs, compliance, runbook, demo script
 - Escalation timers on Postgres instead of Step Functions (ADR 0008).
 - `claude-opus-5` + per-route effort instead of a Sonnet/Haiku split (ADR 0007).
 - Model registry is a package format on S3 (MLflow optional for experiments) (ADR 0009).
+
+### Week 3 — delivered (2026-09-25)
+- [x] **Wear OS app** (`edge/android/wear`), with three sensor sources behind one pipeline:
+      - Samsung Health Sensor SDK (compiled in when the `.aar` is in `wear/libs/`).
+      - Health Services.
+      - A scripted source for the emulator.
+      The edge pipeline covers windowing, signal quality with a motion penalty, edge rules with haptics, a
+      two-tap SOS, check-ins, spot checks and SET_PROFILE. The UI is laid out for round screens.
+- [x] **Shared Kotlin core** (`edge/android/shared`): contracts, which are schema-checked in tests, the outbox, the
+      uplinker (seq, `edge_sent`, `buffered`), MQTT, mTLS and provisioning. 12 JVM tests.
+- [x] **Phone companion gateway** (`edge/android/phone`): durable SQLite outbox, relays commands to the watch,
+      patient screen for check-ins and manual BP/temperature. It builds, but pairing is not yet exercised; see open
+      items.
+- [x] **Verified on the Wear OS emulator** (API 34) against the local stack:
+      - Streaming to the demo patient (Daniel Haddad).
+      - SET_PROFILE, CHECKIN (answer → CHECKIN_REPLY) and SPOT_CHECK.
+      - Hypoxia: the watch's EDGE_ALERT and the cloud's SPO2_CRITICAL fired within the same 0.05 s.
+      - SOS → rapid-response page in 1.23 s.
+      - 45 s broker outage: windows held for 31 and 61 s were delivered, the older one flagged `buffered`, with no
+        sequence gap.
+- [x] **Provisioning** (`edge/android/provision.sh`, three modes: plain, local, aws):
+      - A local mTLS broker that mirrors IoT Core. Verified: TLS 1.2 with ECDHE-ECDSA-AES256-GCM, a client with no
+        certificate is rejected, a publish to another device's topic is dropped, and the client id is forced to the
+        certificate CN.
+      - Key files are written with mode 0600 and verified by checksum.
+- [x] **ICU bedside gateway** (`edge/icu-gateway`):
+      - HL7 v2 ORU^R01 over MLLP (MDC and LOINC).
+      - Bedside NEWS2 and alarms that work offline.
+      - PID segments are stripped.
+      - SQLite store-and-forward.
+      - Uplinks over MQTT with mTLS, or Greengrass IPC.
+      The simulator now sends its 25 ICU beds as HL7 (`--icu-hl7`). Relayed identity is enforced by the stream
+      engine through `device_assignments.gateway_id`. 13 tests.
+- [x] **Retained per-bed config** `rpm.gateway_config.v1` (SpO₂ scale, supplemental O₂, GCS baseline): bedside and
+      cloud NEWS2 agreement went from 20/23 to 108/109 (ADR 0011).
+- [x] **Greengrass v2 component and infrastructure:**
+      - Recipe with IPC access scoped to the core's own topics.
+      - An offline arm64 wheelhouse (6.5 MB), verified to install without an index.
+      - `deploy.sh`.
+      - Terraform (`enable_greengrass_core`): EC2 t4g.small core, token-exchange role alias, identity through
+        Secrets Manager, IMDSv2.
+      - Helm modes container, greengrass and off.
+- [x] **Latency dashboards:**
+      - Prometheus and Grafana in compose (`make obs`, http://localhost:3001), built as code by
+        `build_dashboard.py`.
+      - The same dashboard reaches kube-prometheus-stack (`OBSERVABILITY=1 cloud-up.sh`) through a PodMonitor and a
+        ConfigMap.
+      - Measured locally (p95): home end-to-end 0.98 s (edge 5 ms, uplink 9 ms, pipeline 0.98 s from the 1 s
+        Kinesis poll), ICU end-to-end 1.4 s, sensor → page 1.85 s.
+- 164 Python tests, 12 Kotlin tests; ruff and `terraform validate` pass, and Helm renders all modes.
+
+### Found and fixed while testing week 3
+- **Duplicate pages:** a telemetry burst raised severity twice within 50 ms and paged tier 3 twice. The dispatcher
+  now waits 0.25 s after a wake, so one page goes out at the final severity.
+- **Second patient reassurance:** a severity raise on an alert already escalated by the timer reset its status to
+  `open`, which sent the patient a second reassurance. Status now stays `escalated`.
+- **Repeated agent runs:** the agent ran three times in 10 s for one burst. It now runs once, on the burst's most
+  severe event; the other events are skipped as covered and counted in `rpm_agent_skipped_total`.
+- **Misleading page latency:** latency was measured from the alert's first event, so a late SOS read 114 s. It is
+  now measured from what caused the page (`cause`: event, timer, agent or manual).
+- **Local IoT-rule emulator stall:** a Kinesis timeout killed its forward thread, then a full queue blocked Paho's
+  network thread and stopped all MQTT. Fixed with retry and backoff, plus a non-blocking queue that counts
+  backpressure drops. This was local only; IoT Core is managed on AWS.
+- **Docker build context:** `.dockerignore` now excludes `.secrets/` (device keys were being sent as build context).
+
+### Open after week 3
+- [ ] Real Galaxy Watch: needs the watch model and the Samsung Health Sensor SDK `.aar` (licensed separately).
+- [ ] Companion mode end to end: needs a paired phone; there is no phone emulator image on this machine.
+- [ ] Fleet provisioning by claim with an Android-Keystore key. Keys are still generated by Terraform and moved by
+      adb.
+- [ ] `make cloud-up` on the AWS account, including a Greengrass run on EC2.
+- [ ] Alarm-burden tuning of the synthetic ICU cohort (week 4).
+
+### Changes vs. the plan (week 3)
+- The ICU gateway runs as a pod on EKS by default; Greengrass on EC2 is one flag away (ADR 0011).
+- New contract `rpm.gateway_config.v1`, retained, for per-bed clinical context at the edge.
+- kube-prometheus-stack is opt-in, because it needs about 1 GiB of cluster memory.

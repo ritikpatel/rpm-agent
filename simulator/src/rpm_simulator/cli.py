@@ -22,6 +22,7 @@ from rpm_common.logging import setup_logging
 from rpm_mimic import MimicDataset, build_cohort, icu_series, pick_demo_patient
 
 from .engine import CMD_FILTER, CONTROL_TOPIC, Simulator
+from .hl7_monitor import Hl7MonitorLink
 from .publisher import FleetPublisher, MqttConfig
 from .scenarios import SCENARIOS
 
@@ -70,16 +71,30 @@ def cmd_run(a: argparse.Namespace) -> None:
 
     sim_ref: dict[str, Simulator] = {}
     pub = FleetPublisher(_mqtt_config(a, a.shards), on_message=lambda t, p: sim_ref["sim"].on_message(t, p))
-    sim = Simulator(members, series, lambda key, topic, payload: pub.publish(key, topic, payload),
-                    window_s=a.window_s, speed=a.speed, seed=a.seed, tz_offset_h=a.tz_offset_h,
-                    auto_scenarios_per_hour=a.auto_scenarios_per_hour)
+    monitors = None
+    if a.icu_hl7:  # ICU beds leave as HL7 v2 to the bedside gateway instead of publishing MQTT themselves
+        host, _, port = a.icu_hl7.rpartition(":")
+        monitors = Hl7MonitorLink(host, int(port))
+    icu = {m.device_id for m in members if m.care_setting == "icu"}
+
+    def publish(key: str, topic: str, payload: str) -> None:
+        if monitors is not None and key in icu:
+            if topic.endswith("/telemetry"):
+                monitors.send(key, payload)
+            return  # an HL7 results feed carries observations only
+        pub.publish(key, topic, payload)
+
+    sim = Simulator(members, series, publish, window_s=a.window_s, speed=a.speed, seed=a.seed,
+                    tz_offset_h=a.tz_offset_h, auto_scenarios_per_hour=a.auto_scenarios_per_hour,
+                    icu_period_s=a.icu_period_s if monitors else None)
     sim_ref["sim"] = sim
     pub.subscribe(CONTROL_TOPIC)
     pub.subscribe(CMD_FILTER)
     pub.connect()
     homes = sum(1 for m in members if m.care_setting == "home")
     log.info("simulator started", extra={"devices": len(members), "home": homes, "icu": len(members) - homes,
-                                         "window_s": a.window_s, "speed": a.speed, "shards": a.shards})
+                                         "window_s": a.window_s, "speed": a.speed, "shards": a.shards,
+                                         "icu_via": f"hl7://{a.icu_hl7}" if monitors else "mqtt"})
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -87,6 +102,8 @@ def cmd_run(a: argparse.Namespace) -> None:
         sim.run(stop, duration_s=a.duration_s)
     finally:
         pub.close()
+        if monitors is not None:
+            monitors.close()
 
 
 def _send_control(a: argparse.Namespace, payload: dict) -> None:
@@ -138,6 +155,10 @@ def main(argv: list[str] | None = None) -> None:
                      help="ICU replay speed-up (sim seconds per real second)")
     run.add_argument("--limit", type=int, default=int(_env("RPM_SIM_LIMIT", "0")))
     run.add_argument("--only-setting", choices=["home", "icu"], default=_env("RPM_SIM_ONLY_SETTING"))
+    run.add_argument("--icu-hl7", default=_env("RPM_SIM_ICU_HL7"), metavar="HOST:PORT",
+                     help="send ICU beds as HL7 v2 ORU^R01 over MLLP to the ICU gateway instead of MQTT")
+    run.add_argument("--icu-period-s", type=int, default=int(_env("RPM_SIM_ICU_PERIOD_S", "5")),
+                     help="bedside monitor reporting cadence when --icu-hl7 is set")
     run.add_argument("--exclude", nargs="*", default=(_env("RPM_SIM_EXCLUDE", "") or "").split() or None,
                      help="patient ids streamed by real devices (e.g. the Galaxy Watch demo patient)")
     run.add_argument("--auto-scenarios-per-hour", type=float, default=float(_env("RPM_SIM_AUTO_SCENARIOS", "0")))

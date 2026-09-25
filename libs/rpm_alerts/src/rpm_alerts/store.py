@@ -35,6 +35,11 @@ class IngestResult:
     severity_raised: bool
 
 
+def _cause(actor: str) -> str:
+    """Why a page is going out, from who asked for it: a sensor event, the agent, or a clinician."""
+    return "event" if actor == "system" else "agent" if actor.startswith("agent") else "manual"
+
+
 def _title(event_type: str, summary: str) -> str:
     return f"{EVENT_LABELS.get(event_type, event_type)} — {summary}"[:240]
 
@@ -46,22 +51,32 @@ class AlertStore:
         self.consumer = consumer
 
     # ------------------------------------------------------------------ helpers
+    # A page already pending keeps its first cause: latency is measured from the earliest reason to page.
+    _CAUSE = ("notify_cause = CASE WHEN notify_pending_tier IS NULL THEN %(cause)s ELSE COALESCE(notify_cause, "
+              "%(cause)s) END, notify_cause_at = CASE WHEN notify_pending_tier IS NULL THEN %(cause_at)s "
+              "ELSE LEAST(notify_cause_at, %(cause_at)s) END")
+
     @staticmethod
     def _timeline(conn: psycopg.Connection, alert_id, kind: str, actor: str, summary: str,
                   details: dict | None = None) -> None:
         conn.execute("INSERT INTO alert_timeline (alert_id, kind, actor, summary, details) VALUES (%s,%s,%s,%s,%s)",
                       (alert_id, kind, actor, summary, Jsonb(details) if details else None))
 
-    def _escalate_to(self, cur, row: dict, severity: str, actor: str, reason: str) -> bool:
+    def _escalate_to(self, cur, row: dict, severity: str, actor: str, reason: str,
+                     cause_at: datetime | None = None) -> bool:
         """Raise severity (never lower). Re-pages even if the alert had been acknowledged."""
         if SEVERITY_RANK[severity] <= SEVERITY_RANK[row["severity"]]:
             return False
         level = max(row["tier"], self.policy.initial(severity))
         cur.execute(
-            "UPDATE alerts SET severity=%s, tier=%s, status=%s, notify_pending_tier=%s, next_escalation_at=%s, "
-            "updated_at=now() WHERE alert_id=%s",
-            (severity, level, "escalated" if level > row["tier"] else "open", level,
-             utcnow() + self.policy.timeout(level), row["alert_id"]))
+            "UPDATE alerts SET severity=%(severity)s, tier=%(level)s, status=%(status)s, "
+            "notify_pending_tier=%(level)s, next_escalation_at=%(next)s, updated_at=now(), " + self._CAUSE +
+            " WHERE alert_id=%(alert_id)s",
+            # An alert already paged past its first tier stays "escalated": dropping back to "open" would make the
+            # notifier treat the re-page as a first page and send the patient a second reassurance.
+            {"severity": severity, "level": level, "next": utcnow() + self.policy.timeout(level),
+             "status": "escalated" if level > row["tier"] or row["status"] == "escalated" else "open",
+             "cause": _cause(actor), "cause_at": cause_at or utcnow(), "alert_id": row["alert_id"]})
         self._timeline(cur, row["alert_id"], "severity_raised", actor,
                        f"Severity {row['severity']} → {severity}: {reason}", {"tier": level})
         return True
@@ -94,10 +109,10 @@ class AlertStore:
             alert_id = uuid7()
             cur.execute(
                 "INSERT INTO alerts (alert_id, patient_id, status, severity, tier, title, source_event_id, "
-                "event_types, first_event_at, next_escalation_at, notify_pending_tier) "
-                "VALUES (%s,%s,'open',%s,%s,%s,%s,%s,%s,%s,%s)",
+                "event_types, first_event_at, next_escalation_at, notify_pending_tier, notify_cause, notify_cause_at) "
+                "VALUES (%s,%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,'event',%s)",
                 (alert_id, ev.patient_id, severity, level, _title(ev.type, ev.summary), ev.event_id, [ev.type],
-                 ev.occurred_at, utcnow() + self.policy.timeout(level), level))
+                 ev.occurred_at, utcnow() + self.policy.timeout(level), level, ev.occurred_at))
             self._timeline(cur, alert_id, "opened", "system",
                            f"{EVENT_LABELS.get(ev.type, ev.type)} ({severity}): {ev.summary}", details)
             return IngestResult(alert_id, True, False)
@@ -107,7 +122,7 @@ class AlertStore:
             "event_types = (SELECT array_agg(DISTINCT t) FROM unnest(event_types || %s::text) t) WHERE alert_id=%s",
             (ev.type, row["alert_id"]))
         self._timeline(cur, row["alert_id"], "event_attached", "system", f"{ev.type}: {ev.summary}", details)
-        raised = self._escalate_to(cur, row, severity, "system", f"{ev.type} ({ev.summary})")
+        raised = self._escalate_to(cur, row, severity, "system", f"{ev.type} ({ev.summary})", ev.occurred_at)
         return IngestResult(row["alert_id"], False, raised)
 
     # ------------------------------------------------------------------ clinician / agent actions
@@ -147,9 +162,11 @@ class AlertStore:
                 self._timeline(cur, alert_id, "note", actor, f"Escalation requested at top tier: {reason}")
                 return row
             row = cur.execute(
-                "UPDATE alerts SET tier=%s, status='escalated', notify_pending_tier=%s, next_escalation_at=%s, "
-                "updated_at=now() WHERE alert_id=%s RETURNING *",
-                (nxt, nxt, utcnow() + self.policy.timeout(nxt), alert_id)).fetchone()
+                "UPDATE alerts SET tier=%(nxt)s, status='escalated', notify_pending_tier=%(nxt)s, "
+                "next_escalation_at=%(next)s, updated_at=now(), " + self._CAUSE +
+                " WHERE alert_id=%(alert_id)s RETURNING *",
+                {"nxt": nxt, "next": utcnow() + self.policy.timeout(nxt), "cause": _cause(actor),
+                 "cause_at": utcnow(), "alert_id": alert_id}).fetchone()
             self._timeline(cur, alert_id, "escalated", actor,
                            f"Escalated to {self.policy.tier(nxt).name}: {reason}", {"tier": nxt})
             return row
@@ -185,17 +202,21 @@ class AlertStore:
                 waited = self.policy.timeout(row["tier"]).total_seconds()
                 if nxt is not None:
                     row = cur.execute(
-                        "UPDATE alerts SET tier=%s, status='escalated', notify_pending_tier=%s, next_escalation_at=%s,"
-                        " updated_at=now() WHERE alert_id=%s RETURNING *",
-                        (nxt, nxt, utcnow() + self.policy.timeout(nxt), row["alert_id"])).fetchone()
+                        "UPDATE alerts SET tier=%(nxt)s, status='escalated', notify_pending_tier=%(nxt)s, "
+                        "next_escalation_at=%(next)s, updated_at=now(), " + self._CAUSE +
+                        " WHERE alert_id=%(alert_id)s RETURNING *",
+                        {"nxt": nxt, "next": utcnow() + self.policy.timeout(nxt), "cause": "timer",
+                         "cause_at": row["next_escalation_at"], "alert_id": row["alert_id"]}).fetchone()
                     self._timeline(cur, row["alert_id"], "escalated", "system",
                                    f"Not acknowledged within {waited:.0f}s → {self.policy.tier(nxt).name}",
                                    {"tier": nxt})
                 elif row["reminders_sent"] < self.policy.max_reminders:
                     row = cur.execute(
                         "UPDATE alerts SET reminders_sent = reminders_sent + 1, notify_pending_tier=tier, "
-                        "next_escalation_at=%s, updated_at=now() WHERE alert_id=%s RETURNING *",
-                        (utcnow() + self.policy.timeout(row["tier"]), row["alert_id"])).fetchone()
+                        "next_escalation_at=%(next)s, updated_at=now(), " + self._CAUSE +
+                        " WHERE alert_id=%(alert_id)s RETURNING *",
+                        {"next": utcnow() + self.policy.timeout(row["tier"]), "cause": "timer",
+                         "cause_at": row["next_escalation_at"], "alert_id": row["alert_id"]}).fetchone()
                     self._timeline(cur, row["alert_id"], "escalated", "system",
                                    f"Still unacknowledged — reminder {row['reminders_sent']} to "
                                    f"{self.policy.tier(row['tier']).name}")
@@ -223,17 +244,18 @@ class AlertStore:
                 for n in records:
                     cur.execute(
                         "INSERT INTO notifications (notification_id, alert_id, tier, channel, recipient, status, "
-                        "latency_ms, provider_ref, error, payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "latency_ms, provider_ref, error, payload, cause) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (uuid7(), row["alert_id"], tier, n["channel"], n["recipient"], n["status"],
-                         n.get("latency_ms"), n.get("provider_ref"), n.get("error"), Jsonb(n.get("payload") or {})))
+                         n.get("latency_ms"), n.get("provider_ref"), n.get("error"), Jsonb(n.get("payload") or {}),
+                         n.get("cause")))
                 sent = [f"{n['channel']}→{n['recipient']}" for n in records if n["status"] == "sent"]
                 failed = [n["channel"] for n in records if n["status"] == "failed"]
                 self._timeline(cur, row["alert_id"], "notified", "system",
                                f"Tier {tier} ({self.policy.tier(tier).name}) notified: {', '.join(sent) or 'none'}"
                                + (f"; failed: {', '.join(failed)}" if failed else ""),
                                {"tier": tier, "notifications": records})
-                cur.execute("UPDATE alerts SET notify_pending_tier=NULL WHERE alert_id=%s AND notify_pending_tier=%s",
-                             (row["alert_id"], tier))
+                cur.execute("UPDATE alerts SET notify_pending_tier=NULL, notify_cause=NULL, notify_cause_at=NULL "
+                            "WHERE alert_id=%s AND notify_pending_tier=%s", (row["alert_id"], tier))
                 done.append(row)
         return done
 
@@ -249,7 +271,7 @@ class AlertStore:
                 "SELECT at, kind, actor, summary, details FROM alert_timeline WHERE alert_id=%s ORDER BY at, id",
                 (alert_id,)).fetchall()
             alert["notifications"] = cur.execute(
-                "SELECT tier, channel, recipient, status, sent_at, latency_ms, error FROM notifications "
+                "SELECT tier, channel, recipient, status, sent_at, latency_ms, cause, error FROM notifications "
                 "WHERE alert_id=%s ORDER BY sent_at", (alert_id,)).fetchall()
             return alert
 

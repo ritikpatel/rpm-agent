@@ -57,7 +57,7 @@ spec:
   selector: { matchLabels: { app: {{ $name }} } }
   template:
     metadata:
-      labels: { app: {{ $name }} }
+      labels: { app: {{ $name }}, rpm.metrics: "true" }
       annotations: { prometheus.io/scrape: "true", prometheus.io/port: "9100" }
     spec:
       serviceAccountName: {{ $name }}
@@ -71,8 +71,10 @@ spec:
             {{- include "rpm.env" $root | nindent 12 }}
             {{- with $extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
           {{- if $port }}
-          ports: [{ name: http, containerPort: {{ $port }} }]
+          ports: [{ name: http, containerPort: {{ $port }} }, { name: metrics, containerPort: 9100 }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          {{- else }}
+          ports: [{ name: metrics, containerPort: 9100 }]
           {{- end }}
           securityContext: {{- toYaml $root.Values.containerSecurityContext | nindent 12 }}
           volumeMounts:

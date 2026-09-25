@@ -10,7 +10,7 @@ spec:
   selector: { matchLabels: { app: stream-engine } }
   template:
     metadata:
-      labels: { app: stream-engine }
+      labels: { app: stream-engine, rpm.metrics: "true" }
       annotations: { prometheus.io/scrape: "true", prometheus.io/port: "9100" }
     spec:
       serviceAccountName: stream-engine

@@ -24,6 +24,7 @@ config:
 secrets:
   db: rpm-db              # DATABASE_URL, JDBC_URL, DB_USER, DB_PASSWORD (created by cloud-up.sh)
   simMqtt: rpm-sim-mqtt   # ca.pem, cert.pem, key.pem for the simulator fleet certificate
+  icuGatewayMqtt: rpm-icu-gw-mqtt   # ca.pem, cert.pem, key.pem for the ICU gateway thing (container mode)
 
 podSecurityContext:
   runAsNonRoot: true
@@ -111,6 +112,15 @@ console:
     requests: { cpu: 20m, memory: 32Mi }
     limits: { memory: 128Mi }
 
+icuGateway:
+  mode: container         # container (pod on EKS) | greengrass (EC2 core device) | off (monitors publish MQTT)
+  thing: icu-gw-01
+  hl7Endpoint: ""         # greengrass mode: <core private IP>:2575 (terraform output greengrass_core_private_ip)
+  windowS: 15
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { memory: 192Mi }
+
 simulator:
   enabled: true
   mqttHost: ""            # AWS IoT Core ATS endpoint
@@ -121,3 +131,7 @@ simulator:
   resources:
     requests: { cpu: 100m, memory: 192Mi }
     limits: { memory: 512Mi }
+
+observability:
+  enabled: false                   # true when kube-prometheus-stack runs in the cluster (cloud-up.sh OBSERVABILITY=1)
+  prometheusRelease: kube-prometheus-stack

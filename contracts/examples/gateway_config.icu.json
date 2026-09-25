@@ -1,0 +1,15 @@
+{
+  "schema": "rpm.gateway_config.v1",
+  "gateway_id": "icu-gw-01",
+  "issued_at": "2026-10-02T10:00:00Z",
+  "beds": {
+    "sim-icu-90000007": {
+      "spo2_scale": 1,
+      "gcs_baseline": 15
+    },
+    "sim-icu-90000092": {
+      "spo2_scale": 2,
+      "on_supplemental_o2": false
+    }
+  }
+}

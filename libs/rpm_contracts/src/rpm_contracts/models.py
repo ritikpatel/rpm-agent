@@ -166,6 +166,21 @@ class Shadow(_Model):
 PROFILE_WINDOW_S: dict[str, int] = {"normal": 30, "elevated": 15, "critical": 5}
 
 
+class BedConfig(_Model):
+    spo2_scale: Literal[1, 2] | None = None
+    on_supplemental_o2: bool | None = None
+    gcs_baseline: float | None = Field(default=None, ge=3, le=15)
+
+
+class GatewayConfig(_Model):
+    """Retained per-bed clinical configuration for an ICU gateway (rpm/v1/dev/{gateway}/config)."""
+
+    schema_: Literal["rpm.gateway_config.v1"] = Field(default="rpm.gateway_config.v1", alias="schema")
+    gateway_id: str = Field(pattern=DEVICE_ID_PATTERN)
+    issued_at: datetime = Field(default_factory=utcnow)
+    beds: dict[str, BedConfig]
+
+
 # --------------------------------------------------------------------------- clinical events
 ClinicalEventType = Literal[
     "NEWS2_HIGH", "NEWS2_MEDIUM", "NEWS2_RED_PARAM", "NEWS2_RISING",

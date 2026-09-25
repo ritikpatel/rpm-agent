@@ -87,3 +87,22 @@ output "sim_private_key" {
 output "alert_sender_email" {
   value = var.alert_sender_email
 }
+
+output "icu_gateway_id" {
+  value = aws_iot_thing.icu_gateway.name
+}
+
+output "icu_gateway_cert_pem" {
+  value     = aws_iot_certificate.icu_gateway.certificate_pem
+  sensitive = true
+}
+
+output "icu_gateway_private_key" {
+  value     = aws_iot_certificate.icu_gateway.private_key
+  sensitive = true
+}
+
+output "greengrass_core_private_ip" {
+  description = "HL7 endpoint for the simulated monitors when the gateway runs on Greengrass (empty otherwise)."
+  value       = var.enable_greengrass_core ? aws_instance.gg_core[0].private_ip : ""
+}

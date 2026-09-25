@@ -139,6 +139,31 @@ def test_timer_escalation_then_reminders_then_stop(env):
     store.resolve(res.alert_id, "t", "cleanup")
 
 
+def test_worsening_after_timer_escalation_stays_escalated_without_second_reassurance(env):
+    store, notifier, chans, _ = env
+    res = store.ingest_event(event("p-1", "medium"))
+    store.dispatch_pending(notifier.send)
+    future = datetime.now(UTC)
+    for _ in range(2):  # timer: tier 1 -> 2 -> 3
+        future += timedelta(hours=1)
+        store.run_due_escalations(future)
+        store.dispatch_pending(notifier.send)
+    watch_before = len(chans["watch"].sent)
+    assert store.ingest_event(event("p-1", "high", "EDGE_ALERT")).severity_raised
+    assert store.ingest_event(event("p-1", "critical", "SPO2_CRITICAL")).severity_raised
+    sent = store.dispatch_pending(notifier.send)
+    a = store.get(res.alert_id)
+    assert a["status"] == "escalated" and a["tier"] == 3 and a["severity"] == "critical"
+    assert len(sent) == 1  # two raises before dispatch -> one page
+    assert len(chans["watch"].sent) == watch_before  # the patient was reassured once, at open
+    by_tier = {}
+    for n in a["notifications"]:
+        by_tier.setdefault((n["tier"], n["cause"]), []).append(n["latency_ms"])
+    assert {k for k in by_tier} == {(1, "event"), (2, "timer"), (3, "timer"), (3, "event")}
+    assert max(by_tier[(3, "event")]) < 5_000  # measured from the SpO2 event, not from when the alert opened
+    store.resolve(res.alert_id, "t", "cleanup")
+
+
 def test_failed_channel_is_recorded_and_others_still_sent(env, pool):
     store, _, chans, policy = env
     chans["email"] = FakeChannel("email", fail=True)

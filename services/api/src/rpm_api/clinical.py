@@ -169,16 +169,20 @@ class CommandIn(BaseModel):
 @router.post("/patients/{patient_id}/commands")
 def command(patient_id: str, body: CommandIn, request: Request,
             x_user: Annotated[str | None, Header()] = None) -> dict:
-    rows = _rows("SELECT device_id FROM patient_status WHERE patient_id=%s", (patient_id,))
+    rows = _rows("SELECT s.device_id, d.gateway_id FROM patient_status s LEFT JOIN device_assignments d "
+                 "ON d.device_id = s.device_id AND d.active_to IS NULL WHERE s.patient_id=%s", (patient_id,))
     if not rows or not rows[0]["device_id"]:
         raise HTTPException(404, "no active device")
+    gateway = rows[0]["gateway_id"]
+    if gateway and body.cmd != "SET_PROFILE":  # a bedside monitor has no patient UI and measures continuously
+        raise HTTPException(409, "bedside monitors behind the ICU gateway only accept SET_PROFILE")
     args = {"metric": "spo2"} if body.cmd == "SPOT_CHECK" else \
         {"profile": body.profile or "elevated"} if body.cmd == "SET_PROFILE" else \
         {"question_id": f"{body.topic or 'breathless'}-clin", "text": CHECKIN_TEXT[body.topic or "breathless"],
          "options": ["Yes", "No"]}
-    cmd = STATE["commander"].send(rows[0]["device_id"], body.cmd, args, f"user:{_user(x_user)}")
+    cmd = STATE["commander"].send(rows[0]["device_id"], body.cmd, args, f"user:{_user(x_user)}", via=gateway)
     audit(request, _user(x_user), "create", "DeviceCommand", str(cmd.cmd_id), patient_id, {"cmd": body.cmd})
-    return {"cmd_id": str(cmd.cmd_id), "device_id": rows[0]["device_id"]}
+    return {"cmd_id": str(cmd.cmd_id), "device_id": rows[0]["device_id"], "via": gateway}
 
 
 # ------------------------------------------------------------------ presenter controls (demo only)

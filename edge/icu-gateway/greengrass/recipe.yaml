@@ -1,0 +1,50 @@
+# AWS IoT Greengrass v2 component for the ICU bedside gateway. deploy.sh fills __VERSION__ and __ARTIFACT_URI__.
+RecipeFormatVersion: "2020-01-25"
+ComponentName: com.cloudbox.rpm.IcuGateway
+ComponentVersion: "__VERSION__"
+ComponentDescription: >-
+  ICU bedside gateway: HL7 v2 ORU^R01 (MLLP) from bedside monitors, bedside NEWS2 and alarms that work with the cloud
+  link down, durable store-and-forward, publish to AWS IoT Core through the nucleus as the core device's thing.
+ComponentPublisher: Cloud Box Technologies
+ComponentDependencies:
+  aws.greengrass.Nucleus:
+    VersionRequirement: ">=2.12.0 <3.0.0"
+    DependencyType: SOFT
+ComponentConfiguration:
+  DefaultConfiguration:
+    MllpPort: "2575"
+    StatusPort: "8081"
+    WindowS: "15"
+    LogLevel: INFO
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        com.cloudbox.rpm.IcuGateway:mqttproxy:1:
+          policyDescription: Publish bedside telemetry/events and receive commands + retained config as this core's thing
+          operations:
+            - aws.greengrass#PublishToIoTCore
+            - aws.greengrass#SubscribeToIoTCore
+          resources:
+            - rpm/v1/dev/{iot:thingName}/telemetry
+            - rpm/v1/dev/{iot:thingName}/events
+            - rpm/v1/dev/{iot:thingName}/cmd
+            - rpm/v1/dev/{iot:thingName}/config
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: "__ARTIFACT_URI__"
+        Unarchive: ZIP
+    Lifecycle:
+      Install:
+        Timeout: 600
+        Script: >-
+          python3.12 -m venv {work:path}/venv &&
+          {work:path}/venv/bin/pip install --quiet --no-index --find-links {artifacts:decompressedPath}/rpm-icu-gateway/wheels
+          "rpm-icu-gateway[greengrass]"
+      Run:
+        Script: >-
+          RPM_GW_THING={iot:thingName} RPM_GW_UPLINK=greengrass
+          RPM_GW_MLLP_PORT={configuration:/MllpPort} RPM_GW_STATUS_PORT={configuration:/StatusPort}
+          RPM_GW_WINDOW_S={configuration:/WindowS} RPM_GW_LOG_LEVEL={configuration:/LogLevel}
+          RPM_GW_OUTBOX_PATH={work:path}/outbox.db
+          exec {work:path}/venv/bin/rpm-icu-gateway

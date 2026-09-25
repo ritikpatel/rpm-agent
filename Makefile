@@ -31,6 +31,9 @@ seed:            ## FHIR + device registry + RAG index (RPM_DEMO_PATIENT=auto re
 	$(COMPOSE) --profile seed run --rm --build fhir-loader
 	$(COMPOSE) --profile seed run --rm --build rag-index
 
+obs:             ## Prometheus + Grafana latency dashboards (http://localhost:3001)
+	$(COMPOSE) --profile obs up -d prometheus grafana
+
 sim:             ## start the 150-patient device fleet simulator
 	$(COMPOSE) --profile sim up -d --build simulator
 

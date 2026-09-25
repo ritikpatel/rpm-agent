@@ -40,8 +40,9 @@ services:
 
   mosquitto:
     image: eclipse-mosquitto:2
-    volumes: ["./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro"]
-    ports: ["${RPM_MQTT_PORT:-1883}:1883"]
+    volumes: ["./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro",
+              "../../.secrets/dev-pki/mosquitto:/mosquitto/config/conf.d:ro"]
+    ports: ["${RPM_MQTT_PORT:-1883}:1883", "${RPM_MQTTS_PORT:-8883}:8883"]
     mem_limit: 128m
 
   kinesis:
@@ -196,7 +197,8 @@ services:
     build: { <<: *build, args: { PACKAGE: fhir-loader } }
     image: rpm/fhir-loader:dev
     command: ["fhir-loader", "all"]
-    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_DEMO_PATIENT: "${RPM_DEMO_PATIENT:-}" }
+    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_DEMO_PATIENT: "${RPM_DEMO_PATIENT:-}",
+                   RPM_ICU_GATEWAY: "${RPM_ICU_GATEWAY-icu-gw-01}", RPM_MQTT_HOST: mosquitto }
     volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
     depends_on: { db-migrate: { condition: service_completed_successfully } }
     restart: "no"
@@ -211,6 +213,23 @@ services:
     depends_on: { db-migrate: { condition: service_completed_successfully } }
     restart: "no"
 
+  # ------------------------------------------------------------------ ICU bedside gateway (plain-container form of the
+  # Greengrass component): HL7 v2 from the simulated monitors -> bedside NEWS2/alarms -> outbox -> MQTT as icu-gw-01
+  icu-gateway:
+    build: { <<: *build, args: { PACKAGE: rpm-icu-gateway } }
+    image: rpm/icu-gateway:dev
+    command: ["rpm-icu-gateway"]
+    environment:
+      RPM_GW_THING: icu-gw-01
+      RPM_GW_MQTT_HOST: mosquitto
+      RPM_GW_OUTBOX_PATH: /home/app/data/outbox.db
+      RPM_GW_LOG_LEVEL: ${RPM_LOG_LEVEL:-INFO}
+    volumes: ["gwdata:/home/app/data"]
+    ports: ["2575:2575", "8081:8081", "9110:9110"]   # MLLP, nurse-station status, metrics
+    depends_on: [mosquitto]
+    restart: unless-stopped
+    mem_limit: 128m
+
   simulator:
     profiles: ["sim"]
     build: { <<: *build, args: { PACKAGE: rpm-simulator } }
@@ -222,10 +241,37 @@ services:
       RPM_MQTT_HOST: mosquitto
       RPM_SIM_EXCLUDE: "${RPM_DEMO_PATIENT:-}"
       RPM_SIM_AUTO_SCENARIOS: "${RPM_SIM_AUTO_SCENARIOS:-0}"
+      RPM_SIM_ICU_HL7: "${RPM_SIM_ICU_HL7-icu-gateway:2575}"   # set empty to publish ICU beds over MQTT directly
     volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
-    depends_on: [mosquitto]
+    depends_on: [mosquitto, icu-gateway]
     restart: unless-stopped
+    mem_limit: 256m
+
+  # ------------------------------------------------------------------ observability (optional: make obs)
+  prometheus:
+    profiles: ["obs"]
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d"]
+    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+    mem_limit: 256m
+
+  grafana:
+    profiles: ["obs"]
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"          # local only: read-only viewer without login
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${RPM_GRAFANA_PASSWORD:-rpm-local}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/rpm-latency.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
     mem_limit: 256m
 
 volumes:
   pgdata:
+  gwdata:

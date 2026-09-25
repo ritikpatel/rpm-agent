@@ -186,11 +186,12 @@ export default function PatientView({ id, now, live, demo }: { id: string; now: 
               <h3 style={{ marginTop: 16 }}>Notifications</h3>
               <table className="small">
                 <thead><tr><th>Tier</th><th>Channel</th><th>Recipient</th><th>Status</th>
-                  <th className="num">Sensor → sent</th></tr></thead>
+                  <th className="num" title="From what caused the page: sensor reading, escalation timer, agent or clinician request">Cause → sent</th></tr></thead>
                 <tbody>{alert.notifications.map((n, i) => (
                   <tr key={i}><td>{n.tier}</td><td>{n.channel}</td><td>{n.recipient}</td>
                     <td>{n.status}{n.error ? ` (${n.error})` : ""}</td>
-                    <td className="num">{n.latency_ms != null ? `${(n.latency_ms / 1000).toFixed(2)} s` : "–"}</td></tr>
+                    <td className="num">{n.latency_ms != null ? `${(n.latency_ms / 1000).toFixed(2)} s` : "–"}
+                      {n.cause && n.cause !== "event" ? ` (${n.cause})` : ""}</td></tr>
                 ))}</tbody>
               </table>
             </div>}
