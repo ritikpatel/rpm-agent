@@ -1,0 +1,33 @@
+{{- if .Values.streamEngine.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-engine
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.streamEngine.replicas }}
+  strategy: { type: Recreate }   # avoid two consumers on the same shards during rollout
+  selector: { matchLabels: { app: stream-engine } }
+  template:
+    metadata:
+      labels: { app: stream-engine }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "9100" }
+    spec:
+      serviceAccountName: stream-engine
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: stream-engine
+          image: {{ include "rpm.image" (list . "stream-engine") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stream-engine"]
+          env:
+            {{- include "rpm.env" . | nindent 12 }}
+            - name: RPM_START_POSITION
+              value: {{ .Values.streamEngine.startPosition | quote }}
+            - name: RPM_RUN_MIGRATIONS
+              value: "false"
+          ports: [{ name: metrics, containerPort: 9100 }]
+          livenessProbe: { httpGet: { path: /, port: metrics }, periodSeconds: 20, failureThreshold: 3 }
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources: {{- toYaml .Values.streamEngine.resources | nindent 12 }}
+{{- end }}

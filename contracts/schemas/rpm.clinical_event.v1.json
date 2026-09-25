@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rpm.local/schemas/rpm.clinical_event.v1.json",
+  "title": "rpm.clinical_event.v1",
+  "description": "Server-side clinical event emitted by the stream engine to the agent work queue (and, when requires_alert is true, to the alert intake queue so rule-level alerts never depend on the LLM).",
+  "type": "object",
+  "required": ["schema", "event_id", "patient_id", "type", "severity", "occurred_at", "detected_at", "rule_id", "summary", "requires_alert"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "rpm.clinical_event.v1" },
+    "event_id": { "type": "string", "format": "uuid" },
+    "patient_id": { "type": "string" },
+    "device_id": { "type": ["string", "null"] },
+    "context": { "enum": ["home", "icu"] },
+    "type": {
+      "enum": [
+        "NEWS2_HIGH", "NEWS2_MEDIUM", "NEWS2_RED_PARAM", "NEWS2_RISING",
+        "HR_SUSTAINED_HIGH", "HR_SUSTAINED_LOW", "SPO2_LOW", "SPO2_CRITICAL",
+        "SOS", "FALL", "EDGE_ALERT", "DEVICE_SILENT", "DATA_GAP", "DEVICE_STATUS", "CHECKIN_REPLY"
+      ]
+    },
+    "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "detected_at": { "type": "string", "format": "date-time" },
+    "rule_id": { "type": "string" },
+    "summary": { "type": "string" },
+    "requires_alert": { "type": "boolean" },
+    "evidence": { "type": "object" },
+    "news2": { "type": ["object", "null"] },
+    "trace": {
+      "type": "object",
+      "description": "Per-hop timestamps for latency measurement",
+      "properties": {
+        "msg_id": { "type": "string" },
+        "window_end": { "type": "string", "format": "date-time" },
+        "edge_sent": { "type": "string", "format": "date-time" },
+        "ingest_at": { "type": "string", "format": "date-time" },
+        "processed_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

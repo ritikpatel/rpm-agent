@@ -1,0 +1,35 @@
+{{- if .Values.fhirLoader.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fhir-loader
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels: { app: fhir-loader }
+    spec:
+      serviceAccountName: fhir-loader
+      restartPolicy: OnFailure
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: loader
+          image: {{ include "rpm.image" (list . "fhir-loader") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["fhir-loader", "all", "--workers", {{ .Values.fhirLoader.workers | quote }}]
+          env:
+            {{- include "rpm.env" . | nindent 12 }}
+            - { name: RPM_MIMIC_DIR, value: {{ .Values.config.mimicDir | quote }} }
+            - { name: RPM_DEMO_PATIENT, value: {{ .Values.config.demoPatient | quote }} }
+            - { name: RPM_DEMO_DEVICE, value: {{ .Values.config.demoDevice | quote }} }
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 768Mi } }
+      volumes: [{ name: tmp, emptyDir: {} }]
+{{- end }}

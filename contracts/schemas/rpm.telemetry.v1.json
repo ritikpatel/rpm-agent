@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rpm.local/schemas/rpm.telemetry.v1.json",
+  "title": "rpm.telemetry.v1",
+  "description": "Windowed vital-sign summary published by any edge source (watch, phone gateway, ICU gateway, simulator) on rpm/v1/dev/{thing}/telemetry. Contains no patient identifiers: device-to-patient mapping is resolved server-side.",
+  "type": "object",
+  "required": ["schema", "msg_id", "device_id", "seq", "source", "ts", "metrics"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "rpm.telemetry.v1" },
+    "msg_id": { "type": "string", "format": "uuid", "description": "UUIDv7; idempotency key" },
+    "device_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{3,64}$", "description": "Must equal the IoT thing name; the cloud trusts the topic, not this field" },
+    "seq": { "type": "integer", "minimum": 0, "description": "Per-device monotonic counter for gap detection" },
+    "source": { "enum": ["galaxy_watch", "wearos_hs", "wearos_emulator", "simulator", "icu_gateway"] },
+    "context": { "enum": ["home", "icu"], "default": "home" },
+    "ts": {
+      "type": "object",
+      "required": ["window_start", "window_end", "edge_sent"],
+      "additionalProperties": false,
+      "properties": {
+        "window_start": { "type": "string", "format": "date-time" },
+        "window_end": { "type": "string", "format": "date-time", "description": "Event time of this summary" },
+        "edge_sent": { "type": "string", "format": "date-time" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "heart_rate": { "$ref": "#/$defs/aggregate", "description": "beats/min" },
+        "hrv_rmssd": { "$ref": "#/$defs/scalar", "description": "ms" },
+        "spo2": { "$ref": "#/$defs/spo2", "description": "%" },
+        "resp_rate": { "$ref": "#/$defs/scalar", "description": "breaths/min" },
+        "sbp": { "$ref": "#/$defs/scalar", "description": "mmHg" },
+        "dbp": { "$ref": "#/$defs/scalar", "description": "mmHg" },
+        "temp": { "$ref": "#/$defs/scalar", "description": "core body temperature, Cel" },
+        "skin_temp": { "$ref": "#/$defs/scalar", "description": "wrist skin temperature, Cel (not used for NEWS2)" },
+        "gcs": { "$ref": "#/$defs/scalar", "description": "Glasgow Coma Scale total 3-15" },
+        "steps": { "$ref": "#/$defs/scalar" },
+        "activity": {
+          "type": "object",
+          "required": ["value"],
+          "additionalProperties": false,
+          "properties": { "value": { "enum": ["resting", "light", "moderate", "vigorous", "sleep", "unknown"] } }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flags": { "type": "array", "items": { "type": "string" } },
+        "profile": { "enum": ["normal", "elevated", "critical"] },
+        "buffered": { "type": "boolean", "description": "true when delivered late from the store-and-forward outbox" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "battery_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "on_wrist": { "type": "boolean" },
+        "fw": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "quality": { "type": "number", "minimum": 0, "maximum": 1, "description": "Signal-quality index; readings below the server threshold are stored but not scored" },
+    "scalar": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number" },
+        "quality": { "$ref": "#/$defs/quality" }
+      }
+    },
+    "spo2": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number", "minimum": 50, "maximum": 100 },
+        "quality": { "$ref": "#/$defs/quality" },
+        "spot_check": { "type": "boolean" }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "required": ["mean"],
+      "additionalProperties": false,
+      "properties": {
+        "mean": { "type": "number" },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "n": { "type": "integer", "minimum": 0 },
+        "quality": { "$ref": "#/$defs/quality" }
+      }
+    }
+  }
+}

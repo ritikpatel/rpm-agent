@@ -1,0 +1,31 @@
+{{- if .Values.dbMigrate.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels: { app: db-migrate }
+    spec:
+      restartPolicy: OnFailure
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "rpm.image" (list . "db-migrate") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "rpm_common.migrate"]
+          env:
+            {{- include "rpm.env" . | nindent 12 }}
+            - name: RPM_CREATE_DATABASES
+              value: {{ .Values.dbMigrate.createDatabases | quote }}
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources: { requests: { cpu: 50m, memory: 96Mi }, limits: { memory: 256Mi } }
+{{- end }}

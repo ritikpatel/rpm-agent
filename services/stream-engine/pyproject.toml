@@ -1,0 +1,18 @@
+[project]
+name = "stream-engine"
+version = "0.1.0"
+description = "Kinesis consumer: validate, dedupe, device->patient, NEWS2, deterministic rules, persist, emit clinical events"
+requires-python = ">=3.12"
+dependencies = ["rpm-contracts", "rpm-features", "rpm-common"]
+
+[project.scripts]
+stream-engine = "stream_engine.main:main"
+
+[tool.uv.sources]
+rpm-contracts = { workspace = true }
+rpm-features = { workspace = true }
+rpm-common = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

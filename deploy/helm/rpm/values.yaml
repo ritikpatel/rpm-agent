@@ -1,0 +1,77 @@
+# Defaults target the AWS demo environment; infra/scripts/cloud-up.sh supplies registry, tag and endpoints.
+image:
+  registry: ""            # <account>.dkr.ecr.<region>.amazonaws.com
+  tag: dev
+  pullPolicy: IfNotPresent
+
+aws:
+  region: us-east-1
+
+config:
+  env: aws
+  logLevel: INFO
+  kinesisStream: rpm-telemetry
+  clinicalQueue: rpm-clinical-events
+  alertQueue: rpm-alert-intake
+  redisUrl: ""            # rediss://<elasticache-primary>:6379/0
+  mimicDir: ""            # s3://<data-bucket>/mimic
+  demoPatient: auto       # patient handed to the real Galaxy Watch (gw-demo-01)
+  demoDevice: gw-demo-01
+
+secrets:
+  db: rpm-db              # DATABASE_URL, JDBC_URL, DB_USER, DB_PASSWORD (created by cloud-up.sh)
+  simMqtt: rpm-sim-mqtt   # ca.pem, cert.pem, key.pem for the simulator fleet certificate
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile: { type: RuntimeDefault }
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: ["ALL"] }
+
+dbMigrate:
+  enabled: true
+  createDatabases: hapi
+
+streamEngine:
+  enabled: true
+  replicas: 1             # one consumer per shard set (see docs/adr/0002)
+  startPosition: TRIM_HORIZON
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 512Mi }
+
+api:
+  enabled: true
+  replicas: 1
+  service: { type: ClusterIP, port: 80 }
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 512Mi }
+
+fhir:
+  enabled: true
+  image: hapiproject/hapi:v8.12.0-1
+  resources:
+    requests: { cpu: 250m, memory: 1Gi }
+    limits: { memory: 1536Mi }
+
+fhirLoader:
+  enabled: true
+  workers: 3
+
+simulator:
+  enabled: true
+  mqttHost: ""            # AWS IoT Core ATS endpoint
+  mqttPort: 8883
+  shards: 2
+  windowS: 30
+  autoScenariosPerHour: 0
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 512Mi }

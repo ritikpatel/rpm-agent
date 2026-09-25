@@ -1,0 +1,152 @@
+# Local stack: mirrors the AWS architecture with open-source stand-ins
+#   IoT Core -> Mosquitto + iot-bridge (rule emulator) | Kinesis -> kinesis-mock | SQS -> ElasticMQ
+#   RDS -> Postgres+pgvector | ElastiCache -> Redis | FHIR -> HAPI FHIR (same image as on EKS)
+name: rpm
+
+x-env: &env
+  RPM_ENV: local
+  RPM_LOG_LEVEL: ${RPM_LOG_LEVEL:-INFO}
+  RPM_DATABASE_URL: postgresql://rpm:rpm@postgres:5432/rpm
+  RPM_REDIS_URL: redis://redis:6379/0
+  RPM_AWS_REGION: us-east-1
+  RPM_KINESIS_ENDPOINT: http://kinesis:4568
+  RPM_SQS_ENDPOINT: http://sqs:9324
+  RPM_FHIR_BASE_URL: http://fhir:8080/fhir
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local
+
+x-build: &build
+  context: ../..
+  dockerfile: deploy/docker/python-service.Dockerfile
+
+services:
+  # ------------------------------------------------------------------ infrastructure
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16
+    environment: { POSTGRES_USER: rpm, POSTGRES_PASSWORD: rpm, POSTGRES_DB: rpm }
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/01-databases.sql:/docker-entrypoint-initdb.d/01-databases.sql:ro
+    ports: ["${RPM_PG_PORT:-5432}:5432"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U rpm -d rpm"], interval: 3s, retries: 30 }
+    mem_limit: 512m
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["${RPM_REDIS_PORT:-6379}:6379"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 3s, retries: 30 }
+    mem_limit: 300m
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    volumes: ["./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro"]
+    ports: ["${RPM_MQTT_PORT:-1883}:1883"]
+    mem_limit: 128m
+
+  kinesis:
+    image: ghcr.io/etspaceman/kinesis-mock:0.6.2
+    environment:
+      INITIALIZE_STREAMS: rpm-telemetry:2
+      AWS_REGION: us-east-1
+      LOG_LEVEL: WARN
+    ports: ["${RPM_KINESIS_PORT:-4568}:4568"]
+    mem_limit: 512m
+
+  sqs:
+    image: softwaremill/elasticmq-native:1.7.1
+    volumes: ["./elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro"]
+    ports: ["${RPM_SQS_PORT:-9324}:9324"]
+    mem_limit: 256m
+
+  fhir:
+    image: hapiproject/hapi:v8.12.0-1
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hapi
+      SPRING_DATASOURCE_USERNAME: rpm
+      SPRING_DATASOURCE_PASSWORD: rpm
+      SPRING_DATASOURCE_DRIVERCLASSNAME: org.postgresql.Driver
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
+      SPRING_JPA_PROPERTIES_HIBERNATE_SEARCH_ENABLED: "false"
+      HAPI_FHIR_FHIR_VERSION: R4
+      HAPI_FHIR_CR_ENABLED: "false"
+      HAPI_FHIR_TESTER_HOME_NAME: RPM local FHIR
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx900m -XX:+UseSerialGC
+    ports: ["${RPM_FHIR_PORT:-8080}:8080"]
+    mem_limit: 1300m
+
+  # ------------------------------------------------------------------ platform services
+  db-migrate:
+    build: { <<: *build, args: { PACKAGE: rpm-common } }
+    image: rpm/rpm-common:dev
+    command: ["python", "-m", "rpm_common.migrate"]
+    environment: *env
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+
+  iot-bridge:
+    build: { <<: *build, args: { PACKAGE: iot-bridge } }
+    image: rpm/iot-bridge:dev
+    command: ["iot-bridge"]
+    environment: { <<: *env, RPM_MQTT_HOST: mosquitto, RPM_METRICS_PORT: "9102" }
+    ports: ["9102:9102"]
+    depends_on: [mosquitto, kinesis]
+    restart: unless-stopped
+    mem_limit: 128m
+
+  stream-engine:
+    build: { <<: *build, args: { PACKAGE: stream-engine } }
+    image: rpm/stream-engine:dev
+    command: ["stream-engine"]
+    environment: { <<: *env, RPM_METRICS_PORT: "9101", RPM_START_POSITION: TRIM_HORIZON }
+    ports: ["9101:9101"]
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      kinesis: { condition: service_started }
+      sqs: { condition: service_started }
+    restart: unless-stopped
+    mem_limit: 256m
+
+  api:
+    build: { <<: *build, args: { PACKAGE: rpm-api } }
+    image: rpm/api:dev
+    command: ["rpm-api"]
+    environment: *env
+    ports: ["${RPM_API_PORT:-8000}:8000"]
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+    mem_limit: 256m
+
+  # ------------------------------------------------------------------ one-shots / tools (profiles)
+  fhir-loader:
+    profiles: ["seed"]
+    build: { <<: *build, args: { PACKAGE: fhir-loader } }
+    image: rpm/fhir-loader:dev
+    command: ["fhir-loader", "all"]
+    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_DEMO_PATIENT: "${RPM_DEMO_PATIENT:-}" }
+    volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
+    depends_on: { db-migrate: { condition: service_completed_successfully } }
+    restart: "no"
+
+  simulator:
+    profiles: ["sim"]
+    build: { <<: *build, args: { PACKAGE: rpm-simulator } }
+    image: rpm/simulator:dev
+    command: ["rpm-sim", "run"]
+    environment:
+      <<: *env
+      RPM_MIMIC_DIR: /data/mimic
+      RPM_MQTT_HOST: mosquitto
+      RPM_SIM_EXCLUDE: "${RPM_DEMO_PATIENT:-}"
+      RPM_SIM_AUTO_SCENARIOS: "${RPM_SIM_AUTO_SCENARIOS:-0}"
+    volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
+    depends_on: [mosquitto]
+    restart: unless-stopped
+    mem_limit: 256m
+
+volumes:
+  pgdata:

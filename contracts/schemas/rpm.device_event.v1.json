@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rpm.local/schemas/rpm.device_event.v1.json",
+  "title": "rpm.device_event.v1",
+  "description": "Discrete device event published on rpm/v1/dev/{thing}/events (QoS 1, sent ahead of queued telemetry).",
+  "type": "object",
+  "required": ["schema", "msg_id", "device_id", "seq", "source", "type", "ts"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "rpm.device_event.v1" },
+    "msg_id": { "type": "string", "format": "uuid" },
+    "device_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{3,64}$" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "source": { "enum": ["galaxy_watch", "wearos_hs", "wearos_emulator", "simulator", "icu_gateway"] },
+    "type": { "enum": ["SOS", "FALL", "EDGE_ALERT", "CHECKIN_REPLY", "DEVICE_STATUS", "SPOT_CHECK_RESULT"] },
+    "ts": {
+      "type": "object",
+      "required": ["occurred", "edge_sent"],
+      "additionalProperties": false,
+      "properties": {
+        "occurred": { "type": "string", "format": "date-time" },
+        "edge_sent": { "type": "string", "format": "date-time" }
+      }
+    },
+    "data": {
+      "type": "object",
+      "description": "Type-specific payload. EDGE_ALERT: {rule, severity, value}. CHECKIN_REPLY: {question_id, answer}. DEVICE_STATUS: {battery_pct, on_wrist, reason}. SPOT_CHECK_RESULT: {metric, value, quality}."
+    }
+  }
+}

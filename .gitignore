@@ -1,0 +1,48 @@
+# --- confidential client material & data (never commit) ---
+synthetic_mimic_150patients/
+data/
+*.docx
+.recall/
+
+# --- secrets / certs ---
+.env
+*.pem
+*.key
+*.crt
+certs/
+!deploy/compose/mosquitto/*.conf
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# --- node ---
+node_modules/
+apps/*/dist/
+
+# --- terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl.bak
+terraform.tfvars
+
+# --- android ---
+.gradle/
+local.properties
+edge/**/build/
+*.iml
+.idea/
+
+# --- os ---
+.DS_Store
+
+# --- local device certificates written by cloud-up.sh
+.secrets/

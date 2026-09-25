@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rpm
+description: Agentic AI Remote Patient Monitoring platform (data plane, FHIR, API, simulator)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

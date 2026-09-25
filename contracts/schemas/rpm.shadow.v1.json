@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rpm.local/schemas/rpm.shadow.v1.json",
+  "title": "rpm.shadow.v1",
+  "description": "Monitoring profile held in the AWS IoT Device Shadow (state.desired set by cloud/agents, state.reported echoed by the device).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profile": { "enum": ["normal", "elevated", "critical"] },
+    "summary_window_s": { "type": "integer", "enum": [5, 15, 30, 60] },
+    "spo2_spot_interval_min": { "type": "integer", "minimum": 5, "maximum": 240 },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hr_high": { "type": "number" },
+        "hr_low": { "type": "number" },
+        "spo2_low": { "type": "number" },
+        "sustain_s": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+[project]
+name = "fhir-loader"
+version = "0.1.0"
+description = "Loads the MIMIC-shaped cohort into HAPI FHIR R4 and seeds the operational device registry"
+requires-python = ">=3.12"
+dependencies = ["rpm-mimic", "rpm-common", "httpx>=0.27"]
+
+[project.scripts]
+fhir-loader = "fhir_loader.cli:main"
+
+[tool.uv.sources]
+rpm-mimic = { workspace = true }
+rpm-common = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

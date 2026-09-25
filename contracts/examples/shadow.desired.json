@@ -1,0 +1,6 @@
+{
+  "profile": "elevated",
+  "summary_window_s": 15,
+  "spo2_spot_interval_min": 30,
+  "thresholds": { "hr_high": 120, "hr_low": 45, "spo2_low": 90, "sustain_s": 120 }
+}

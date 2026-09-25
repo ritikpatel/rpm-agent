@@ -1,0 +1,55 @@
+# EKS Pod Identity: each workload's Kubernetes service account maps to its own least-privilege IAM role.
+data "aws_iam_policy_document" "pod_trust" {
+  statement {
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+  }
+}
+
+locals {
+  kms_use = { Effect = "Allow", Action = ["kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.main.arn }
+  data_read = [
+    { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.data.arn },
+    { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.data.arn}/*" },
+  ]
+  workloads = {
+    "stream-engine" = [
+      { Effect = "Allow", Action = ["kinesis:GetRecords", "kinesis:GetShardIterator", "kinesis:DescribeStreamSummary",
+      "kinesis:ListShards"], Resource = aws_kinesis_stream.telemetry.arn },
+      { Effect = "Allow", Action = ["sqs:SendMessage", "sqs:GetQueueUrl"],
+      Resource = [for q in aws_sqs_queue.q : q.arn] },
+      local.kms_use,
+    ]
+    "simulator"   = concat(local.data_read, [local.kms_use])
+    "fhir-loader" = concat(local.data_read, [local.kms_use])
+    "api" = [
+      # cloud -> device commands (used from week 2 by the agents / console)
+      { Effect = "Allow", Action = ["iot:Publish"], Resource = "${local.iot_arn}:topic/rpm/v1/dev/*/cmd" },
+      { Effect = "Allow", Action = ["iot:GetThingShadow", "iot:UpdateThingShadow"], Resource = "${local.iot_arn}:thing/*" },
+      { Effect = "Allow", Action = ["iot:Publish"], Resource = "${local.iot_arn}:topic/rpm/v1/sim/control" },
+    ]
+  }
+}
+
+resource "aws_iam_role" "workload" {
+  for_each           = local.workloads
+  name               = "${local.name}-${each.key}"
+  assume_role_policy = data.aws_iam_policy_document.pod_trust.json
+}
+
+resource "aws_iam_role_policy" "workload" {
+  for_each = local.workloads
+  role     = aws_iam_role.workload[each.key].id
+  policy   = jsonencode({ Version = "2012-10-17", Statement = each.value })
+}
+
+resource "aws_eks_pod_identity_association" "workload" {
+  for_each        = local.workloads
+  cluster_name    = module.eks.cluster_name
+  namespace       = local.namespace
+  service_account = each.key
+  role_arn        = aws_iam_role.workload[each.key].arn
+}

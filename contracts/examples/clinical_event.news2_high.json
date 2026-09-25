@@ -1,0 +1,23 @@
+{
+  "schema": "rpm.clinical_event.v1",
+  "event_id": "01920c4e-b000-7000-8000-000000000004",
+  "patient_id": "p-90000007",
+  "device_id": "sim-icu-90000007",
+  "context": "icu",
+  "type": "NEWS2_HIGH",
+  "severity": "high",
+  "occurred_at": "2026-10-02T10:15:30Z",
+  "detected_at": "2026-10-02T10:15:30.600Z",
+  "rule_id": "news2.high",
+  "summary": "NEWS2 8 (high): HR 2, RR 2, SpO2 2, SBP 2",
+  "requires_alert": true,
+  "evidence": { "heart_rate": 118, "resp_rate": 24, "spo2": 91, "sbp": 98 },
+  "news2": { "total": 8, "band": "high", "partial": false },
+  "trace": {
+    "msg_id": "01920c4e-8000-7000-8000-000000000001",
+    "window_end": "2026-10-02T10:15:30Z",
+    "edge_sent": "2026-10-02T10:15:30.120Z",
+    "ingest_at": "2026-10-02T10:15:30.310Z",
+    "processed_at": "2026-10-02T10:15:30.590Z"
+  }
+}

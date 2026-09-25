@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rpm.local/schemas/rpm.command.v1.json",
+  "title": "rpm.command.v1",
+  "description": "Cloud-to-device command on rpm/v1/dev/{thing}/cmd. Devices must ignore expired commands and ack via a device_event where noted.",
+  "type": "object",
+  "required": ["schema", "cmd_id", "cmd", "issued_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "rpm.command.v1" },
+    "cmd_id": { "type": "string", "format": "uuid" },
+    "cmd": { "enum": ["SET_PROFILE", "SPOT_CHECK", "CHECKIN", "NOTIFY", "INCOMING_CALL"] },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "issued_by": { "type": "string", "description": "agent id or clinician id, for audit" },
+    "args": {
+      "type": "object",
+      "description": "SET_PROFILE: {profile}. SPOT_CHECK: {metric: spo2|hr}. CHECKIN: {question_id, text, options[]}. NOTIFY: {title, text, priority}. INCOMING_CALL: {caller, room_url}."
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema": "rpm.telemetry.v1",
+  "msg_id": "01920c4e-7b1a-7c3e-9f00-2b6c1d0e4a11",
+  "device_id": "gw-demo-01",
+  "seq": 18234,
+  "source": "galaxy_watch",
+  "context": "home",
+  "ts": {
+    "window_start": "2026-10-02T10:15:00Z",
+    "window_end": "2026-10-02T10:15:30Z",
+    "edge_sent": "2026-10-02T10:15:30.412Z"
+  },
+  "metrics": {
+    "heart_rate": { "mean": 92, "min": 85, "max": 104, "n": 30, "quality": 0.93 },
+    "hrv_rmssd": { "value": 28.4, "quality": 0.81 },
+    "spo2": { "value": 93, "quality": 0.88, "spot_check": true },
+    "skin_temp": { "value": 33.9 },
+    "steps": { "value": 12 },
+    "activity": { "value": "resting" }
+  },
+  "edge": { "flags": ["HR_SUSTAINED_HIGH"], "profile": "normal", "buffered": false },
+  "device": { "battery_pct": 64, "on_wrist": true, "fw": "0.1.0" }
+}

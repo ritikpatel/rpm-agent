@@ -1,0 +1,10 @@
+{
+  "schema": "rpm.device_event.v1",
+  "msg_id": "01920c4e-9000-7000-8000-000000000002",
+  "device_id": "gw-demo-01",
+  "seq": 18235,
+  "source": "galaxy_watch",
+  "type": "SOS",
+  "ts": { "occurred": "2026-10-02T10:16:02Z", "edge_sent": "2026-10-02T10:16:02.210Z" },
+  "data": { "trigger": "button_long_press" }
+}

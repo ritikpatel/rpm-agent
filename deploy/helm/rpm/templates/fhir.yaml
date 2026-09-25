@@ -1,0 +1,50 @@
+{{- if .Values.fhir.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fhir
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: fhir } }
+  template:
+    metadata:
+      labels: { app: fhir }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: hapi
+          image: {{ .Values.fhir.image }}
+          env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.db }}, key: JDBC_URL } }
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.db }}, key: DB_USER } }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.secrets.db }}, key: DB_PASSWORD } }
+            - { name: SPRING_DATASOURCE_DRIVERCLASSNAME, value: org.postgresql.Driver }
+            - { name: SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT, value: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect }
+            - { name: SPRING_JPA_PROPERTIES_HIBERNATE_SEARCH_ENABLED, value: "false" }
+            - { name: HAPI_FHIR_FHIR_VERSION, value: R4 }
+            - { name: HAPI_FHIR_CR_ENABLED, value: "false" }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms256m -Xmx1024m -XX:+UseSerialGC" }
+          ports: [{ name: http, containerPort: 8080 }]
+          startupProbe: { httpGet: { path: /fhir/metadata, port: http }, periodSeconds: 10, failureThreshold: 36 }
+          readinessProbe: { httpGet: { path: /fhir/metadata, port: http }, periodSeconds: 15 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          resources: {{- toYaml .Values.fhir.resources | nindent 12 }}
+      volumes: [{ name: tmp, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fhir
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  selector: { app: fhir }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+{{- end }}
