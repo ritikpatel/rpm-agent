@@ -1,0 +1,56 @@
+{
+  "name": "readmission_risk",
+  "version": "0.1.0",
+  "title": "Readmission risk",
+  "outcome": "Unplanned hospital readmission within 30 days of discharge",
+  "owner": "placeholder (Tiya's model replaces it)",
+  "triggers": [
+    "discharge",
+    "daily"
+  ],
+  "care_settings": [
+    "home"
+  ],
+  "bands": {
+    "medium": 0.2,
+    "high": 0.4
+  },
+  "min_interval_s": 0,
+  "validated": false,
+  "limitations": "Placeholder, not validated. Shown as weak evidence; cannot open or raise an alert.",
+  "metrics": {
+    "cv_folds": 5,
+    "auroc": 0.389,
+    "auprc": 0.26,
+    "brier": 0.288,
+    "n": 90,
+    "positives": 28
+  },
+  "feature_means": {
+    "age": 73.3556,
+    "sex_male": 0.5444,
+    "cond_CHF": 0.1667,
+    "cond_COPD": 0.2111,
+    "cond_IHD": 0.3222,
+    "cond_Sepsis": 0.1444,
+    "cond_Stroke": 0.1556,
+    "los_days": 3.9222,
+    "prior_admissions_12m": 0.3,
+    "drg_severity": 2.6111,
+    "discharge_home": 0.7111,
+    "hr_mean": 83.6661,
+    "hr_max": 90.76,
+    "spo2_min": 94.6856,
+    "rr_max": 18.8978,
+    "sbp_min": 107.63,
+    "temp_max": 37.3156,
+    "news2_max": 2.3444
+  },
+  "trained_at": "2026-10-10T10:18:59+00:00",
+  "libraries": {
+    "python": "3.13.5",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6"
+  }
+}

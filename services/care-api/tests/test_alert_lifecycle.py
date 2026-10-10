@@ -10,8 +10,8 @@ import psycopg
 import pytest
 
 from care_api.alerts import AlertStore, CareTeam, EscalationPolicy, Notifier
-from rpm_core.db import make_pool, migrate
 from rpm_core.contracts import ClinicalEvent
+from rpm_core.db import make_pool, migrate
 
 ADMIN_URL = os.environ.get("RPM_TEST_PG", "postgresql://rpm:rpm@localhost:5432/rpm")
 
@@ -66,7 +66,7 @@ class FakeChannel:
 def env(pool):
     policy = EscalationPolicy.load(timeout_scale=1.0)
     store = AlertStore(pool, policy, consumer=f"test-{uuid.uuid4().hex[:6]}")
-    chans = {n: FakeChannel(n) for n in ("console", "email", "sms", "webhook", "watch")}
+    chans = {n: FakeChannel(n) for n in ("console", "email", "webhook", "watch")}
     notifier = Notifier(policy, CareTeam.load(), chans, "http://console")
     return store, notifier, chans, policy
 
@@ -173,7 +173,7 @@ def test_failed_channel_is_recorded_and_others_still_sent(env, pool):
     a = store.get(res.alert_id)
     by = {n["channel"]: n for n in a["notifications"]}
     assert by["email"]["status"] == "failed" and "provider down" in by["email"]["error"]
-    assert by["sms"]["status"] == "sent" and by["console"]["status"] == "sent"
+    assert by["console"]["status"] == "sent"
     store.resolve(res.alert_id, "t", "cleanup")
 
 

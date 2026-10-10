@@ -2,7 +2,6 @@ from .notify import (
     ConsoleChannel,
     EmailChannel,
     Notifier,
-    SmsChannel,
     WatchChannel,
     WebhookChannel,
     minimal_ref,
@@ -12,5 +11,5 @@ from .store import ACTIVE, AlertStore, IngestResult
 
 __all__ = [
     "ACTIVE", "SEVERITY_RANK", "AlertStore", "CareTeam", "ConsoleChannel", "EmailChannel", "EscalationPolicy",
-    "IngestResult", "Notifier", "SmsChannel", "WatchChannel", "WebhookChannel", "clamp_severity", "minimal_ref",
+    "IngestResult", "Notifier", "WatchChannel", "WebhookChannel", "clamp_severity", "minimal_ref",
 ]

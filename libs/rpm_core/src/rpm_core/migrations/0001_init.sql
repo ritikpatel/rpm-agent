@@ -355,3 +355,8 @@ CREATE TABLE IF NOT EXISTS messages (
     at          timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS messages_patient ON messages (patient_id, at DESC);
+
+-- ---------------------------------------------------------------- FHIR write-back bookkeeping
+ALTER TABLE alerts
+    ADD COLUMN IF NOT EXISTS fhir_flag_id  text,     -- Flag created for this alert
+    ADD COLUMN IF NOT EXISTS fhir_brief_id text;     -- DocumentReference holding the agent's SBAR summary

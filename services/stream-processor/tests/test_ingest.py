@@ -10,8 +10,6 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from rpm_core.sqs import SqsReader
 from stream_processor.consumer import SqsConsumer, event_order
 

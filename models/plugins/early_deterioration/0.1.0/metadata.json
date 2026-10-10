@@ -1,0 +1,41 @@
+{
+  "name": "early_deterioration",
+  "version": "0.1.0",
+  "title": "Early deterioration",
+  "outcome": "Clinical deterioration needing escalation within about 6 hours",
+  "owner": "placeholder (Harnoor's model replaces it)",
+  "triggers": [
+    "vitals",
+    "lab"
+  ],
+  "care_settings": [
+    "icu",
+    "home"
+  ],
+  "bands": {
+    "medium": 0.2,
+    "high": 0.5
+  },
+  "min_interval_s": 60,
+  "feature_means": {
+    "news2_now": 1.0,
+    "news2_delta_1h": 0.0,
+    "hr_now": 80.0,
+    "hr_slope_per_h": 0.0,
+    "spo2_min_1h": 96.0,
+    "rr_now": 16.0,
+    "partial_news2": 1.0
+  },
+  "validated": false,
+  "limitations": "Placeholder, not validated. Shown as weak evidence; cannot open or raise an alert.",
+  "metrics": {
+    "note": "not fitted: weights set by hand, no outcome labels in the extract"
+  },
+  "trained_at": "2026-10-10T10:18:59+00:00",
+  "libraries": {
+    "python": "3.13.5",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6"
+  }
+}

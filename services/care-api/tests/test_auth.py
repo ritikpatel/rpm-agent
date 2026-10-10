@@ -67,10 +67,10 @@ def test_role_matrix_and_unknown_groups_grant_nothing(signer):
 
 def test_dev_mode_is_refused_outside_local():
     for env, mode, extra in (("aws", "dev", {}), ("local", "oidc", {}), ("local", "magic", {})):
-        cfg = main.ApiSettings(env=env, auth_mode=mode, **extra)
+        cfg = main.CareSettings(env=env, auth_mode=mode, **extra)
         with pytest.raises(RuntimeError):
             main.configure_auth(cfg)
-    main.configure_auth(main.ApiSettings(env="aws", auth_mode="oidc", oidc_issuer=ISS, oidc_client_id=CLIENT,
+    main.configure_auth(main.CareSettings(env="aws", auth_mode="oidc", oidc_issuer=ISS, oidc_client_id=CLIENT,
                                          oidc_domain="https://x.auth.us-east-1.amazoncognito.com"))
     assert AUTH["dev"] is None
 

@@ -17,8 +17,8 @@ DEFAULT_POLICY = """
 # tier after `ack_timeout_s`. The last tier repeats as reminders.
 tiers:
   - {level: 1, name: RPM nurse,           role: nurse,     channels: [console, email],          ack_timeout_s: 300}
-  - {level: 2, name: On-call physician,   role: physician, channels: [console, email, sms],     ack_timeout_s: 300}
-  - {level: 3, name: Rapid response team, role: emergency, channels: [console, sms, email, webhook], ack_timeout_s: 600}
+  - {level: 2, name: On-call physician,   role: physician, channels: [console, email],          ack_timeout_s: 300}
+  - {level: 3, name: Rapid response team, role: emergency, channels: [console, email, webhook], ack_timeout_s: 600}
 initial_tier: {medium: 1, high: 2, critical: 3}
 patient_channels_on_open: [watch]      # home patients get a reassurance message on their watch
 max_reminders: 3

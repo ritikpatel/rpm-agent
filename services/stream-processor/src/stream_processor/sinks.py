@@ -7,7 +7,6 @@ import logging
 from typing import Protocol
 
 import httpx
-
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
@@ -104,7 +103,8 @@ class PostgresSink:
         pid, kind, at, data = e["patient_id"], e["type"], e["occurred_at"], e["data"]
         if not cur.execute(
                 "INSERT INTO ehr_events (event_id, patient_id, type, occurred_at, payload) VALUES (%s,%s,%s,%s,%s) "
-                "ON CONFLICT (event_id) DO NOTHING RETURNING 1", (e["event_id"], pid, kind, at, Jsonb(data))).fetchone():
+                "ON CONFLICT (event_id) DO NOTHING RETURNING 1",
+                (e["event_id"], pid, kind, at, Jsonb(data))).fetchone():
             return
         if kind == "lab":
             cur.execute(

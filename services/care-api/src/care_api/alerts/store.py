@@ -45,7 +45,7 @@ def _title(event_type: str, summary: str) -> str:
 
 
 class AlertStore:
-    def __init__(self, pool: ConnectionPool, policy: EscalationPolicy, consumer: str = "alert-service"):
+    def __init__(self, pool: ConnectionPool, policy: EscalationPolicy, consumer: str = "care-api"):
         self.pool = pool
         self.policy = policy
         self.consumer = consumer

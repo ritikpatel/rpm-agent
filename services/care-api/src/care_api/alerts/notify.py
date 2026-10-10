@@ -1,4 +1,4 @@
-"""Notification channels. Messages follow HIPAA "minimum necessary": SMS and email carry initials, the last four
+"""Notification channels. Messages follow HIPAA "minimum necessary": e-mail carries initials, the last four
 characters of the patient id, severity and a console link, never vitals or diagnoses. Details stay behind the
 authenticated console. Every channel failure is recorded; one failing channel never blocks the others."""
 
@@ -12,8 +12,8 @@ from typing import Protocol
 
 import httpx
 
-from rpm_core.devices import DeviceCommander
 from rpm_core.contracts import utcnow
+from rpm_core.devices import DeviceCommander
 
 from .policy import CareTeam, EscalationPolicy
 
@@ -82,29 +82,6 @@ class EmailChannel:
         return (to, "log", None)
 
 
-class SmsChannel:
-    name = "sms"
-
-    def __init__(self, backend: str, region: str = "ap-southeast-2"):
-        self.backend = backend
-        if backend == "sns":
-            import boto3
-
-            self.sns = boto3.client("sns", region_name=region)
-
-    def send(self, alert, tier_name, contact, link):
-        phone = contact.get("phone")
-        if not phone:
-            raise ValueError(f"no phone configured for {tier_name}")
-        text = f"RPM {alert['severity'].upper()}: patient {minimal_ref(alert)} needs review. {link}"
-        if self.backend == "sns":
-            resp = self.sns.publish(PhoneNumber=phone, Message=text[:300], MessageAttributes={
-                "AWS.SNS.SMS.SMSType": {"DataType": "String", "StringValue": "Transactional"}})
-            return (phone, resp.get("MessageId", ""), None)
-        log.info("sms (log backend)", extra={"to": phone, "text": text})
-        return (phone, "log", None)
-
-
 class WebhookChannel:
     name = "webhook"
 
@@ -132,7 +109,7 @@ class WatchChannel:
         if alert.get("care_setting") != "home" or not device:
             return ("patient", "", "skipped: not a home-monitored patient")
         cmd = self.commander.send(device, "NOTIFY", {"title": "Care team alerted", "text": PATIENT_REASSURANCE,
-                                                     "priority": "high"}, issued_by="alert-service", ttl_s=900)
+                                                     "priority": "high"}, issued_by="care-api", ttl_s=900)
         return (device, str(cmd.cmd_id), None)
 
 
