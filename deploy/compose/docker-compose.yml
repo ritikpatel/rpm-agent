@@ -14,7 +14,7 @@ x-env: &env
   RPM_RISK_SERVICE_URL: http://risk-service:8001
   RPM_SERVICE_TOKEN: ${RPM_SERVICE_TOKEN:-dev-service-token}
   RPM_COHORT_ICU: ${RPM_COHORT_ICU:-6}
-  RPM_COHORT_HOME: ${RPM_COHORT_HOME:-18}
+  RPM_COHORT_HOME: ${RPM_COHORT_HOME:-24}
   # ElasticMQ accepts any credentials; real ones (exported by `make up LLM=bedrock`) are only used for Bedrock
   AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
   AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
@@ -151,9 +151,9 @@ services:
     <<: *platform
     profiles: ["seed"]
     command: ["rpm-seed", "all"]
-    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_PROTOCOLS_DIR: /knowledge/protocols,
+    environment: { <<: *env, RPM_DATA_DIR: /data/training, RPM_PROTOCOLS_DIR: /knowledge/protocols,
                    RPM_EMBEDDINGS: "${RPM_EMBEDDINGS:-hash}" }
-    volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro", "../../knowledge:/knowledge:ro"]
+    volumes: ["../../Training Data:/data/training:ro", "../../knowledge:/knowledge:ro"]
     depends_on:
       care-api: { condition: service_healthy }
       fhir: { condition: service_started }
@@ -165,10 +165,11 @@ services:
     command: ["rpm-sim", "run"]
     environment:
       <<: *env
-      RPM_MIMIC_DIR: /data/mimic
+      RPM_DATA_DIR: /data/training
+      RPM_SIM_SPEED: "${RPM_SIM_SPEED:-1}"
       RPM_MQTT_HOST: mosquitto
       RPM_SIM_AUTO_SCENARIOS: "${RPM_SIM_AUTO_SCENARIOS:-0}"
-    volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
+    volumes: ["../../Training Data:/data/training:ro"]
     depends_on: [mosquitto, care-api]
     mem_limit: 256m
 

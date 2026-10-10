@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS patients (
     display_name              text NOT NULL,
     sex                       text,
     age                       int,
-    primary_condition         text,
+    primary_condition         text,                       -- category used for thresholds (Sepsis, COPD, ...)
+    primary_diagnosis         text,                       -- diagnosis text from the record, when there is one
+    data_origin               text,                       -- mimic_real | synthetic (provenance in the training data)
     care_setting              text NOT NULL CHECK (care_setting IN ('home', 'icu')),
     discharge_at              timestamptz,
     icu_admit_at              timestamptz,

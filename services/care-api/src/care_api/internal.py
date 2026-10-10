@@ -61,10 +61,11 @@ def cohort(caller: Caller) -> list[dict]:
     """Who is monitored, where, and on what kind of device (no clinical data). The simulator follows this."""
     with STATE["pool"].connection() as conn:
         rows = conn.execute(
-            "SELECT p.patient_id, p.care_setting, d.device_id, d.device_kind FROM patients p "
+            "SELECT p.patient_id, p.care_setting, d.device_id, d.device_kind, p.discharge_at FROM patients p "
             "LEFT JOIN device_assignments d ON d.patient_id = p.patient_id AND d.active_to IS NULL "
             "WHERE p.monitoring_active ORDER BY p.patient_id").fetchall()
-    return [{"patient_id": r[0], "care_setting": r[1], "device_id": r[2], "device_kind": r[3]} for r in rows]
+    return [{"patient_id": r[0], "care_setting": r[1], "device_id": r[2], "device_kind": r[3],
+             "discharge_at": r[4].isoformat() if r[4] else None} for r in rows]
 
 
 # ------------------------------------------------------------------ agent tools: read

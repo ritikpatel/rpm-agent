@@ -1,8 +1,10 @@
 """Offline replay: the real simulator and the real stream processor, wired in memory on a virtual clock.
 
-A day of the whole cohort runs in minutes with deterministic ground truth (which patient deteriorates, when, and
-how), so alert burden, sensitivity, time-to-detect and PPV can be measured and rule changes compared on identical
-data. Infrastructure (MQTT, SQS, Postgres, care-api) is replaced by in-memory equivalents with the same semantics;
+A day of the cohort runs in minutes against ground truth, so alert burden, sensitivity, time-to-detect and PPV can
+be measured and rule changes compared on identical data. Ground truth comes from two places: the training data's
+own deterioration episodes (the `event_severity_fraction` of each synthetic patient's wearable stream, which the
+platform never sees), and scenarios injected at known times into patients whose own data is stable.
+Infrastructure (MQTT, SQS, Postgres, care-api) is replaced by in-memory equivalents with the same semantics;
 the clinical logic under test is the production code, unmodified.
 
 Alert model: one active alert per patient (as care-api's AlertStore). A simulated clinician resolves each alert
@@ -18,8 +20,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from rpm_core.cohort import CohortMember
 from rpm_core.contracts import SEVERITY_RANK
-from rpm_core.mimic import CohortMember
 from rpm_simulator import engine as sim_engine
 from rpm_simulator.engine import CLINICAL_SCENARIOS, Simulator
 from rpm_simulator.scenarios import SCENARIOS
@@ -28,6 +30,8 @@ from stream_processor.registry import PatientRef
 from stream_processor.state import LocalState
 
 NEGATIVE_SCENARIOS = ("motion_artifact", "device_offline")  # must not alert
+DATASET_EPISODE = "dataset_episode"   # a deterioration that is in the patient's own training data
+EPISODE_SEVERITY = 0.5                # severity fraction at or above which the data counts as deteriorated
 
 
 # ---------------------------------------------------------------------- virtual time
@@ -96,23 +100,52 @@ class Case:
         return self.onset_s, self.onset_s + self.duration_s + 300  # 5 min after the hold for late detection
 
 
-def schedule(members: list[CohortMember], hours: float, seed: str, per_type_home: int = 4,
+def _stable(m: CohortMember) -> bool:
+    return m.record is None or m.record.trajectory == "stable"
+
+
+def schedule(members: list[CohortMember], hours: float, seed: str, per_type_home: int = 3,
              per_type_icu: int = 2, negatives_home: int = 5) -> list[Case]:
+    """Scenarios injected at known times. Home scenarios go only to patients whose own data is stable, so an
+    injected deterioration is never confused with one that is already in the data."""
     rng = random.Random(f"{seed}:schedule")
-    home = [m for m in members if m.care_setting == "home"]
+    home = [m for m in members if m.care_setting == "home" and _stable(m)]
     icu = [m for m in members if m.care_setting == "icu"]
     rng.shuffle(home)
     rng.shuffle(icu)
     plan: list[tuple[CohortMember, str]] = []
     for s in CLINICAL_SCENARIOS:
-        plan += [(home.pop(), s) for _ in range(per_type_home)] + [(icu.pop(), s) for _ in range(per_type_icu)]
+        plan += [(home.pop(), s) for _ in range(per_type_home) if home]
+        plan += [(icu.pop(), s) for _ in range(per_type_icu) if icu]
     for s in NEGATIVE_SCENARIOS:
-        plan += [(home.pop(), s) for _ in range(negatives_home)]
+        plan += [(home.pop(), s) for _ in range(negatives_home) if home]
     cases = []
     for m, s in plan:
         spec = SCENARIOS[s]
         onset = rng.uniform(1.5 * 3600, max(2 * 3600, (hours - 1) * 3600))  # after rule warm-up, before the end
         cases.append(Case(m.patient_id, m.device_id, m.care_setting, s, onset, spec.ramp_s, spec.default_duration_s))
+    return cases
+
+
+def dataset_episodes(members: list[CohortMember], start: datetime, hours: float, min_s: float = 1800) -> list[Case]:
+    """Deteriorations that are in the training data itself: stretches of a patient's wearable stream where the
+    data's severity fraction is at or above EPISODE_SEVERITY, placed on the replay clock. Only episodes that begin
+    after the first hour count (earlier ones started before monitoring did)."""
+    cases = []
+    for m in members:
+        if m.care_setting != "home" or not m.discharge_at:
+            continue
+        offset_h = (start.replace(tzinfo=None) - m.discharge_at).total_seconds() / 3600
+        begin = None
+        for h, v in [*m.points, (float("inf"), {"severity": 0.0})]:
+            sick = v.get("severity", 0.0) >= EPISODE_SEVERITY
+            if sick and begin is None:
+                begin = h
+            elif not sick and begin is not None:
+                onset, end = (begin - offset_h) * 3600, (min(h, m.points[-1][0]) - offset_h) * 3600
+                if 3600 <= onset < hours * 3600 and end - onset >= min_s:
+                    cases.append(Case(m.patient_id, m.device_id, "home", DATASET_EPISODE, onset, 0.0, end - onset))
+                begin = None
     return cases
 
 
@@ -200,19 +233,19 @@ def restore_overrides(saved: dict) -> None:
         setattr(rules, k, v)
 
 
-def run(members: list[CohortMember], series: dict, *, hours: float = 24, seed: str = "rpm-v1", step_s: float = 5,
+def run(members: list[CohortMember], *, hours: float = 24, seed: str = "rpm-v1", step_s: float = 5,
         resolve_after_s: float = 1800, cases: list[Case] | None = None, progress=None) -> ReplayResult:
     start = datetime(2026, 10, 1, 0, 0, tzinfo=UTC)
     clock = VirtualClock(start)
     saved = (sim_engine.time, sim_engine.utcnow)   # the simulator reads time through these module globals
     sim_engine.time, sim_engine.utcnow = clock, clock.utcnow
     try:
-        return _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, cases, progress)
+        return _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, progress)
     finally:
         sim_engine.time, sim_engine.utcnow = saved
 
 
-def _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, cases, progress):
+def _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, progress):
     refs = {m.device_id: PatientRef(m.patient_id, m.care_setting, m.condition, m.hypercapnic, False, {})
             for m in members}
     sink = EventSink()
@@ -222,10 +255,11 @@ def _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, ca
     def publish(_key: str, topic: str, payload: str) -> None:
         records.append(_record(topic, payload, clock))
 
-    sim = Simulator(members, series, publish, window_s=30, speed=1.0, seed=seed, tz_offset_h=4.0,
-                    auto_scenarios_per_hour=0, icu_window_s=15)
-    cases = cases if cases is not None else schedule(members, hours, seed)
-    pending = sorted(cases, key=lambda c: c.onset_s)
+    sim = Simulator(members, publish, window_s=30, speed=1.0, seed=seed, auto_scenarios_per_hour=0,
+                    icu_window_s=15)
+    injected = cases if cases is not None else schedule(members, hours, seed)
+    cases = injected + dataset_episodes(members, start, hours)
+    pending = sorted(injected, key=lambda c: c.onset_s)
     clinician = ClinicianModel(resolve_after_s)
     end = hours * 3600
     seen_events = 0

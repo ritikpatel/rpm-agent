@@ -16,23 +16,19 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from rpm_core.cohort import TrainingData, build_cohort
 from rpm_core.data import fetch_dir
-from rpm_core.mimic import MimicDataset, build_cohort, icu_series
 
 
-def _cohort(mimic_dir: str, seed: str, icu_count: int):
-    ds = MimicDataset(fetch_dir(mimic_dir))
+def _cohort(data_dir: str, seed: str, icu: int, home: int):
     anchor = datetime(2026, 10, 1)  # fixed: the replay is reproducible run to run
-    members = build_cohort(ds, anchor, icu_count=icu_count, seed=seed)
-    series = {m.subject_id: icu_series(ds, m.index_stay_id) for m in members
-              if m.care_setting == "icu" and m.index_stay_id}
-    return members, series
+    return build_cohort(TrainingData(fetch_dir(data_dir)), anchor, icu, home, seed)
 
 
 def cmd_replay(a: argparse.Namespace) -> None:
     from .replay import apply_overrides, metrics, restore_overrides, run
 
-    members, series = _cohort(a.mimic_dir, a.seed, a.icu_count)
+    members = _cohort(a.data_dir, a.seed, a.icu, a.home)
     t0 = time.monotonic()
 
     def progress(h, events, alerts):
@@ -42,7 +38,7 @@ def cmd_replay(a: argparse.Namespace) -> None:
     overrides = dict(kv.split("=", 1) for kv in a.set or [])
     saved = apply_overrides(overrides)
     try:
-        result = run(members, series, hours=a.hours, seed=a.seed, resolve_after_s=a.resolve_after_min * 60,
+        result = run(members, hours=a.hours, seed=a.seed, resolve_after_s=a.resolve_after_min * 60,
                      progress=progress)
     finally:
         restore_overrides(saved)
@@ -111,8 +107,9 @@ def main(argv: list[str] | None = None) -> None:
     r = sub.add_parser("replay", help="deterministic offline replay of the cohort with ground-truth scenarios")
     r.add_argument("--hours", type=float, default=24)
     r.add_argument("--seed", default="rpm-v1")
-    r.add_argument("--mimic-dir", default="./synthetic_mimic_150patients")
-    r.add_argument("--icu-count", type=int, default=25)
+    r.add_argument("--data-dir", default="./Training Data")
+    r.add_argument("--icu", type=int, default=20, help="patients shown as admitted")
+    r.add_argument("--home", type=int, default=0, help="patients at home (0 = everyone else in the data)")
     r.add_argument("--resolve-after-min", type=float, default=30, help="simulated clinician resolves alerts after")
     r.add_argument("--set", action="append", metavar="KNOB=VALUE",
                    help="rule knob for a sweep, e.g. BASELINE_STEP=3 or home.news2_persist_s=600")

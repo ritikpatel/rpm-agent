@@ -4,32 +4,32 @@ from pathlib import Path
 
 import pytest
 
-DATA = Path(__file__).resolve().parents[3] / "synthetic_mimic_150patients"
-pytestmark = pytest.mark.skipif(not DATA.exists(), reason="dataset not present")
+DATA = Path(__file__).resolve().parents[3] / "Training Data"
+pytestmark = pytest.mark.skipif(not (DATA / "rpm_training_sample.csv").exists(),
+                                reason="the team's training data is not available")
 
 
 def test_small_replay_detects_injected_deterioration_and_restores_clocks():
     from rpm_eval.cli import _cohort
-    from rpm_eval.replay import Case, metrics, run
+    from rpm_eval.replay import DATASET_EPISODE, Case, metrics, run
     from rpm_simulator import engine
 
-    members, series = _cohort(str(DATA), "rpm-v1", 25)
-    home = [m for m in members if m.care_setting == "home"][:10]
-    icu = [m for m in members if m.care_setting == "icu"][:3]
-    cohort = home + icu
-    cases = [Case(home[0].patient_id, home[0].device_id, "home", "sepsis", 5400, 180, 1200),
+    members = _cohort(str(DATA), "rpm-v1", 3, 0)
+    stable = [m for m in members if m.care_setting == "home" and m.record.trajectory == "stable"][:8]
+    declining = [m for m in members if m.care_setting == "home" and m.origin == "synthetic"
+                 and m.record.trajectory == "declining"][:4]
+    icu = [m for m in members if m.care_setting == "icu"]
+    cases = [Case(stable[0].patient_id, stable[0].device_id, "home", "sepsis", 5400, 180, 1200),
              Case(icu[0].patient_id, icu[0].device_id, "icu", "hypoxia", 5400, 120, 600),
-             Case(home[1].patient_id, home[1].device_id, "home", "motion_artifact", 5400, 1, 300)]
+             Case(stable[1].patient_id, stable[1].device_id, "home", "motion_artifact", 5400, 1, 300)]
     before = (engine.time, engine.utcnow)
-    result = run(cohort, {k: v for k, v in series.items() if k in {m.subject_id for m in icu}}, hours=2.5,
-                 cases=cases)
+    result = run(stable + declining + icu, hours=2.5, cases=cases)
     assert (engine.time, engine.utcnow) == before  # module globals restored
     m = metrics(result)
-    rows = {c["scenario"]: c for c in m["cases"]}
+    rows = {c["scenario"]: c for c in m["cases"] if c["scenario"] != DATASET_EPISODE}
     assert rows["sepsis"]["detected"] and rows["hypoxia"]["detected"]
     assert not rows["motion_artifact"]["detected"]
-    assert m["windows_scored"] > 1000 and m["sensitivity"] == {"detected": 2, "cases": 2,
-                                                               "negative_scenarios_alerting": 0}
+    assert m["windows_scored"] > 1000 and m["sensitivity"]["negative_scenarios_alerting"] == 0
 
 
 def test_guardrails_all_hold():

@@ -60,3 +60,6 @@ models/plugins/**/model.onnx
 # --- real care-team contacts and the team's training data stay out of git
 deploy/config/care-team.yaml
 training_data/
+
+# --- the team's model training data (never committed)
+Training Data/

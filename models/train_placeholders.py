@@ -1,11 +1,11 @@
 """Fit the three PLACEHOLDER models so the platform runs end to end before the data team's models arrive.
 
 Each placeholder is a real plug-in (models/CONTRACT.md): this script only produces `model.joblib` and fills the
-measured parts of `metadata.json`. The readmission model is fitted on the synthetic extract; the other two have no
-labels there, so they are logistic models with weights set by hand. None is validated: the console and the agents
-label them as weak evidence, and they cannot page anyone.
+measured parts of `metadata.json`. The readmission model is fitted on the 63 MIMIC patients of the team's training
+data (the only ones with a readmission label); the other two are logistic models with weights set by hand. None is
+validated: the console and the agents label them as weak evidence, and they cannot page anyone.
 
-    uv run python models/train_placeholders.py --mimic-dir synthetic_mimic_150patients
+    uv run python models/train_placeholders.py --data-dir "Training Data"
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import argparse
 import importlib.util
 import json
 import sys
-from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,13 +27,11 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from rpm_core.features.news2 import News2Input, compute_news2
-from rpm_core.mimic import MimicDataset, to_float
-from rpm_core.mimic.cohort import drg_severity, prior_admissions
-from rpm_core.mimic.dataset import GCS_ITEMS, VITAL_ITEMS
+from rpm_core.cohort import TrainingData, build_cohort
+from rpm_core.cohort.cohort import profile_for_models
+from rpm_core.cohort.training import num
 
 ROOT = Path(__file__).parent / "plugins"
-VALIDATION_AUROC = 0.7   # minimum cross-validated AUROC before a model may be marked validated
 
 
 def plugin_features(name: str, version: str = "0.1.0"):
@@ -44,53 +41,21 @@ def plugin_features(name: str, version: str = "0.1.0"):
     return module
 
 
-def stay_rows(ds: MimicDataset, stay_id: str, hypercapnic: bool) -> list[dict]:
-    """One row per charted timepoint with vitals, GCS total and NEWS2 (the shape plug-ins see in ctx['vitals'])."""
-    by_time: dict[str, dict] = defaultdict(dict)
-    for r in ds.chartevents_by_stay.get(stay_id, []):
-        v = to_float(r["valuenum"])
-        if v is None:
-            continue
-        if r["itemid"] in VITAL_ITEMS:
-            by_time[r["charttime"]][VITAL_ITEMS[r["itemid"]]] = v
-        elif r["itemid"] in GCS_ITEMS:
-            lo, hi = GCS_ITEMS[r["itemid"]]
-            by_time[r["charttime"]].setdefault("_gcs", {})[r["itemid"]] = max(lo, min(hi, round(v)))
-    rows = []
-    for t in sorted(by_time):
-        row = by_time[t]
-        parts = row.pop("_gcs", {})
-        gcs = float(sum(parts.values())) if len(parts) == 3 else None
-        row["gcs"] = gcs
-        row["news2"] = compute_news2(News2Input(
-            resp_rate=row.get("resp_rate"), spo2=row.get("spo2"), on_oxygen=False, sbp=row.get("sbp"),
-            heart_rate=row.get("heart_rate"), consciousness=None if gcs is None else ("A" if gcs >= 15 else "C"),
-            temp=row.get("temp"), hypercapnic_resp_failure=hypercapnic)).total
-        rows.append(row)
-    return rows
-
-
-def readmission_dataset(ds: MimicDataset, feats) -> tuple[pd.DataFrame, np.ndarray]:
+def readmission_dataset(data: TrainingData, feats) -> tuple[pd.DataFrame, np.ndarray]:
+    """One row per MIMIC patient, built by the plug-in's own build(ctx) from the context the risk service would
+    give it at discharge: the registry profile and the vital signs charted at discharge."""
+    anchor = datetime(2026, 1, 1)
     X, y = [], []
-    for sid, adms in ds.admissions_by_subject.items():
-        pat = ds.patients.get(sid)
-        if not pat:
+    for m in build_cohort(data, anchor, icu=0, home=0):
+        p = m.record
+        label = num(p.row.get("readmit_30d_flag")) if p.real else None
+        if label is None:
             continue
-        for adm in adms:
-            if adm.get("hospital_expire_flag") == "1" or adm.get("readmit_30d_flag") not in ("0.0", "1.0", "0", "1"):
-                continue
-            stays = ds.icustays_by_hadm.get(adm["hadm_id"], [])
-            condition = adm.get("condition")
-            ctx = {"profile": {"age": to_float(pat.get("anchor_age")), "sex": pat.get("gender"),
-                               "primary_condition": condition,
-                               "los_days": to_float(adm.get("length_of_stay_days")),
-                               "prior_admissions_12m": prior_admissions(adms, adm),
-                               "drg_severity": drg_severity(ds, adm["hadm_id"]),
-                               "discharge_disposition": adm.get("discharge_location")},
-                   "vitals": stay_rows(ds, stays[0]["stay_id"], condition == "COPD") if stays else []}
-            row = feats.build(ctx)
-            X.append([row[f] for f in feats.FEATURES])
-            y.append(int(float(adm["readmit_30d_flag"])))
+        vitals = [{**p.discharge_vitals, "ts": anchor, "news2": None}]
+        row = feats.build({"now": anchor, "care_setting": "home", "profile": profile_for_models(m),
+                           "vitals": vitals, "daily": [], "labs": [], "hours_since_discharge": 0.0})
+        X.append([row[f] for f in feats.FEATURES])
+        y.append(int(label))
     return pd.DataFrame(X, columns=feats.FEATURES), np.array(y)
 
 
@@ -118,8 +83,9 @@ def publish(name: str, model, extra: dict, version: str = "0.1.0") -> None:
     joblib.dump(model, pkg / "model.joblib")
     meta_path = pkg / "metadata.json"
     meta = json.loads(meta_path.read_text())
-    auroc = (extra.get("metrics") or {}).get("auroc")
-    meta.update(extra, validated=bool(auroc is not None and auroc >= VALIDATION_AUROC),
+    # A placeholder is never marked validated, whatever it scores: 63 discharges with 10 readmissions cannot
+    # establish a model, and a validated model is allowed to page the care team.
+    meta.update(extra, validated=False,
                 trained_at=datetime.now(UTC).isoformat(timespec="seconds"),
                 libraries={"python": sys.version.split()[0], "scikit-learn": sklearn.__version__,
                            "numpy": np.__version__, "pandas": pd.__version__})
@@ -129,13 +95,13 @@ def publish(name: str, model, extra: dict, version: str = "0.1.0") -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mimic-dir", default="synthetic_mimic_150patients")
+    ap.add_argument("--data-dir", default="Training Data")
     a = ap.parse_args()
 
     feats = plugin_features("readmission_risk")
-    X, y = readmission_dataset(MimicDataset(a.mimic_dir), feats)
+    X, y = readmission_dataset(TrainingData(a.data_dir), feats)
     if len(y) < 20 or y.sum() < 5:
-        sys.exit("not enough labelled admissions to fit the readmission placeholder")
+        sys.exit("not enough labelled discharges to fit the readmission placeholder")
 
     def lr() -> Pipeline:
         return Pipeline([("scale", StandardScaler()), ("lr", LogisticRegression(C=0.5, max_iter=2000))])

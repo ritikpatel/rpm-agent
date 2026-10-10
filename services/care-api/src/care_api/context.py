@@ -26,7 +26,8 @@ class PatientContext:
 
     def profile(self, patient_id: str) -> dict | None:
         rows = self._q(
-            "SELECT patient_id, display_name, age, sex, primary_condition, care_setting, discharge_at, icu_admit_at, "
+            "SELECT patient_id, display_name, age, sex, primary_condition, primary_diagnosis, care_setting, "
+            "discharge_at, icu_admit_at, "
             "los_days, prior_admissions_12m, drg_severity, discharge_disposition, hypercapnic_resp_failure, "
             "on_supplemental_o2 FROM patients WHERE patient_id = %s", (patient_id,))
         return rows[0] if rows else None

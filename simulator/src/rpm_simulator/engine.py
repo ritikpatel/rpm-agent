@@ -14,8 +14,9 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
+from rpm_core.cohort import CohortMember, sim_device_id
 from rpm_core.contracts import (
     PROFILE_WINDOW_S,
     Command,
@@ -29,9 +30,8 @@ from rpm_core.contracts import (
     telemetry_topic,
     utcnow,
 )
-from rpm_core.mimic import CohortMember, sim_device_id
 
-from .physiology import HomeWearable, IcuReplay
+from .physiology import IcuReplay, TrajectoryWearable
 from .scenarios import SCENARIOS, ActiveScenario
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ Publish = Callable[[str, str, str], None]  # (key, topic, payload)
 @dataclass
 class SimDevice:
     member: CohortMember
-    gen: HomeWearable | IcuReplay
+    gen: TrajectoryWearable | IcuReplay
     next_due: float
     seq: int = 0
     profile: str = "normal"
@@ -75,9 +75,9 @@ class SimDevice:
 
 
 class Simulator:
-    def __init__(self, members: list[CohortMember], series: dict[str, dict], publish: Publish, *,
-                 window_s: int = 30, speed: float = 60.0, seed: str = "rpm-v1", tz_offset_h: float = 4.0,
-                 auto_scenarios_per_hour: float = 0.0, manual_every_s: float = 1200, icu_window_s: int = 10):
+    def __init__(self, members: list[CohortMember], publish: Publish, *, window_s: int = 30, speed: float = 1.0,
+                 seed: str = "rpm-v1", tz_offset_h: float = 5.5, auto_scenarios_per_hour: float = 0.0,
+                 manual_every_s: float = 900, icu_window_s: int = 10):
         self.publish = publish
         self.speed = speed
         self.tz_offset_h = tz_offset_h
@@ -86,7 +86,6 @@ class Simulator:
         self.window_s = window_s
         self.icu_window_s = icu_window_s
         self.seed = seed
-        self.series = series
         self.rng = random.Random(seed)
         self.t0 = time.monotonic()
         self.lock = threading.Lock()
@@ -100,16 +99,20 @@ class Simulator:
 
     def _add(self, m: CohortMember, offset: float = 0.0) -> SimDevice:
         rng = random.Random(f"{self.seed}:{m.subject_id}:{m.care_setting}")
+        now = time.monotonic()
         if m.care_setting == "icu":
-            # a bedside monitor always shows every channel: fill uncharted ones from the patient baseline
-            full = {k: [(0.0, v)] for k, v in m.baseline.items()} | {"gcs": [(0.0, 15.0)]}
-            full.update({k: v for k, v in (self.series.get(m.subject_id) or {}).items() if v})
-            gen: HomeWearable | IcuReplay = IcuReplay(full, rng, m.replay_start_h, self.speed)
+            # a bedside monitor shows every channel, centred on the patient's vital signs at discharge
+            series = {k: [(0.0, v)] for k, v in m.baseline.items()}
+            gen: TrajectoryWearable | IcuReplay = IcuReplay(series, rng, 0.0, 1.0)
             period = self.icu_window_s
         else:
-            gen = HomeWearable(m.baseline, rng, manual_every_s=self.default_manual_every_s)
+            # the wearable plays the patient's own post-discharge data, starting where they are now in it
+            since = (utcnow().replace(tzinfo=None) - m.discharge_at).total_seconds() / 3600 if m.discharge_at else 0.0
+            hrv = (m.record.home_baseline.get("hrv_rmssd") if m.record else None) or 32.0
+            gen = TrajectoryWearable(m.points, rng, max(0.0, since), now, self.speed, hrv_base=hrv,
+                                     manual_every_s=self.default_manual_every_s)
             period = self.window_s
-        dev = SimDevice(m, gen, next_due=time.monotonic() + offset % period, window_s=period)
+        dev = SimDevice(m, gen, next_due=now + offset % period, window_s=period)
         self.devices[m.device_id] = dev
         self.members[m.patient_id] = m
         for alias in (m.device_id, m.patient_id, m.subject_id):
@@ -132,7 +135,8 @@ class Simulator:
             return False
         with self.lock:
             self._remove(patient_id)
-            moved = replace(m, care_setting=setting, device_id=sim_device_id(patient_id, setting))
+            moved = replace(m, care_setting=setting, device_id=sim_device_id(patient_id, setting),
+                            discharge_at=utcnow().replace(tzinfo=None) if setting == "home" else None)
             self.members[patient_id] = moved
             if patient_id not in self.paused:
                 self._add(moved)
@@ -140,14 +144,30 @@ class Simulator:
                                                 "device_id": moved.device_id})
         return True
 
+    def _align_discharge(self, patient_id: str, discharge_at: str | None) -> None:
+        """Play a home patient's data from the discharge time the platform recorded, so a restarted simulator
+        continues the same course instead of starting another."""
+        m = self.members[patient_id]
+        if m.care_setting != "home" or not discharge_at:
+            return
+        when = datetime.fromisoformat(discharge_at.replace("Z", "+00:00")).astimezone(UTC).replace(tzinfo=None)
+        if m.discharge_at is not None and abs((when - m.discharge_at).total_seconds()) < 120:
+            return
+        with self.lock:
+            self._remove(patient_id)
+            self.members[patient_id] = moved = replace(m, discharge_at=when)
+            if patient_id not in self.paused:
+                self._add(moved)
+
     def sync(self, rows: list[dict]) -> None:
-        """Follow the platform's registry: who is admitted, who is at home, and who wears a real watch (those are
-        not simulated). Rows: {patient_id, care_setting, device_kind}."""
+        """Follow the platform's registry: who is admitted, who is at home and since when, and who wears a real
+        watch (those are not simulated). Rows: {patient_id, care_setting, device_kind, discharge_at}."""
         for row in rows:
             pid = row["patient_id"]
             if pid not in self.members:
                 continue
             self.set_setting(pid, row["care_setting"])
+            self._align_discharge(pid, row.get("discharge_at"))
             real = row.get("device_kind") == "watch"
             with self.lock:
                 if real and pid not in self.paused:
@@ -173,8 +193,8 @@ class Simulator:
         with self.lock:
             dev.scenario = ActiveScenario(spec, time.monotonic(), duration_s or spec.default_duration_s,
                                           ramp_override_s=ramp_s)
-            if isinstance(dev.gen, HomeWearable) and spec.deltas:
-                dev.gen.manual_every_s = 300  # patient is prompted for extra home readings
+            if isinstance(dev.gen, TrajectoryWearable) and spec.deltas:
+                dev.gen.manual_every_s = 300  # the patient is prompted for extra blood pressure readings
         log.info("scenario started", extra={"device_id": dev.device_id, "patient_id": dev.member.patient_id,
                                             "scenario": name, "duration_s": dev.scenario.duration_s})
         if spec.emit_event:  # a button press / fall is published immediately, not on the next telemetry tick
@@ -187,7 +207,7 @@ class Simulator:
         if dev:
             with self.lock:
                 dev.scenario = None
-                if isinstance(dev.gen, HomeWearable):
+                if isinstance(dev.gen, TrajectoryWearable):
                     dev.gen.manual_every_s = self.default_manual_every_s
 
     def on_message(self, topic: str, payload: bytes) -> None:
@@ -243,10 +263,10 @@ class Simulator:
         hold = sc.in_hold(now)
         deltas = {m: v * k for m, v in sc.spec.deltas.items()}
         for m, target in sc.spec.targets.items():  # absolute targets become offsets from the current value
-            if isinstance(dev.gen, IcuReplay):  # ICU: the charted value right now, not the admission baseline
+            if isinstance(dev.gen, IcuReplay):
                 current = dev.gen._at(m, dev.gen.stay_hour(now - self.t0))
-            else:
-                current = dev.member.baseline.get(m)
+            else:  # the wearable: the patient's own value at this point in their data
+                current = dev.gen.b.get(m)
             deltas[m] = deltas.get(m, 0) + (target - (current if current is not None else target)) * k
         return (deltas, sc.spec.motion_artifact and hold,
                 sc.spec.arrhythmia and k > 0.5, sc.spec.offline and hold)
@@ -310,7 +330,7 @@ class Simulator:
         for _, etype, data in due:
             if etype == "SPOT_CHECK_RESULT":
                 deltas, *_ = self._deltas(dev, now)
-                base = dev.gen.b["spo2"] if isinstance(dev.gen, HomeWearable) else 95.0
+                base = dev.gen.b.get("spo2", 96.0) if isinstance(dev.gen, TrajectoryWearable) else 95.0
                 data = {**data, "value": round(min(100, base + deltas.get("spo2", 0) + self.rng.gauss(0, 0.5)), 1),
                         "quality": 0.92}
             self._event(dev, etype, data)

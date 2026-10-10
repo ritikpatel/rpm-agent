@@ -1,9 +1,8 @@
-"""Signal generators: post-discharge wearable physiology and ICU replay of charted MIMIC vitals."""
+"""Signal generators: a wearable replaying the patient's post-discharge data, and an ICU bedside monitor."""
 
 from __future__ import annotations
 
 import bisect
-import math
 import random
 from dataclasses import dataclass
 
@@ -20,76 +19,72 @@ class Window:
     quality_ok: bool = True
 
 
-class HomeWearable:
-    """Galaxy-Watch-like stream: HR (+HRV), spot SpO2, wrist skin temperature, steps/activity.
+class TrajectoryWearable:
+    """A wrist wearable that reports the patient's own post-discharge course from the training data.
 
-    Patient-entered home readings (BP cuff, thermometer) are merged in periodically, as the phone gateway would.
-    """
+    The values come from the data (interpolated between its points, with a little sensor noise): heart rate in every
+    window, SpO2, respiratory rate and temperature every few minutes, blood pressure less often. Nothing is invented
+    beyond the noise; a demonstration scenario adds its offsets on top."""
 
-    def __init__(self, baseline: dict[str, float], rng: random.Random, spo2_every_s: float = 300,
-                 manual_every_s: float = 1200):
-        self.b = baseline
-        self.rng = rng
+    NOISE = {"heart_rate": 1.0, "spo2": 0.3, "resp_rate": 0.4, "sbp": 2.0, "temp": 0.04}
+
+    def __init__(self, points: tuple, rng: random.Random, start_h: float, t0: float, speed: float = 1.0,
+                 hrv_base: float = 32.0, spo2_every_s: float = 300, manual_every_s: float = 900):
+        self.points, self.rng = points, rng
+        self.start_h, self.t0, self.speed = start_h, t0, speed
+        self.hrv_base = hrv_base
         self.spo2_every_s = spo2_every_s
-        self.manual_every_s = manual_every_s
+        self.manual_every_s = manual_every_s     # blood pressure cadence; shortened while a scenario runs
         self._last_spo2 = -1e9
         self._last_manual = -1e9
-        self._activity = "resting"
+        self._t = t0
 
-    def _activity_for(self, hour: float) -> str:
-        if hour < 6 or hour >= 23:
-            return "sleep"
-        if self.rng.random() < 0.08:  # occasionally change state
-            self._activity = self.rng.choices(["resting", "light", "moderate"], [0.6, 0.32, 0.08])[0]
-        return self._activity
+    def hours(self, t: float) -> float:
+        """Hours since discharge at simulator time t."""
+        return max(0.0, self.start_h + (t - self.t0) * self.speed / 3600)
+
+    @property
+    def b(self) -> dict[str, float]:
+        """The patient's current values (what an on-demand reading would be centred on)."""
+        from rpm_core.cohort import trajectory_at
+
+        return trajectory_at(self.points, self.hours(self._t))
 
     def sample(self, t: float, hour_of_day: float, window_s: float, deltas: dict[str, float],
                motion_artifact: bool, arrhythmia: bool, force_spo2: bool = False) -> Window:
-        r = self.rng
-        act = self._activity_for(hour_of_day)
-        circadian = -6 * math.cos((hour_of_day - 4) / 24 * 2 * math.pi)  # nadir ~04:00
-        act_hr = {"sleep": -8, "resting": 0, "light": 12, "moderate": 25}[act]
-        hr = self.b["heart_rate"] + circadian + act_hr + deltas.get("heart_rate", 0) + r.gauss(0, 2.0)
-        spread = 14 if arrhythmia else 5
-        hr_q = _clamp(r.gauss(0.92, 0.04), 0.7, 1.0)
+        self._t = t
+        r, now = self.rng, self.b
+        act = "sleep" if (hour_of_day < 6 or hour_of_day >= 23) else "resting"
+        hr = now["heart_rate"] + deltas.get("heart_rate", 0) + r.gauss(0, self.NOISE["heart_rate"])
+        spread = 14 if arrhythmia else 4
+        hr_q = _clamp(r.gauss(0.93, 0.03), 0.7, 1.0)
         if motion_artifact:
-            hr = r.uniform(150, 180)
-            hr_q = r.uniform(0.15, 0.4)
-            act = "vigorous"
+            hr, hr_q, act = r.uniform(150, 180), r.uniform(0.15, 0.4), "vigorous"
         hr = _clamp(hr, 30, 210)
-        hrv = _clamp(35 - 0.25 * (hr - 70) + deltas.get("hrv_rmssd", 0) + r.gauss(0, 3), 4, 120)
-        steps = {"sleep": 0, "resting": r.randint(0, 6), "light": r.randint(20, 45),
-                 "moderate": r.randint(45, 70), "vigorous": r.randint(60, 90)}[act] * window_s / 30
-        if deltas.get("steps", 0) < 0:
-            steps *= 0.3
-
+        hrv = _clamp(self.hrv_base - 0.25 * (hr - 70) + deltas.get("hrv_rmssd", 0) + r.gauss(0, 2), 4, 120)
         m: dict[str, dict] = {
-            "heart_rate": {"mean": round(hr, 1), "min": round(hr - r.uniform(2, spread), 1),
-                           "max": round(hr + r.uniform(2, spread), 1), "n": int(window_s), "quality": round(hr_q, 2)},
+            "heart_rate": {"mean": round(hr, 1), "min": round(hr - r.uniform(1, spread), 1),
+                           "max": round(hr + r.uniform(1, spread), 1), "n": int(window_s), "quality": round(hr_q, 2)},
             "hrv_rmssd": {"value": round(hrv, 1), "quality": round(_clamp(hr_q - 0.05, 0, 1), 2)},
-            "skin_temp": {"value": round(33.4 + deltas.get("skin_temp", 0) + r.gauss(0, 0.15)
-                                         - (0.6 if act == "sleep" else 0), 2)},
-            "steps": {"value": float(int(steps))},
             "activity": {"value": act},
         }
-        spo2_due = force_spo2 or t - self._last_spo2 >= self.spo2_every_s
-        if spo2_due and not motion_artifact:
+        if (force_spo2 or t - self._last_spo2 >= self.spo2_every_s) and not motion_artifact:
             self._last_spo2 = t
-            spo2 = _clamp(self.b["spo2"] + deltas.get("spo2", 0) + r.gauss(0, 0.6), 70, 100)
-            m["spo2"] = {"value": round(spo2, 1), "quality": round(_clamp(r.gauss(0.9, 0.05), 0.6, 1), 2),
+            spo2 = _clamp(now["spo2"] + deltas.get("spo2", 0) + r.gauss(0, self.NOISE["spo2"]), 70, 100)
+            m["spo2"] = {"value": round(spo2, 1), "quality": round(_clamp(r.gauss(0.92, 0.04), 0.6, 1), 2),
                          "spot_check": True}
+            m["resp_rate"] = {"value": round(_clamp(now["resp_rate"] + deltas.get("resp_rate", 0)
+                                                    + r.gauss(0, self.NOISE["resp_rate"]), 4, 60), 1)}
+            m["temp"] = {"value": round(now["temp"] + deltas.get("temp", 0) + r.gauss(0, self.NOISE["temp"]), 1)}
         if t - self._last_manual >= self.manual_every_s:
             self._last_manual = t
-            m["sbp"] = {"value": round(self.b["sbp"] + deltas.get("sbp", 0) + r.gauss(0, 4))}
-            m["dbp"] = {"value": round(self.b["dbp"] + deltas.get("dbp", 0) + r.gauss(0, 3))}
-            m["temp"] = {"value": round(self.b["temp"] + deltas.get("temp", 0) + r.gauss(0, 0.1), 1)}
-            m["resp_rate"] = {"value": round(self.b["resp_rate"] + deltas.get("resp_rate", 0) + r.gauss(0, 1))}
+            m["sbp"] = {"value": round(now["sbp"] + deltas.get("sbp", 0) + r.gauss(0, self.NOISE["sbp"]))}
         return Window(m, quality_ok=not motion_artifact)
 
 
 class IcuReplay:
-    """Replays a charted ICU stay at `speed`x, linearly interpolating between (sparse) charted points and
-    adding monitor-like noise. Loops when the stay ends so the demo can run indefinitely."""
+    """An ICU bedside monitor: every vital sign, centred on the series it is given (for an admitted patient, the
+    values charted at discharge), with monitor-like noise. A longer series is replayed at `speed`x and loops."""
 
     NOISE = {"heart_rate": 1.5, "spo2": 0.4, "resp_rate": 0.8, "sbp": 2.5, "dbp": 2.0, "temp": 0.04}
 

@@ -6,27 +6,26 @@ from pathlib import Path
 
 import pytest
 
+from rpm_core.cohort import TrainingData, build_cohort, trajectory_at
 from rpm_core.contracts import Command, DeviceEvent, Telemetry
-from rpm_core.mimic import MimicDataset, build_cohort, icu_series
 from rpm_simulator.engine import Simulator
 from rpm_simulator.scenarios import SCENARIOS, ActiveScenario
 
-DATA = Path(os.environ.get("MIMIC_DIR", Path(__file__).resolve().parents[2] / "synthetic_mimic_150patients"))
-pytestmark = pytest.mark.skipif(not (DATA / "patients.csv").exists(), reason="MIMIC extract not available")
+DATA = Path(os.environ.get("RPM_DATA_DIR", Path(__file__).resolve().parents[2] / "Training Data"))
+pytestmark = pytest.mark.skipif(not (DATA / "rpm_training_sample.csv").exists(),
+                                reason="the team's training data is not available")
+ANCHOR = datetime(2026, 10, 2, 12)
 
 
 @pytest.fixture(scope="module")
 def cohort_and_series():
-    ds = MimicDataset(DATA)
-    members = build_cohort(ds, datetime(2026, 10, 2, 12), icu_count=25)
-    series = {m.subject_id: icu_series(ds, m.index_stay_id) for m in members if m.care_setting == "icu"}
-    return members, series
+    return build_cohort(TrainingData(DATA), ANCHOR), None
 
 
 def make_sim(cohort_and_series, **kw):
-    members, series = cohort_and_series
+    members, _ = cohort_and_series
     sent: list[tuple[str, str]] = []
-    sim = Simulator(members, series, lambda k, t, p: sent.append((t, p)), **kw)
+    sim = Simulator(members, lambda k, t, p: sent.append((t, p)), **kw)
     for d in sim.devices.values():
         d.next_due = 0  # everything due now
     return sim, sent
@@ -35,15 +34,32 @@ def make_sim(cohort_and_series, **kw):
 def test_every_device_publishes_valid_telemetry(cohort_and_series):
     sim, sent = make_sim(cohort_and_series)
     sim.tick()
-    assert len(sent) == 150
+    members = cohort_and_series[0]
+    assert len(sent) == len(members) == 30
     icu = 0
     for topic, payload in sent:
         t = Telemetry.model_validate_json(payload)
         assert topic == f"rpm/v1/dev/{t.device_id}/telemetry"
         icu += t.context == "icu"
         if t.context == "icu":  # full NEWS2 parameter set from the bedside
+            assert t.source == "icu_monitor"
             assert {"heart_rate", "spo2", "resp_rate", "sbp", "temp"} <= set(t.metrics.model_dump(exclude_none=True))
-    assert icu >= 22
+    assert icu == 6
+
+
+def test_wearable_reports_the_patients_own_data_not_invented_values(cohort_and_series):
+    """A home patient's readings follow their trajectory in the training data, within sensor noise."""
+    members, _ = cohort_and_series
+    m = next(x for x in members if x.care_setting == "home" and x.origin == "synthetic")
+    sim = Simulator([m], lambda *_: None)
+    gen = sim.devices[m.device_id].gen
+    for hours in (0.0, 3.0, 30.0, 71.5, 200.0):
+        want = trajectory_at(m.points, hours)
+        got = gen.sample(gen.t0 + (hours - gen.start_h) * 3600, 12, 30, {}, False, False, force_spo2=True).metrics
+        assert got["heart_rate"]["mean"] == pytest.approx(want["heart_rate"], abs=5)
+        assert got["spo2"]["value"] == pytest.approx(want["spo2"], abs=1.5)
+        assert got["resp_rate"]["value"] == pytest.approx(want["resp_rate"], abs=2)
+    assert trajectory_at(m.points, 200.0) == trajectory_at(m.points, 72.0)   # held at the end of the data
 
 
 def test_scenario_ramps_heart_rate(cohort_and_series):
@@ -51,7 +67,7 @@ def test_scenario_ramps_heart_rate(cohort_and_series):
     dev = next(d for d in sim.devices.values() if d.context == "home")
     before = []
     for _ in range(5):
-        before.append(sim.devices[dev.device_id].gen.sample(0, 12, 30, {}, False, False).metrics["heart_rate"]["mean"])
+        before.append(dev.gen.sample(dev.gen.t0, 12, 30, {}, False, False).metrics["heart_rate"]["mean"])
     sc = ActiveScenario(SCENARIOS["af_rvr"], time.monotonic() - 100, 600)
     dev.scenario = sc
     deltas, *_ = sim._deltas(dev, time.monotonic())
@@ -85,7 +101,7 @@ def test_checkin_command_gets_reply(cohort_and_series):
 
 def test_set_profile_shortens_window(cohort_and_series):
     sim, _ = make_sim(cohort_and_series)
-    dev = next(iter(sim.devices.values()))
+    dev = next(d for d in sim.devices.values() if d.context == "home")
     sim.on_message(f"rpm/v1/dev/{dev.device_id}/cmd",
                    Command(cmd="SET_PROFILE", args={"profile": "critical"}).to_json().encode())
     assert dev.window_s == 5 and dev.profile == "critical"
@@ -93,9 +109,10 @@ def test_set_profile_shortens_window(cohort_and_series):
 
 def test_control_topic_starts_scenario(cohort_and_series):
     sim, _ = make_sim(cohort_and_series)
+    pid = cohort_and_series[0][0].patient_id
     sim.on_message("rpm/v1/sim/control",
-                   json.dumps({"action": "scenario", "target": "p-90000001", "scenario": "sepsis"}).encode())
-    assert sim.resolve("p-90000001").scenario.spec.name == "sepsis"
+                   json.dumps({"action": "scenario", "target": pid, "scenario": "sepsis"}).encode())
+    assert sim.resolve(pid).scenario.spec.name == "sepsis"
 
 
 def test_sos_is_emitted_immediately_even_if_next_tick_is_late(cohort_and_series):
@@ -111,13 +128,13 @@ def test_bradycardia_targets_an_absolute_rate_whatever_the_baseline(cohort_and_s
     members, series = cohort_and_series
     home = [m for m in members if m.care_setting == "home"]
     fast, slow = max(home, key=lambda m: m.baseline["heart_rate"]), min(home, key=lambda m: m.baseline["heart_rate"])
-    sim = Simulator([fast, slow], {}, lambda *_: None)
+    sim = Simulator([fast, slow], lambda *_: None)
     for m in (fast, slow):
         sim.start_scenario(m.patient_id, "bradycardia")
         dev = sim.devices[m.device_id]
         dev.scenario.started -= 120  # past the 60 s ramp: full effect
         deltas, *_ = sim._deltas(dev, time.monotonic())
-        assert m.baseline["heart_rate"] + deltas["heart_rate"] == pytest.approx(38)
+        assert dev.gen.b["heart_rate"] + deltas["heart_rate"] == pytest.approx(38)
 
 
 def _by_patient(sim, sent, patient_id):
@@ -126,7 +143,7 @@ def _by_patient(sim, sent, patient_id):
         d.next_due = 0
     sim.tick()
     out = [Telemetry.model_validate_json(p) for _, p in sent]
-    return [t for t in out if t.device_id.endswith(patient_id.removeprefix("p-"))]
+    return [t for t in out if t.device_id.endswith(patient_id)]
 
 
 def test_icu_monitor_only_while_admitted_and_wearable_only_at_home(cohort_and_series):
@@ -138,7 +155,7 @@ def test_icu_monitor_only_while_admitted_and_wearable_only_at_home(cohort_and_se
     sim.on_message("rpm/v1/sim/control", json.dumps({"action": "discharge", "target": icu.patient_id}).encode())
     after = _by_patient(sim, sent, icu.patient_id)
     assert [(t.source, t.context) for t in after] == [("simulator", "home")]   # the ICU monitor is gone
-    assert after[0].device_id == f"sim-{icu.subject_id}" and after[0].metrics.activity is not None
+    assert after[0].device_id == f"sim-{icu.patient_id}" and after[0].metrics.activity is not None
 
     sim.on_message("rpm/v1/sim/control", json.dumps({"action": "admit", "target": icu.patient_id}).encode())
     again = _by_patient(sim, sent, icu.patient_id)

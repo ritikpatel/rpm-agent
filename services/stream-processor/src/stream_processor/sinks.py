@@ -10,6 +10,7 @@ import httpx
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from rpm_core.cohort import sim_device_id
 from rpm_core.contracts import ClinicalEvent
 
 log = logging.getLogger(__name__)
@@ -59,12 +60,6 @@ WHERE NOT EXISTS (SELECT 1 FROM device_assignments WHERE device_id = %(device)s 
   AND NOT EXISTS (SELECT 1 FROM device_assignments WHERE patient_id = %(patient)s AND active_to IS NULL
                   AND device_kind = ANY(%(kinds)s))
 """
-
-
-def sim_device(patient_id: str, setting: str) -> str:
-    """The simulator's device for a patient in a care setting (same naming as the seeded cohort)."""
-    suffix = patient_id.removeprefix("p-")
-    return f"sim-icu-{suffix}" if setting == "icu" else f"sim-{suffix}"
 
 
 class PostgresSink:
@@ -128,7 +123,7 @@ class PostgresSink:
             cur.execute("UPDATE device_assignments SET active_to = now() WHERE patient_id = %s AND active_to IS NULL "
                         "AND device_kind = 'icu_monitor'", (pid,))
             kinds, kind_new = ["watch", "simulator"], "simulator"
-        device = data.get("device_id") or sim_device(pid, setting)
+        device = data.get("device_id") or sim_device_id(pid, setting)
         cur.execute(_ASSIGN, {"device": device, "patient": pid, "kind": kind_new, "kinds": kinds})
         cur.execute(_RESET_STATUS, (device, pid))
         cur.execute("DELETE FROM stream_state WHERE patient_id = %s", (pid,))

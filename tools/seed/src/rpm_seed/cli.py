@@ -21,10 +21,10 @@ from datetime import UTC, datetime
 
 import httpx
 
+from rpm_core.cohort import CohortMember, TrainingData, build_cohort
 from rpm_core.data import fetch_dir
 from rpm_core.db import make_pool, migrate, wait_for_db
 from rpm_core.logging import setup_logging
-from rpm_core.mimic import CohortMember, MimicDataset, build_cohort, select_cohort
 from rpm_core.rag import RagIndex, load_protocols, make_embedder
 from rpm_core.rag.discharge import build_all
 
@@ -40,10 +40,10 @@ SUBSCRIPTIONS = {
 }
 
 
-def load_fhir(a, members: list[CohortMember], ds: MimicDataset, anchor: datetime) -> None:
+def load_fhir(a, members: list[CohortMember], anchor: datetime) -> None:
     fhir = FhirClient(a.fhir_url)
     fhir.wait_ready()
-    builder = PatientBundleBuilder(ds, anchor)
+    builder = PatientBundleBuilder(anchor)
     t0, done, total = time.monotonic(), 0, 0
 
     def one(m: CohortMember) -> int:
@@ -92,12 +92,12 @@ def _fhir_document(base: str, doc) -> None:
     httpx.put(f"{base}/DocumentReference/{body['id']}", json=body, timeout=20, headers=FHIR_JSON).raise_for_status()
 
 
-def index(a, members: list[CohortMember], ds: MimicDataset, mirror: bool) -> None:
+def index(a, members: list[CohortMember], mirror: bool) -> None:
     t0 = time.monotonic()
     pool = make_pool(a.database_url, max_size=2)
     rag = RagIndex(pool, make_embedder(a.embeddings, a.region))
     protocols = load_protocols(fetch_dir(a.protocols))
-    summaries = build_all(ds, members)
+    summaries = build_all(members)
     n = rag.upsert(protocols) + rag.upsert(summaries)
     mirrored = 0
     if mirror:
@@ -116,16 +116,18 @@ def main(argv: list[str] | None = None) -> None:
     env = os.environ.get
     ap = argparse.ArgumentParser(prog="rpm-seed", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("target", choices=["all", "registry", "fhir", "index", "subscriptions"])
-    ap.add_argument("--mimic-dir", default=env("RPM_MIMIC_DIR", "./synthetic_mimic_150patients"))
+    ap.add_argument("--data-dir", default=env("RPM_DATA_DIR", "./Training Data"),
+                    help="the team's training data: the only source of patients")
     ap.add_argument("--protocols", default=env("RPM_PROTOCOLS_DIR", "./knowledge/protocols"))
     ap.add_argument("--fhir-url", default=env("RPM_FHIR_BASE_URL", "http://localhost:8080/fhir"))
     ap.add_argument("--database-url", default=env("RPM_DATABASE_URL", "postgresql://rpm:rpm@localhost:5432/rpm"))
     ap.add_argument("--hook-url", default=env("RPM_FHIR_HOOK_URL", "http://care-api:8000/hooks/fhir"),
                     help="where the FHIR server reaches care-api")
     ap.add_argument("--service-token", default=env("RPM_SERVICE_TOKEN", "dev-service-token"))
-    ap.add_argument("--icu", type=int, default=int(env("RPM_COHORT_ICU", "6")), help="admitted patients (0 = all)")
-    ap.add_argument("--home", type=int, default=int(env("RPM_COHORT_HOME", "18")),
-                    help="discharged patients (0 = all)")
+    ap.add_argument("--icu", type=int, default=int(env("RPM_COHORT_ICU", "6")),
+                    help="patients shown as admitted to the ICU")
+    ap.add_argument("--home", type=int, default=int(env("RPM_COHORT_HOME", "24")),
+                    help="discharged patients on wearables (0 = everyone else in the data)")
     ap.add_argument("--seed", default=env("RPM_COHORT_SEED", "rpm-v1"))
     ap.add_argument("--embeddings", default=env("RPM_EMBEDDINGS", "hash"), choices=["hash", "titan"])
     ap.add_argument("--region", default=env("RPM_AWS_REGION", "ap-southeast-2"))
@@ -135,10 +137,12 @@ def main(argv: list[str] | None = None) -> None:
     setup_logging("rpm-seed", env("RPM_LOG_LEVEL", "INFO"))
 
     anchor = datetime.now(UTC).replace(tzinfo=None, second=0, microsecond=0)
-    ds = MimicDataset(fetch_dir(a.mimic_dir))
-    members = select_cohort(build_cohort(ds, anchor, seed=a.seed), a.icu, a.home, a.seed)
+    data = TrainingData(fetch_dir(a.data_dir))
+    members = build_cohort(data, anchor, a.icu, a.home, a.seed)
     icu = sum(1 for m in members if m.care_setting == "icu")
-    print(f"cohort: {len(members)} patients ({icu} in ICU, {len(members) - icu} at home)")
+    real = sum(1 for m in members if m.origin == "mimic_real")
+    print(f"cohort: {len(members)} of the {len(data)} patients in the training data ({icu} in ICU, "
+          f"{len(members) - icu} at home; {real} MIMIC, {len(members) - real} synthetic)")
     everything = a.target == "all"
 
     if everything or a.target in ("registry", "index"):
@@ -150,9 +154,9 @@ def main(argv: list[str] | None = None) -> None:
         FhirClient(a.fhir_url).wait_ready()
         subscriptions(a, enable=False)   # loading history must not look like new admissions and results
     if everything or a.target == "fhir":
-        load_fhir(a, members, ds, anchor)
+        load_fhir(a, members, anchor)
     if everything or a.target == "index":
-        index(a, members, ds, mirror=everything)
+        index(a, members, mirror=everything)
     if everything or a.target == "subscriptions":
         subscriptions(a, enable=True)
 

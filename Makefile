@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 AWS_PROFILE ?= rpm-capstone
-MIMIC ?= synthetic_mimic_150patients
+DATA ?= Training Data
 LLM ?= offline
 MAIL ?= local
 SIM := uv run rpm-sim
@@ -25,7 +25,7 @@ lint:            ## ruff
 	uv run ruff check .
 
 models:          ## fit the placeholder models into models/plugins (the data team's models replace them)
-	uv run python models/train_placeholders.py --mimic-dir $(MIMIC)
+	uv run python models/train_placeholders.py --data-dir "$(DATA)"
 
 model-check:     ## check every model plug-in against models/CONTRACT.md
 	uv run pytest services/risk-service/tests/test_plugins.py -q
@@ -57,19 +57,19 @@ sim:             ## start the simulated devices (ICU monitors for admitted patie
 sim-stop:        ## stop the simulated devices
 	$(COMPOSE) --profile sim stop simulator
 
-scenario:        ## make a patient deteriorate: make scenario P=p-90000001 S=sepsis [RAMP=60]
+scenario:        ## make a patient deteriorate: make scenario P=SYN-000143 S=sepsis [RAMP=60]
 	$(SIM) scenario --target $(P) --type $(S) $(if $(RAMP),--ramp-s $(RAMP),)
 
-clear:           ## end a patient's scenario: make clear P=p-90000001
+clear:           ## end a patient's scenario: make clear P=SYN-000143
 	$(SIM) clear --target $(P)
 
 scenarios:       ## list the scenarios
 	@$(SIM) scenarios
 
 cohort:          ## list the monitored patients
-	@$(SIM) cohort --mimic-dir $(MIMIC)
+	@$(SIM) cohort --data-dir "$(DATA)"
 
-send:            ## send one reading now: make send P=p-90000001 ARGS="--hr 134 --spo2 86"
+send:            ## send one reading now: make send P=SYN-000143 ARGS="--hr 134 --spo2 86"
 	$(SIM) send --target $(P) $(ARGS)
 
 mail-status:     ## which alert e-mail addresses Amazon SES has verified (unverified ones receive nothing)

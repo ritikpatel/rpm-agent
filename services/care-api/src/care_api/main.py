@@ -187,7 +187,8 @@ def list_patients(user: Reader,
                   setting: Annotated[str | None, Query(pattern="^(home|icu)$")] = None) -> list[dict]:
     return _query(
         """
-        SELECT p.patient_id, p.display_name, p.sex, p.age, p.primary_condition, p.care_setting,
+        SELECT p.patient_id, p.display_name, p.sex, p.age, p.primary_condition, p.primary_diagnosis, p.data_origin,
+               p.care_setting,
                p.discharge_at, p.icu_admit_at, s.device_id, s.last_seen, s.news2, s.news2_band, s.news2_partial,
                s.latest,
                (SELECT count(*) FROM clinical_events e WHERE e.patient_id = p.patient_id

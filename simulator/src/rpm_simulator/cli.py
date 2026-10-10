@@ -1,10 +1,10 @@
 """rpm-sim: simulated wearables and ICU monitors.
 
   rpm-sim run                                           # ICU monitors for admitted patients, wearables at home
-  rpm-sim scenario --target p-90000012 --type sepsis    # make a patient deteriorate (the running fleet reacts)
-  rpm-sim discharge --target p-90000012                 # the ICU monitor stops, a wearable starts
-  rpm-sim send --target p-90000031 --hr 134 --spo2 86   # one reading, sent right now
-  rpm-sim send --target p-90000031 --event SOS          # the patient presses SOS
+  rpm-sim scenario --target SYN-000143 --type sepsis    # make a patient deteriorate (the running fleet reacts)
+  rpm-sim discharge --target RPM-10001725               # the ICU monitor stops, the patient's wearable data starts
+  rpm-sim send --target SYN-000143 --hr 134 --spo2 86   # one reading, sent right now
+  rpm-sim send --target SYN-000143 --event SOS          # the patient presses SOS
   rpm-sim scenarios | rpm-sim cohort
 
 The same commands work against the local broker (default) and AWS IoT Core: pass the endpoint and the simulator
@@ -25,10 +25,10 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from rpm_core.cohort import TrainingData, build_cohort, sim_device_id
 from rpm_core.contracts import DeviceEvent, DeviceEventTs, Metrics, Telemetry, TelemetryTs, telemetry_topic, utcnow
 from rpm_core.data import fetch_dir
 from rpm_core.logging import setup_logging
-from rpm_core.mimic import MimicDataset, build_cohort, icu_series, select_cohort, sim_device_id
 
 from .engine import CMD_FILTER, CONTROL_TOPIC, Simulator
 from .publisher import FleetPublisher, MqttConfig
@@ -51,19 +51,18 @@ def _mqtt_args(p: argparse.ArgumentParser) -> None:
 
 
 def _cohort_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--mimic-dir", default=_env("RPM_MIMIC_DIR", "./synthetic_mimic_150patients"),
-                   help="local directory or s3://bucket/prefix")
+    p.add_argument("--data-dir", default=_env("RPM_DATA_DIR", "./Training Data"),
+                   help="the team's training data (local directory or s3://bucket/prefix)")
     p.add_argument("--icu", type=int, default=int(_env("RPM_COHORT_ICU", "6")),
-                   help="admitted patients to monitor (0 = all in the dataset)")
-    p.add_argument("--home", type=int, default=int(_env("RPM_COHORT_HOME", "18")),
-                   help="discharged patients to monitor (0 = all in the dataset)")
+                   help="patients shown as admitted to the ICU")
+    p.add_argument("--home", type=int, default=int(_env("RPM_COHORT_HOME", "24")),
+                   help="discharged patients on wearables (0 = everyone else in the data)")
     p.add_argument("--seed", default=_env("RPM_COHORT_SEED", "rpm-v1"))
 
 
 def _cohort(a: argparse.Namespace):
-    ds = MimicDataset(fetch_dir(a.mimic_dir))
-    members = build_cohort(ds, datetime.now(UTC).replace(tzinfo=None), seed=a.seed)
-    return ds, select_cohort(members, a.icu, a.home, a.seed)
+    data = TrainingData(fetch_dir(a.data_dir))
+    return build_cohort(data, datetime.now(UTC).replace(tzinfo=None), a.icu, a.home, a.seed)
 
 
 def _mqtt_config(a: argparse.Namespace, shards: int = 1) -> MqttConfig:
@@ -87,13 +86,10 @@ def _sync_loop(sim: Simulator, url: str, token: str, stop: threading.Event, inte
 
 
 def cmd_run(a: argparse.Namespace) -> None:
-    ds, members = _cohort(a)
-    # ICU series for every patient: a home patient who is admitted later replays their own charted stay
-    series = {m.subject_id: icu_series(ds, m.index_stay_id) for m in members if m.index_stay_id}
-
+    members = _cohort(a)
     sim_ref: dict[str, Simulator] = {}
     pub = FleetPublisher(_mqtt_config(a, a.shards), on_message=lambda t, p: sim_ref["sim"].on_message(t, p))
-    sim = Simulator(members, series, pub.publish, window_s=a.window_s, speed=a.speed, seed=a.seed,
+    sim = Simulator(members, pub.publish, window_s=a.window_s, speed=a.speed, seed=a.seed,
                     tz_offset_h=a.tz_offset_h, auto_scenarios_per_hour=a.auto_scenarios_per_hour,
                     icu_window_s=a.icu_window_s)
     sim_ref["sim"] = sim
@@ -188,11 +184,11 @@ def cmd_scenarios(_a: argparse.Namespace) -> None:
 
 
 def cmd_cohort(a: argparse.Namespace) -> None:
-    _, members = _cohort(a)
-    print(f"{'patient':12s} {'name':20s} {'sex':3s} {'age':>3s} {'condition':9s} {'setting':7s} device")
+    members = _cohort(a)
+    print(f"{'patient':13s} {'name':18s} {'sex':3s} {'age':>3s} {'setting':7s} {'source':10s} diagnosis")
     for m in members:
-        print(f"{m.patient_id:12s} {m.display_name:20s} {m.sex:3s} {m.age:>3d} {m.condition:9s} "
-              f"{m.care_setting:7s} {m.device_id}")
+        print(f"{m.patient_id:13s} {m.display_name:18s} {m.sex:3s} {m.age:>3d} {m.care_setting:7s} "
+              f"{'MIMIC' if m.origin == 'mimic_real' else 'synthetic':10s} {m.diagnosis or '-'}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -207,19 +203,19 @@ def main(argv: list[str] | None = None) -> None:
                      help="wearable reporting window")
     run.add_argument("--icu-window-s", type=int, default=int(_env("RPM_SIM_ICU_WINDOW_S", "10")),
                      help="ICU monitor reporting cadence")
-    run.add_argument("--speed", type=float, default=float(_env("RPM_SIM_SPEED", "60")),
-                     help="ICU replay speed-up (charted seconds per real second)")
+    run.add_argument("--speed", type=float, default=float(_env("RPM_SIM_SPEED", "1")),
+                     help="play the post-discharge data faster than real time (for example 12)")
     run.add_argument("--care-api", default=_env("RPM_CARE_API_URL"),
                      help="follow the platform's registry (admissions, discharges, real watches)")
     run.add_argument("--service-token", default=_env("RPM_SERVICE_TOKEN", "dev-service-token"))
     run.add_argument("--auto-scenarios-per-hour", type=float, default=float(_env("RPM_SIM_AUTO_SCENARIOS", "0")))
-    run.add_argument("--tz-offset-h", type=float, default=float(_env("RPM_SIM_TZ_OFFSET_H", "4")))
+    run.add_argument("--tz-offset-h", type=float, default=float(_env("RPM_SIM_TZ_OFFSET_H", "5.5")))
     run.add_argument("--duration-s", type=float, default=0, help="stop after N seconds (0 = forever)")
     run.set_defaults(fn=cmd_run)
 
     sc = sub.add_parser("scenario", help="make a patient deteriorate in the running fleet")
     _mqtt_args(sc)
-    sc.add_argument("--target", required=True, help="patient id (p-...), subject id or device id")
+    sc.add_argument("--target", required=True, help="patient id (RPM-... or SYN-...), subject id or device id")
     sc.add_argument("--type", required=True)
     sc.add_argument("--duration-s", type=float)
     sc.add_argument("--ramp-s", type=float, help="override ramp-in time (for example 60 for a live demo)")
@@ -239,7 +235,7 @@ def main(argv: list[str] | None = None) -> None:
 
     se = sub.add_parser("send", help="send one reading or device event right now")
     _mqtt_args(se)
-    se.add_argument("--target", help="patient id (p-...); the device id is derived from it and --setting")
+    se.add_argument("--target", help="patient id; the device id is derived from it and --setting")
     se.add_argument("--device", help="device id, instead of --target")
     se.add_argument("--setting", choices=["home", "icu"], default="home")
     for flag in ("hr", "spo2", "rr", "sbp", "dbp", "temp", "gcs"):

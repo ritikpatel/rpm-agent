@@ -7,18 +7,21 @@ from datetime import UTC
 import psycopg
 from psycopg.types.json import Jsonb
 
-from rpm_core.mimic import CohortMember
+from rpm_core.cohort import CohortMember
 
 _UPSERT_PATIENT = """
-INSERT INTO patients (patient_id, subject_id, display_name, sex, age, primary_condition, care_setting, discharge_at,
+INSERT INTO patients (patient_id, subject_id, display_name, sex, age, primary_condition, primary_diagnosis,
+                      data_origin, care_setting, discharge_at,
                       icu_admit_at, hypercapnic_resp_failure, on_supplemental_o2, thresholds, monitoring_active,
                       los_days, prior_admissions_12m, drg_severity, discharge_disposition)
-VALUES (%(patient_id)s, %(subject_id)s, %(display_name)s, %(sex)s, %(age)s, %(condition)s, %(care_setting)s,
+VALUES (%(patient_id)s, %(subject_id)s, %(display_name)s, %(sex)s, %(age)s, %(condition)s, %(diagnosis)s,
+        %(origin)s, %(care_setting)s,
         %(discharge_at)s, %(icu_admit_at)s, %(hypercapnic)s, false, %(thresholds)s, true,
         %(los_days)s, %(prior_admissions_12m)s, %(drg_severity)s, %(discharge_disposition)s)
 ON CONFLICT (patient_id) DO UPDATE SET
     display_name = EXCLUDED.display_name, sex = EXCLUDED.sex, age = EXCLUDED.age,
-    primary_condition = EXCLUDED.primary_condition, care_setting = EXCLUDED.care_setting,
+    primary_condition = EXCLUDED.primary_condition, primary_diagnosis = EXCLUDED.primary_diagnosis,
+    data_origin = EXCLUDED.data_origin, care_setting = EXCLUDED.care_setting,
     discharge_at = EXCLUDED.discharge_at, icu_admit_at = EXCLUDED.icu_admit_at,
     hypercapnic_resp_failure = EXCLUDED.hypercapnic_resp_failure, monitoring_active = true,
     los_days = EXCLUDED.los_days, prior_admissions_12m = EXCLUDED.prior_admissions_12m,
@@ -49,7 +52,8 @@ def seed(database_url: str, members: list[CohortMember]) -> dict[str, int]:
         for m in members:
             conn.execute(_UPSERT_PATIENT, {
                 "patient_id": m.patient_id, "subject_id": m.subject_id, "display_name": m.display_name,
-                "sex": m.sex, "age": m.age, "condition": m.condition, "care_setting": m.care_setting,
+                "sex": m.sex, "age": m.age, "condition": m.condition, "diagnosis": m.diagnosis, "origin": m.origin,
+                "care_setting": m.care_setting,
                 "discharge_at": _utc(m.discharge_at), "icu_admit_at": _utc(m.icu_admit_at),
                 "hypercapnic": m.hypercapnic, "thresholds": Jsonb({}), "los_days": m.los_days,
                 "prior_admissions_12m": m.prior_admissions_12m, "drg_severity": m.drg_severity,
