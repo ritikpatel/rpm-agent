@@ -1,0 +1,18 @@
+[project]
+name = "iot-rule-emulator"
+version = "0.2.0"
+description = "LOCAL ONLY: stands in for the AWS IoT topic rule (MQTT to SQS) against Mosquitto and ElasticMQ"
+requires-python = ">=3.12"
+dependencies = [
+    "rpm-core",
+]
+
+[project.scripts]
+iot-rule-emulator = "iot_rule_emulator.main:main"
+
+[tool.uv.sources]
+rpm-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

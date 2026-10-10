@@ -28,11 +28,11 @@ from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 from redis import Redis
 
-from rpm_alerts import SEVERITY_RANK, AlertStore, clamp_severity
-from rpm_common.devices import DeviceCommander
-from rpm_common.live import publish
-from rpm_contracts import ClinicalEvent, utcnow, uuid7
-from rpm_rag import Hit, RagIndex
+from care_api.alerts import SEVERITY_RANK, AlertStore, clamp_severity
+from rpm_core.devices import DeviceCommander
+from rpm_core.live import publish
+from rpm_core.contracts import ClinicalEvent, utcnow, uuid7
+from rpm_core.rag import Hit, RagIndex
 
 from . import offline
 from .context import ContextBuilder, render

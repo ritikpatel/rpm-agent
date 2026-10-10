@@ -11,7 +11,7 @@
     "msg_id": { "type": "string", "format": "uuid" },
     "device_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{3,64}$" },
     "seq": { "type": "integer", "minimum": 0 },
-    "source": { "enum": ["galaxy_watch", "wearos_hs", "wearos_emulator", "simulator", "icu_gateway"] },
+    "source": { "enum": ["galaxy_watch", "wearos_hs", "wearos_emulator", "simulator", "icu_monitor"] },
     "type": { "enum": ["SOS", "FALL", "EDGE_ALERT", "CHECKIN_REPLY", "DEVICE_STATUS", "SPOT_CHECK_RESULT"] },
     "ts": {
       "type": "object",

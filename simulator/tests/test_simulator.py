@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from rpm_contracts import Command, DeviceEvent, Telemetry
-from rpm_mimic import MimicDataset, build_cohort, icu_series
+from rpm_core.contracts import Command, DeviceEvent, Telemetry
+from rpm_core.mimic import MimicDataset, build_cohort, icu_series
 from rpm_simulator.engine import Simulator
 from rpm_simulator.scenarios import SCENARIOS, ActiveScenario
 

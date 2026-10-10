@@ -1,0 +1,23 @@
+[project]
+name = "rpm-eval"
+version = "0.2.0"
+description = "Evaluation: replay-based alert quality, latency percentiles, agent audit"
+requires-python = ">=3.12"
+dependencies = [
+    "rpm-core",
+    "rpm-simulator",
+    "stream-processor",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+rpm-eval = "rpm_eval.cli:main"
+
+[tool.uv.sources]
+rpm-core = { workspace = true }
+rpm-simulator = { workspace = true }
+stream-processor = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

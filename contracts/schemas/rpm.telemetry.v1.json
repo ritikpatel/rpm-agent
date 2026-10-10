@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rpm.local/schemas/rpm.telemetry.v1.json",
   "title": "rpm.telemetry.v1",
-  "description": "Windowed vital-sign summary published by any edge source (watch, phone gateway, ICU gateway, simulator) on rpm/v1/dev/{thing}/telemetry. Contains no patient identifiers: device-to-patient mapping is resolved server-side.",
+  "description": "Windowed vital-sign summary published by any edge source (watch, phone companion, simulated ICU monitor) on rpm/v1/dev/{thing}/telemetry. Contains no patient identifiers: device-to-patient mapping is resolved server-side.",
   "type": "object",
   "required": ["schema", "msg_id", "device_id", "seq", "source", "ts", "metrics"],
   "additionalProperties": false,
@@ -11,7 +11,7 @@
     "msg_id": { "type": "string", "format": "uuid", "description": "UUIDv7; idempotency key" },
     "device_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{3,64}$", "description": "Must equal the IoT thing name; the cloud trusts the topic, not this field" },
     "seq": { "type": "integer", "minimum": 0, "description": "Per-device monotonic counter for gap detection" },
-    "source": { "enum": ["galaxy_watch", "wearos_hs", "wearos_emulator", "simulator", "icu_gateway"] },
+    "source": { "enum": ["galaxy_watch", "wearos_hs", "wearos_emulator", "simulator", "icu_monitor"] },
     "context": { "enum": ["home", "icu"], "default": "home" },
     "ts": {
       "type": "object",

@@ -18,14 +18,14 @@ from datetime import timedelta
 import redis
 from prometheus_client import Counter, Histogram, start_http_server
 
-from rpm_alerts import SEVERITY_RANK, AlertStore, EscalationPolicy, clamp_severity
-from rpm_common.aws import client
-from rpm_common.db import make_pool, migrate, wait_for_db
-from rpm_common.devices import DeviceCommander
-from rpm_common.logging import setup_logging
-from rpm_common.settings import BaseServiceSettings
-from rpm_contracts import ClinicalEvent
-from rpm_rag import RagIndex, make_embedder
+from care_api.alerts import SEVERITY_RANK, AlertStore, EscalationPolicy, clamp_severity
+from rpm_core.aws import client
+from rpm_core.db import make_pool, migrate, wait_for_db
+from rpm_core.devices import DeviceCommander
+from rpm_core.logging import setup_logging
+from rpm_core.settings import BaseServiceSettings
+from rpm_core.contracts import ClinicalEvent
+from rpm_core.rag import RagIndex, make_embedder
 
 from .context import ContextBuilder
 from .graph import AgentGraph, Deps, burst_lead, classify

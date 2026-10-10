@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from agent_service.graph import burst_lead, check_citations, classify
 from agent_service.policy import gate
 from agent_service.schemas import ASSESSMENT_SCHEMA, Assessment
-from rpm_rag import Hit
+from rpm_core.rag import Hit
 
 NOW = datetime(2026, 10, 2, 10, 0, tzinfo=UTC)
 

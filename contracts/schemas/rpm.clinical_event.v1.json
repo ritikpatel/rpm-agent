@@ -16,7 +16,8 @@
       "enum": [
         "NEWS2_HIGH", "NEWS2_MEDIUM", "NEWS2_RED_PARAM", "NEWS2_RISING",
         "HR_SUSTAINED_HIGH", "HR_SUSTAINED_LOW", "SPO2_LOW", "SPO2_CRITICAL",
-        "SOS", "FALL", "EDGE_ALERT", "DEVICE_SILENT", "DATA_GAP", "DEVICE_STATUS", "CHECKIN_REPLY"
+        "SOS", "FALL", "EDGE_ALERT", "DEVICE_SILENT", "DATA_GAP", "DEVICE_STATUS", "CHECKIN_REPLY",
+        "RISK_HIGH", "ADMITTED", "DISCHARGED", "LAB_RESULT"
       ]
     },
     "severity": { "enum": ["info", "low", "medium", "high", "critical"] },

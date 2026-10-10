@@ -1,0 +1,24 @@
+[project]
+name = "care-api"
+version = "0.2.0"
+description = "Alerts and escalation, notifications, sign-in and roles, audit, live WebSocket, FHIR write-back, agent tools"
+requires-python = ">=3.12"
+dependencies = [
+    "rpm-core",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.9",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+care-api = "care_api.main:main"
+rpm-audit-export = "care_api.audit_export:main"
+
+[tool.uv.sources]
+rpm-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

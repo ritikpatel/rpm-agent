@@ -24,7 +24,7 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from rpm_features.features import (
+from rpm_core.features.features import (
     ICU_MORTALITY_FEATURES,
     INSTABILITY_FEATURES,
     READMISSION_FEATURES,
@@ -33,9 +33,9 @@ from rpm_features.features import (
     news2_for_row,
     readmission_features,
 )
-from rpm_mimic import MimicDataset, to_float
-from rpm_mimic.cohort import drg_severity, prior_admissions
-from rpm_mimic.dataset import GCS_ITEMS, VITAL_ITEMS
+from rpm_core.mimic import MimicDataset, to_float
+from rpm_core.mimic.cohort import drg_severity, prior_admissions
+from rpm_core.mimic.dataset import GCS_ITEMS, VITAL_ITEMS
 
 VERSION = "1.0.0"
 VALIDATION_AUROC = 0.7  # minimum evidence before a model may influence escalation

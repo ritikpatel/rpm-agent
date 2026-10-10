@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 
-from rpm_contracts import (
+from rpm_core.contracts import (
     PROFILE_WINDOW_S,
     Command,
     DeviceEvent,
@@ -25,7 +25,7 @@ from rpm_contracts import (
     telemetry_topic,
     utcnow,
 )
-from rpm_mimic import CohortMember
+from rpm_core.mimic import CohortMember
 
 from .physiology import HomeWearable, IcuReplay
 from .scenarios import SCENARIOS, ActiveScenario

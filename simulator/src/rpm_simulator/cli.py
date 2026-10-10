@@ -17,9 +17,9 @@ import threading
 import uuid
 from datetime import UTC, datetime
 
-from rpm_common.data import fetch_dir
-from rpm_common.logging import setup_logging
-from rpm_mimic import MimicDataset, build_cohort, icu_series, pick_demo_patient
+from rpm_core.data import fetch_dir
+from rpm_core.logging import setup_logging
+from rpm_core.mimic import MimicDataset, build_cohort, icu_series, pick_demo_patient
 
 from .engine import CMD_FILTER, CONTROL_TOPIC, Simulator
 from .hl7_monitor import Hl7MonitorLink

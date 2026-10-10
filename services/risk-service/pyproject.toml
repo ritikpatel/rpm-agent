@@ -1,0 +1,25 @@
+[project]
+name = "risk-service"
+version = "0.2.0"
+description = "Serves the three risk models as plug-ins: builds features, scores, bands, explains"
+requires-python = ">=3.12"
+dependencies = [
+    "rpm-core",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
+    "onnxruntime>=1.19",
+]
+
+[project.scripts]
+risk-service = "risk_service.main:main"
+
+[tool.uv.sources]
+rpm-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

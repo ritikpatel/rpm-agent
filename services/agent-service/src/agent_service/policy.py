@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from rpm_alerts import SEVERITY_RANK
+from care_api.alerts import SEVERITY_RANK
 
 PATIENT_FACING = {"REQUEST_SPOT_CHECK", "SEND_CHECKIN", "REQUEST_HOME_READINGS"}
 DEVICE_ACTIONS = PATIENT_FACING | {"SET_PROFILE_ELEVATED", "SET_PROFILE_CRITICAL"}

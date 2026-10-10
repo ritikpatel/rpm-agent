@@ -1,57 +1,42 @@
 [project]
 name = "rpm-platform"
-version = "0.1.0"
-description = "Agentic AI Remote Patient Monitoring platform (workspace root)"
+version = "0.2.0"
+description = "Agentic AI remote patient monitoring platform (workspace root)"
 requires-python = ">=3.12"
 dependencies = [
-    "rpm-contracts",
-    "rpm-features",
-    "rpm-mimic",
-    "rpm-common",
-    "rpm-simulator",
-    "iot-bridge",
-    "stream-engine",
-    "fhir-loader",
-    "rpm-api",
-    "rpm-alerts",
-    "alert-service",
-    "model-serving",
-    "rpm-rag",
+    "rpm-core",
+    "stream-processor",
+    "risk-service",
+    "care-api",
     "agent-service",
-    "rpm-icu-gateway",
+    "rpm-simulator",
+    "rpm-seed",
+    "iot-rule-emulator",
     "rpm-eval",
 ]
 
 [dependency-groups]
 dev = ["pytest>=8.3", "jsonschema>=4.23", "ruff>=0.6", "httpx>=0.27"]
-train = ["scikit-learn>=1.5", "skl2onnx>=1.17", "numpy>=1.26", "onnxruntime>=1.19"]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["libs/*", "services/*", "simulator", "edge/icu-gateway", "eval"]
+members = ["libs/*", "services/*", "simulator", "tools/*"]
 
 [tool.uv.sources]
-rpm-contracts = { workspace = true }
-rpm-features = { workspace = true }
-rpm-mimic = { workspace = true }
-rpm-common = { workspace = true }
-rpm-simulator = { workspace = true }
-iot-bridge = { workspace = true }
-stream-engine = { workspace = true }
-fhir-loader = { workspace = true }
-rpm-api = { workspace = true }
-rpm-alerts = { workspace = true }
-alert-service = { workspace = true }
-model-serving = { workspace = true }
-rpm-rag = { workspace = true }
+rpm-core = { workspace = true }
+stream-processor = { workspace = true }
+risk-service = { workspace = true }
+care-api = { workspace = true }
 agent-service = { workspace = true }
-rpm-icu-gateway = { workspace = true }
+rpm-simulator = { workspace = true }
+rpm-seed = { workspace = true }
+iot-rule-emulator = { workspace = true }
 rpm-eval = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["libs", "services", "simulator", "contracts", "edge/icu-gateway", "eval"]
+testpaths = ["libs", "services", "simulator", "contracts", "tools", "models"]
 addopts = "-q --import-mode=importlib"
 log_level = "DEBUG"  # execute every log call in tests (catches LogRecord key collisions)
 
@@ -63,6 +48,5 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["rpm_contracts", "rpm_features", "rpm_mimic", "rpm_common", "rpm_simulator", "stream_engine",
-                     "fhir_loader", "iot_bridge", "rpm_api", "rpm_alerts", "alert_service", "model_serving", "rpm_rag", "agent_service",
-                     "rpm_icu_gateway", "rpm_eval"]
+known-first-party = ["rpm_core", "rpm_simulator", "stream_processor", "risk_service", "care_api", "agent_service",
+                     "rpm_seed", "iot_rule_emulator", "rpm_eval"]
