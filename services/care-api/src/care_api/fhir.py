@@ -52,6 +52,8 @@ def to_ehr_event(resource: dict) -> EhrEvent | None:
     version = (resource.get("meta") or {}).get("versionId", "1")
     msg_id = f"{rtype}/{rid}/{version}"
     if rtype == "Encounter":
+        if resource.get("partOf"):
+            return None  # an ICU stay inside an admission: the admission itself carries the change
         period = resource.get("period") or {}
         hosp = resource.get("hospitalization") or {}
         data: dict[str, Any] = {"encounter_id": rid, "class": (resource.get("class") or {}).get("code")}

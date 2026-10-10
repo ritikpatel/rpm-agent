@@ -1,8 +1,14 @@
-"""rpm-sim: run the device fleet, inject scenarios, inspect the cohort.
+"""rpm-sim: simulated wearables and ICU monitors.
 
-  rpm-sim run --mimic-dir ./synthetic_mimic_150patients                    # all 150 patients, local Mosquitto
-  rpm-sim scenario --target p-90000012 --type sepsis --duration-s 900      # live injection via control topic
+  rpm-sim run                                           # ICU monitors for admitted patients, wearables at home
+  rpm-sim scenario --target p-90000012 --type sepsis    # make a patient deteriorate (the running fleet reacts)
+  rpm-sim discharge --target p-90000012                 # the ICU monitor stops, a wearable starts
+  rpm-sim send --target p-90000031 --hr 134 --spo2 86   # one reading, sent right now
+  rpm-sim send --target p-90000031 --event SOS          # the patient presses SOS
   rpm-sim scenarios | rpm-sim cohort
+
+The same commands work against the local broker (default) and AWS IoT Core: pass the endpoint and the simulator
+certificate with --mqtt-host/--mqtt-port 8883/--tls-*, or set the RPM_MQTT_* variables (`make sim-cloud` does this).
 """
 
 from __future__ import annotations
@@ -15,14 +21,16 @@ import signal
 import sys
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+import httpx
+
+from rpm_core.contracts import DeviceEvent, DeviceEventTs, Metrics, Telemetry, TelemetryTs, telemetry_topic, utcnow
 from rpm_core.data import fetch_dir
 from rpm_core.logging import setup_logging
-from rpm_core.mimic import MimicDataset, build_cohort, icu_series, pick_demo_patient
+from rpm_core.mimic import MimicDataset, build_cohort, icu_series, select_cohort, sim_device_id
 
 from .engine import CMD_FILTER, CONTROL_TOPIC, Simulator
-from .hl7_monitor import Hl7MonitorLink
 from .publisher import FleetPublisher, MqttConfig
 from .scenarios import SCENARIOS
 
@@ -45,8 +53,17 @@ def _mqtt_args(p: argparse.ArgumentParser) -> None:
 def _cohort_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--mimic-dir", default=_env("RPM_MIMIC_DIR", "./synthetic_mimic_150patients"),
                    help="local directory or s3://bucket/prefix")
-    p.add_argument("--icu-count", type=int, default=int(_env("RPM_ICU_COUNT", "25")))
+    p.add_argument("--icu", type=int, default=int(_env("RPM_COHORT_ICU", "6")),
+                   help="admitted patients to monitor (0 = all in the dataset)")
+    p.add_argument("--home", type=int, default=int(_env("RPM_COHORT_HOME", "18")),
+                   help="discharged patients to monitor (0 = all in the dataset)")
     p.add_argument("--seed", default=_env("RPM_COHORT_SEED", "rpm-v1"))
+
+
+def _cohort(a: argparse.Namespace):
+    ds = MimicDataset(fetch_dir(a.mimic_dir))
+    members = build_cohort(ds, datetime.now(UTC).replace(tzinfo=None), seed=a.seed)
+    return ds, select_cohort(members, a.icu, a.home, a.seed)
 
 
 def _mqtt_config(a: argparse.Namespace, shards: int = 1) -> MqttConfig:
@@ -54,64 +71,62 @@ def _mqtt_config(a: argparse.Namespace, shards: int = 1) -> MqttConfig:
                       tls_ca=a.tls_ca, tls_cert=a.tls_cert, tls_key=a.tls_key)
 
 
+def _sync_loop(sim: Simulator, url: str, token: str, stop: threading.Event, interval_s: float = 15) -> None:
+    """Follow the platform's registry so a restart, a discharge or a newly assigned real watch is picked up."""
+    http = httpx.Client(base_url=url.rstrip("/"), timeout=5, headers={"X-Service-Token": token,
+                                                                       "X-Service-Name": "simulator"})
+    while True:
+        try:
+            r = http.get("/internal/cohort")
+            r.raise_for_status()
+            sim.sync(r.json())
+        except Exception as exc:  # noqa: BLE001 - the fleet keeps running on its last known state
+            log.debug("registry sync failed", extra={"error": str(exc)[:200]})
+        if stop.wait(interval_s):
+            return
+
+
 def cmd_run(a: argparse.Namespace) -> None:
-    ds = MimicDataset(fetch_dir(a.mimic_dir))
-    members = build_cohort(ds, datetime.now(UTC).replace(tzinfo=None), icu_count=a.icu_count, seed=a.seed)
-    excluded = set()
-    for x in a.exclude or []:  # "auto" resolves exactly like the loader's demo-patient choice
-        m = pick_demo_patient(members, x)
-        excluded.add(m.patient_id if m else x)
-    members = [m for m in members if m.patient_id not in excluded and m.subject_id not in excluded]
-    if a.only_setting:
-        members = [m for m in members if m.care_setting == a.only_setting]
-    if a.limit:
-        members = members[: a.limit]
-    series = {m.subject_id: icu_series(ds, m.index_stay_id) for m in members
-              if m.care_setting == "icu" and m.index_stay_id}
+    ds, members = _cohort(a)
+    # ICU series for every patient: a home patient who is admitted later replays their own charted stay
+    series = {m.subject_id: icu_series(ds, m.index_stay_id) for m in members if m.index_stay_id}
 
     sim_ref: dict[str, Simulator] = {}
     pub = FleetPublisher(_mqtt_config(a, a.shards), on_message=lambda t, p: sim_ref["sim"].on_message(t, p))
-    monitors = None
-    if a.icu_hl7:  # ICU beds leave as HL7 v2 to the bedside gateway instead of publishing MQTT themselves
-        host, _, port = a.icu_hl7.rpartition(":")
-        monitors = Hl7MonitorLink(host, int(port))
-    icu = {m.device_id for m in members if m.care_setting == "icu"}
-
-    def publish(key: str, topic: str, payload: str) -> None:
-        if monitors is not None and key in icu:
-            if topic.endswith("/telemetry"):
-                monitors.send(key, payload)
-            return  # an HL7 results feed carries observations only
-        pub.publish(key, topic, payload)
-
-    sim = Simulator(members, series, publish, window_s=a.window_s, speed=a.speed, seed=a.seed,
+    sim = Simulator(members, series, pub.publish, window_s=a.window_s, speed=a.speed, seed=a.seed,
                     tz_offset_h=a.tz_offset_h, auto_scenarios_per_hour=a.auto_scenarios_per_hour,
-                    icu_period_s=a.icu_period_s if monitors else None)
+                    icu_window_s=a.icu_window_s)
     sim_ref["sim"] = sim
     pub.subscribe(CONTROL_TOPIC)
     pub.subscribe(CMD_FILTER)
     pub.connect()
-    homes = sum(1 for m in members if m.care_setting == "home")
-    log.info("simulator started", extra={"devices": len(members), "home": homes, "icu": len(members) - homes,
-                                         "window_s": a.window_s, "speed": a.speed, "shards": a.shards,
-                                         "icu_via": f"hl7://{a.icu_hl7}" if monitors else "mqtt"})
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
+    if a.care_api:
+        threading.Thread(target=_sync_loop, name="registry-sync", daemon=True,
+                         args=(sim, a.care_api, a.service_token, stop)).start()
+    homes = sum(1 for m in members if m.care_setting == "home")
+    log.info("simulator started", extra={"patients": len(members), "home_wearables": homes,
+                                         "icu_monitors": len(members) - homes, "window_s": a.window_s,
+                                         "icu_window_s": a.icu_window_s, "registry_sync": bool(a.care_api)})
     try:
         sim.run(stop, duration_s=a.duration_s)
     finally:
         pub.close()
-        if monitors is not None:
-            monitors.close()
 
 
-def _send_control(a: argparse.Namespace, payload: dict) -> None:
+def _publisher(a: argparse.Namespace) -> FleetPublisher:
     # A unique client id: reusing the fleet's id would make the broker drop the running simulator's session
-    # (MQTT client-id takeover) exactly when the control message is published.
+    # (MQTT client-id takeover) exactly when this message is published.
     a.client_prefix = f"sim-ctl-{uuid.uuid4().hex[:8]}"
     pub = FleetPublisher(_mqtt_config(a))
     pub.connect()
+    return pub
+
+
+def _send_control(a: argparse.Namespace, payload: dict) -> None:
+    pub = _publisher(a)
     pub.publish("control", CONTROL_TOPIC, json.dumps(payload))
     pub.close()
     print(f"sent: {payload}")
@@ -128,14 +143,52 @@ def cmd_clear(a: argparse.Namespace) -> None:
     _send_control(a, {"action": "clear", "target": a.target})
 
 
+def cmd_setting(a: argparse.Namespace) -> None:
+    """Tells the simulator only. The platform learns of a discharge from the hospital record (the console's
+    Discharge button, or a FHIR Encounter update), which also sends this message."""
+    _send_control(a, {"action": a.command, "target": a.target})
+
+
+def cmd_send(a: argparse.Namespace) -> None:
+    """One message, sent as the patient's own device would send it."""
+    device = a.device or sim_device_id(a.target, a.setting)
+    source = "icu_monitor" if a.setting == "icu" else "simulator"
+    now = utcnow()
+    seq = int(now.timestamp())  # larger than anything a fleet has counted to, so it is never taken for a replay
+    if a.event:
+        data = {"trigger": "simulated"} if a.event in ("SOS", "FALL") else \
+            {"question_id": a.question_id, "answer": a.answer}
+        msg = DeviceEvent(device_id=device, seq=seq, source=source, type=a.event,
+                          ts=DeviceEventTs(occurred=now, edge_sent=now), data=data)
+        kind = "events"
+    else:
+        metrics: dict = {}
+        if a.hr is not None:
+            metrics["heart_rate"] = {"mean": a.hr, "min": a.hr - 2, "max": a.hr + 2, "n": 30, "quality": 0.97}
+        for name, value in (("spo2", a.spo2), ("resp_rate", a.rr), ("sbp", a.sbp), ("dbp", a.dbp), ("temp", a.temp),
+                            ("gcs", a.gcs)):
+            if value is not None:
+                metrics[name] = {"value": value, **({"quality": 0.95} if name == "spo2" else {})}
+        if not metrics:
+            sys.exit("nothing to send: give at least one of --hr --spo2 --rr --sbp --dbp --temp --gcs, or --event")
+        msg = Telemetry(device_id=device, seq=seq, source=source, context=a.setting,
+                        ts=TelemetryTs(window_start=now - timedelta(seconds=30), window_end=now, edge_sent=now),
+                        metrics=Metrics.model_validate(metrics))
+        kind = "telemetry"
+    pub = _publisher(a)
+    for _ in range(max(1, a.repeat)):
+        pub.publish(device, telemetry_topic(device, kind), msg.to_json())
+    pub.close()
+    print(f"sent {kind} from {device}: {msg.to_json()}")
+
+
 def cmd_scenarios(_a: argparse.Namespace) -> None:
     for s in SCENARIOS.values():
         print(f"{s.name:20s} {s.default_duration_s:>5.0f}s  {s.description}")
 
 
 def cmd_cohort(a: argparse.Namespace) -> None:
-    ds = MimicDataset(fetch_dir(a.mimic_dir))
-    members = build_cohort(ds, datetime.now(UTC).replace(tzinfo=None), icu_count=a.icu_count, seed=a.seed)
+    _, members = _cohort(a)
     print(f"{'patient':12s} {'name':20s} {'sex':3s} {'age':>3s} {'condition':9s} {'setting':7s} device")
     for m in members:
         print(f"{m.patient_id:12s} {m.display_name:20s} {m.sex:3s} {m.age:>3d} {m.condition:9s} "
@@ -146,45 +199,65 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="rpm-sim", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="run the virtual device fleet")
+    run = sub.add_parser("run", help="run the simulated devices")
     _cohort_args(run)
     _mqtt_args(run)
     run.add_argument("--shards", type=int, default=int(_env("RPM_SIM_SHARDS", "1")))
-    run.add_argument("--window-s", type=int, default=int(_env("RPM_SIM_WINDOW_S", "30")))
+    run.add_argument("--window-s", type=int, default=int(_env("RPM_SIM_WINDOW_S", "30")),
+                     help="wearable reporting window")
+    run.add_argument("--icu-window-s", type=int, default=int(_env("RPM_SIM_ICU_WINDOW_S", "10")),
+                     help="ICU monitor reporting cadence")
     run.add_argument("--speed", type=float, default=float(_env("RPM_SIM_SPEED", "60")),
-                     help="ICU replay speed-up (sim seconds per real second)")
-    run.add_argument("--limit", type=int, default=int(_env("RPM_SIM_LIMIT", "0")))
-    run.add_argument("--only-setting", choices=["home", "icu"], default=_env("RPM_SIM_ONLY_SETTING"))
-    run.add_argument("--icu-hl7", default=_env("RPM_SIM_ICU_HL7"), metavar="HOST:PORT",
-                     help="send ICU beds as HL7 v2 ORU^R01 over MLLP to the ICU gateway instead of MQTT")
-    run.add_argument("--icu-period-s", type=int, default=int(_env("RPM_SIM_ICU_PERIOD_S", "5")),
-                     help="bedside monitor reporting cadence when --icu-hl7 is set")
-    run.add_argument("--exclude", nargs="*", default=(_env("RPM_SIM_EXCLUDE", "") or "").split() or None,
-                     help="patient ids streamed by real devices (e.g. the Galaxy Watch demo patient)")
+                     help="ICU replay speed-up (charted seconds per real second)")
+    run.add_argument("--care-api", default=_env("RPM_CARE_API_URL"),
+                     help="follow the platform's registry (admissions, discharges, real watches)")
+    run.add_argument("--service-token", default=_env("RPM_SERVICE_TOKEN", "dev-service-token"))
     run.add_argument("--auto-scenarios-per-hour", type=float, default=float(_env("RPM_SIM_AUTO_SCENARIOS", "0")))
     run.add_argument("--tz-offset-h", type=float, default=float(_env("RPM_SIM_TZ_OFFSET_H", "4")))
     run.add_argument("--duration-s", type=float, default=0, help="stop after N seconds (0 = forever)")
     run.set_defaults(fn=cmd_run)
 
-    sc = sub.add_parser("scenario", help="inject a scenario into a running simulator")
+    sc = sub.add_parser("scenario", help="make a patient deteriorate in the running fleet")
     _mqtt_args(sc)
     sc.add_argument("--target", required=True, help="patient id (p-...), subject id or device id")
     sc.add_argument("--type", required=True)
     sc.add_argument("--duration-s", type=float)
-    sc.add_argument("--ramp-s", type=float, help="override ramp-in time (e.g. 90 for a live demo)")
+    sc.add_argument("--ramp-s", type=float, help="override ramp-in time (for example 60 for a live demo)")
     sc.set_defaults(fn=cmd_scenario)
 
-    cl = sub.add_parser("clear", help="clear a patient's active scenario")
+    cl = sub.add_parser("clear", help="end a patient's scenario")
     _mqtt_args(cl)
     cl.add_argument("--target", required=True)
     cl.set_defaults(fn=cmd_clear)
 
+    for name, text in (("discharge", "switch a patient's simulated device from ICU monitor to wearable"),
+                       ("admit", "switch a patient's simulated device from wearable to ICU monitor")):
+        sp = sub.add_parser(name, help=text)
+        _mqtt_args(sp)
+        sp.add_argument("--target", required=True)
+        sp.set_defaults(fn=cmd_setting)
+
+    se = sub.add_parser("send", help="send one reading or device event right now")
+    _mqtt_args(se)
+    se.add_argument("--target", help="patient id (p-...); the device id is derived from it and --setting")
+    se.add_argument("--device", help="device id, instead of --target")
+    se.add_argument("--setting", choices=["home", "icu"], default="home")
+    for flag in ("hr", "spo2", "rr", "sbp", "dbp", "temp", "gcs"):
+        se.add_argument(f"--{flag}", type=float)
+    se.add_argument("--event", choices=["SOS", "FALL", "CHECKIN_REPLY"])
+    se.add_argument("--answer", default="Yes", help="for --event CHECKIN_REPLY")
+    se.add_argument("--question-id", default="breathless-manual", help="for --event CHECKIN_REPLY")
+    se.add_argument("--repeat", type=int, default=1)
+    se.set_defaults(fn=cmd_send)
+
     sub.add_parser("scenarios", help="list scenarios").set_defaults(fn=cmd_scenarios)
-    co = sub.add_parser("cohort", help="print the deterministic demo cohort")
+    co = sub.add_parser("cohort", help="print the monitored patients")
     _cohort_args(co)
     co.set_defaults(fn=cmd_cohort)
 
     a = ap.parse_args(argv)
+    if a.command == "send" and not (a.target or a.device):
+        ap.error("send needs --target or --device")
     setup_logging("simulator", _env("RPM_LOG_LEVEL", "INFO"))
     a.fn(a)
 

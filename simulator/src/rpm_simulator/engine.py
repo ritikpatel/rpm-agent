@@ -1,5 +1,9 @@
-"""Fleet simulator: one virtual device per cohort patient, publishing the exact contracts real devices use,
-reacting to cloud commands (SET_PROFILE, SPOT_CHECK, CHECKIN, NOTIFY) and to scenario control messages."""
+"""Device simulator: one virtual device per patient, publishing the exact contracts real devices use.
+
+An admitted patient has an ICU bedside monitor (every vital sign, every few seconds); a discharged patient has a
+wrist wearable (heart rate, SpO2, activity). A patient never has both: discharge retires the ICU monitor and starts
+the wearable, admission does the reverse. Devices react to cloud commands (SET_PROFILE, SPOT_CHECK, CHECKIN, NOTIFY)
+and to control messages (scenario, clear, discharge, admit)."""
 
 from __future__ import annotations
 
@@ -9,7 +13,7 @@ import random
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
 from rpm_core.contracts import (
@@ -25,7 +29,7 @@ from rpm_core.contracts import (
     telemetry_topic,
     utcnow,
 )
-from rpm_core.mimic import CohortMember
+from rpm_core.mimic import CohortMember, sim_device_id
 
 from .physiology import HomeWearable, IcuReplay
 from .scenarios import SCENARIOS, ActiveScenario
@@ -61,6 +65,10 @@ class SimDevice:
     def context(self) -> str:
         return self.member.care_setting
 
+    @property
+    def source(self) -> str:
+        return "icu_monitor" if self.member.care_setting == "icu" else "simulator"
+
     def next_seq(self) -> int:
         self.seq += 1
         return self.seq
@@ -69,35 +77,86 @@ class SimDevice:
 class Simulator:
     def __init__(self, members: list[CohortMember], series: dict[str, dict], publish: Publish, *,
                  window_s: int = 30, speed: float = 60.0, seed: str = "rpm-v1", tz_offset_h: float = 4.0,
-                 auto_scenarios_per_hour: float = 0.0, manual_every_s: float = 1200,
-                 icu_period_s: int | None = None):
+                 auto_scenarios_per_hour: float = 0.0, manual_every_s: float = 1200, icu_window_s: int = 10):
         self.publish = publish
         self.speed = speed
         self.tz_offset_h = tz_offset_h
         self.auto_rate = auto_scenarios_per_hour
         self.default_manual_every_s = manual_every_s
-        self.icu_period_s = icu_period_s  # bedside monitors behind the HL7 gateway report on a fixed cadence
+        self.window_s = window_s
+        self.icu_window_s = icu_window_s
+        self.seed = seed
+        self.series = series
         self.rng = random.Random(seed)
         self.t0 = time.monotonic()
         self.lock = threading.Lock()
+        self.members: dict[str, CohortMember] = {m.patient_id: m for m in members}
+        self.paused: set[str] = set()          # patients whose data comes from a real watch
         self.devices: dict[str, SimDevice] = {}
+        self.by_alias: dict[str, str] = {}
         stagger = random.Random(f"{seed}:stagger")
         for i, m in enumerate(members):
-            rng = random.Random(f"{seed}:{m.subject_id}")
-            if m.care_setting == "icu" and series.get(m.subject_id):
-                # a bedside monitor always shows every channel: fill uncharted ones from the patient baseline
-                full = {k: [(0.0, v)] for k, v in m.baseline.items()} | {"gcs": [(0.0, 15.0)]}
-                full.update({k: v for k, v in series[m.subject_id].items() if v})
-                gen: HomeWearable | IcuReplay = IcuReplay(full, rng, m.replay_start_h, speed)
-            else:
-                gen = HomeWearable(m.baseline, rng, manual_every_s=manual_every_s)
-            period = icu_period_s if icu_period_s and m.care_setting == "icu" else window_s
-            offset = (i * 0.37 + stagger.random()) % period  # spread publishes across the window
-            self.devices[m.device_id] = SimDevice(m, gen, next_due=self.t0 + offset, window_s=period)
-        self.by_alias: dict[str, str] = {}
-        for d in self.devices.values():
-            for alias in (d.device_id, d.member.patient_id, d.member.subject_id):
-                self.by_alias[alias] = d.device_id
+            self._add(m, offset=i * 0.37 + stagger.random())
+
+    def _add(self, m: CohortMember, offset: float = 0.0) -> SimDevice:
+        rng = random.Random(f"{self.seed}:{m.subject_id}:{m.care_setting}")
+        if m.care_setting == "icu":
+            # a bedside monitor always shows every channel: fill uncharted ones from the patient baseline
+            full = {k: [(0.0, v)] for k, v in m.baseline.items()} | {"gcs": [(0.0, 15.0)]}
+            full.update({k: v for k, v in (self.series.get(m.subject_id) or {}).items() if v})
+            gen: HomeWearable | IcuReplay = IcuReplay(full, rng, m.replay_start_h, self.speed)
+            period = self.icu_window_s
+        else:
+            gen = HomeWearable(m.baseline, rng, manual_every_s=self.default_manual_every_s)
+            period = self.window_s
+        dev = SimDevice(m, gen, next_due=time.monotonic() + offset % period, window_s=period)
+        self.devices[m.device_id] = dev
+        self.members[m.patient_id] = m
+        for alias in (m.device_id, m.patient_id, m.subject_id):
+            self.by_alias[alias] = m.device_id
+        return dev
+
+    def _remove(self, patient_id: str) -> None:
+        m = self.members.get(patient_id)
+        if m:
+            self.devices.pop(m.device_id, None)
+            self.by_alias.pop(m.device_id, None)
+
+    # ------------------------------------------------------------------ care setting
+    def set_setting(self, target: str, setting: str) -> bool:
+        """Discharge ("home") or admit ("icu") a patient: retire the old device, start the other kind."""
+        dev_id = self.by_alias.get(target)
+        patient_id = self.devices[dev_id].member.patient_id if dev_id in self.devices else target
+        m = self.members.get(patient_id)
+        if m is None or m.care_setting == setting:
+            return False
+        with self.lock:
+            self._remove(patient_id)
+            moved = replace(m, care_setting=setting, device_id=sim_device_id(patient_id, setting))
+            self.members[patient_id] = moved
+            if patient_id not in self.paused:
+                self._add(moved)
+        log.info("care setting changed", extra={"patient_id": patient_id, "setting": setting,
+                                                "device_id": moved.device_id})
+        return True
+
+    def sync(self, rows: list[dict]) -> None:
+        """Follow the platform's registry: who is admitted, who is at home, and who wears a real watch (those are
+        not simulated). Rows: {patient_id, care_setting, device_kind}."""
+        for row in rows:
+            pid = row["patient_id"]
+            if pid not in self.members:
+                continue
+            self.set_setting(pid, row["care_setting"])
+            real = row.get("device_kind") == "watch"
+            with self.lock:
+                if real and pid not in self.paused:
+                    self.paused.add(pid)
+                    self._remove(pid)
+                    log.info("real watch assigned; simulation paused", extra={"patient_id": pid})
+                elif not real and pid in self.paused:
+                    self.paused.discard(pid)
+                    self._add(self.members[pid])
 
     # ------------------------------------------------------------------ control plane
     def resolve(self, target: str) -> SimDevice | None:
@@ -138,6 +197,10 @@ class Simulator:
                 self.start_scenario(str(msg["target"]), msg["scenario"], msg.get("duration_s"), msg.get("ramp_s"))
             elif msg.get("action") == "clear":
                 self.clear_scenario(str(msg["target"]))
+            elif msg.get("action") == "discharge":
+                self.set_setting(str(msg["target"]), "home")
+            elif msg.get("action") == "admit":
+                self.set_setting(str(msg["target"]), "icu")
             return
         parts = topic.split("/")
         if len(parts) == 5 and parts[4] == "cmd" and parts[3] in self.devices:
@@ -153,7 +216,7 @@ class Simulator:
         with self.lock:
             if cmd.cmd == "SET_PROFILE" and args.get("profile") in PROFILE_WINDOW_S:
                 dev.profile = args["profile"]
-                if not (self.icu_period_s and dev.context == "icu"):  # the gateway windows ICU beds itself
+                if dev.context == "home":  # an ICU monitor keeps its own reporting cadence
                     dev.window_s = PROFILE_WINDOW_S[dev.profile]
                 dev.next_due = min(dev.next_due, now + dev.window_s)
             elif cmd.cmd == "SPOT_CHECK":
@@ -190,7 +253,7 @@ class Simulator:
 
     def _event(self, dev: SimDevice, etype: str, data: dict) -> None:
         now = utcnow()
-        ev = DeviceEvent(device_id=dev.device_id, seq=dev.next_seq(), source="simulator", type=etype,
+        ev = DeviceEvent(device_id=dev.device_id, seq=dev.next_seq(), source=dev.source, type=etype,
                          ts=DeviceEventTs(occurred=now, edge_sent=now), data=data)
         self.publish(dev.device_id, telemetry_topic(dev.device_id, "events"), ev.to_json())
 
@@ -222,14 +285,14 @@ class Simulator:
             dev.force_spo2 = False
         dev.battery = max(5.0, dev.battery - 0.01 * dev.window_s / 30)
         msg = Telemetry(
-            device_id=dev.device_id, seq=dev.next_seq(), source="simulator", context=dev.context,
+            device_id=dev.device_id, seq=dev.next_seq(), source=dev.source, context=dev.context,
             ts=TelemetryTs(window_start=wall - timedelta(seconds=dev.window_s), window_end=wall, edge_sent=wall),
             metrics=Metrics.model_validate(w.metrics),
             edge=EdgeInfo(flags=self._edge_flags(w.metrics), profile=dev.profile, buffered=offline),
             device=DeviceInfo(battery_pct=round(dev.battery, 1), on_wrist=True, fw="sim-0.1.0"),
         )
         if offline:
-            dev.outbox.append(msg)  # store-and-forward, exactly like the phone gateway
+            dev.outbox.append(msg)  # store-and-forward, exactly like the watch app
             return
         if dev.outbox:
             log.info("backfilling buffered telemetry", extra={"device_id": dev.device_id, "count": len(dev.outbox)})

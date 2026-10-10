@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from rpm_seed.mapping import PatientBundleBuilder, _icd_dx
 from rpm_core.mimic import MimicDataset, build_cohort
+from rpm_seed.mapping import PatientBundleBuilder, _icd_dx
 
 DATA = Path(os.environ.get("MIMIC_DIR", Path(__file__).resolve().parents[3] / "synthetic_mimic_150patients"))
 pytestmark = pytest.mark.skipif(not (DATA / "patients.csv").exists(), reason="MIMIC extract not available")

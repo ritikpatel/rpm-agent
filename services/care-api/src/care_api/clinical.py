@@ -310,11 +310,10 @@ class SettingIn(BaseModel):
     disposition: str | None = Field(default="Home", max_length=80)
 
 
-def _encounter(http: httpx.Client, patient_id: str, status: str) -> dict | None:
-    r = http.get("/Encounter", params={"patient": patient_id, "status": status, "_sort": "-date", "_count": 1})
+def _open_encounters(http: httpx.Client, patient_id: str) -> list[dict]:
+    r = http.get("/Encounter", params={"patient": patient_id, "status": "in-progress", "_count": 20})
     r.raise_for_status()
-    entries = r.json().get("entry", [])
-    return entries[0]["resource"] if entries else None
+    return [e["resource"] for e in r.json().get("entry", [])]
 
 
 @router.post("/demo/discharge")
@@ -324,26 +323,28 @@ def discharge(body: SettingIn, request: Request, user: Presenter) -> dict:
     _demo()
     now = datetime.now(UTC).isoformat(timespec="seconds")
     with _fhir() as http:
-        enc = _encounter(http, body.patient_id, "in-progress")
-        if enc is None:
-            enc = {"resourceType": "Encounter", "class": {"code": "ACUTE"},
-                   "subject": {"reference": f"Patient/{body.patient_id}"}, "period": {"start": now}}
-        enc["status"] = "finished"
-        enc.setdefault("period", {})["end"] = now
-        enc["hospitalization"] = {"dischargeDisposition": {"text": body.disposition}}
-        enc.pop("meta", None)
-        r = http.put(f"/Encounter/{enc['id']}", json=enc) if enc.get("id") else http.post("/Encounter", json=enc)
-        r.raise_for_status()
+        open_ = _open_encounters(http, body.patient_id) or [{
+            "resourceType": "Encounter", "class": {"code": "IMP"},
+            "subject": {"reference": f"Patient/{body.patient_id}"}, "period": {"start": now}}]
+        ids = []
+        for enc in sorted(open_, key=lambda e: "partOf" not in e):  # ICU stays first, the admission last
+            enc["status"] = "finished"
+            enc.setdefault("period", {})["end"] = now
+            enc.setdefault("hospitalization", {})["dischargeDisposition"] = {"text": body.disposition}
+            enc.pop("meta", None)
+            r = http.put(f"/Encounter/{enc['id']}", json=enc) if enc.get("id") else http.post("/Encounter", json=enc)
+            r.raise_for_status()
+            ids.append(r.json().get("id"))
     _sim({"action": "discharge", "target": body.patient_id})
-    audit(request, user, "update", "Encounter", r.json().get("id"), body.patient_id, {"op": "discharge"})
-    return {"encounter": r.json().get("id"), "status": "finished"}
+    audit(request, user, "update", "Encounter", ids[-1], body.patient_id, {"op": "discharge", "encounters": ids})
+    return {"encounters": ids, "status": "finished"}
 
 
 @router.post("/demo/admit")
 def admit(body: SettingIn, request: Request, user: Presenter) -> dict:
     _demo()
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    enc = {"resourceType": "Encounter", "status": "in-progress", "class": {"code": "ACUTE", "display": "ICU"},
+    enc = {"resourceType": "Encounter", "status": "in-progress", "class": {"code": "IMP", "display": "ICU admission"},
            "subject": {"reference": f"Patient/{body.patient_id}"}, "period": {"start": now}}
     with _fhir() as http:
         r = http.post("/Encounter", json=enc)

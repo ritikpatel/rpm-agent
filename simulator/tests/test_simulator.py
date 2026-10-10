@@ -118,3 +118,41 @@ def test_bradycardia_targets_an_absolute_rate_whatever_the_baseline(cohort_and_s
         dev.scenario.started -= 120  # past the 60 s ramp: full effect
         deltas, *_ = sim._deltas(dev, time.monotonic())
         assert m.baseline["heart_rate"] + deltas["heart_rate"] == pytest.approx(38)
+
+
+def _by_patient(sim, sent, patient_id):
+    sent.clear()
+    for d in sim.devices.values():
+        d.next_due = 0
+    sim.tick()
+    out = [Telemetry.model_validate_json(p) for _, p in sent]
+    return [t for t in out if t.device_id.endswith(patient_id.removeprefix("p-"))]
+
+
+def test_icu_monitor_only_while_admitted_and_wearable_only_at_home(cohort_and_series):
+    sim, sent = make_sim(cohort_and_series)
+    icu = next(m for m in cohort_and_series[0] if m.care_setting == "icu")
+    before = _by_patient(sim, sent, icu.patient_id)
+    assert [(t.source, t.context, t.device_id) for t in before] == [("icu_monitor", "icu", icu.device_id)]
+
+    sim.on_message("rpm/v1/sim/control", json.dumps({"action": "discharge", "target": icu.patient_id}).encode())
+    after = _by_patient(sim, sent, icu.patient_id)
+    assert [(t.source, t.context) for t in after] == [("simulator", "home")]   # the ICU monitor is gone
+    assert after[0].device_id == f"sim-{icu.subject_id}" and after[0].metrics.activity is not None
+
+    sim.on_message("rpm/v1/sim/control", json.dumps({"action": "admit", "target": icu.patient_id}).encode())
+    again = _by_patient(sim, sent, icu.patient_id)
+    assert [(t.source, t.device_id) for t in again] == [("icu_monitor", icu.device_id)]
+
+
+def test_registry_sync_follows_settings_and_pauses_for_a_real_watch(cohort_and_series):
+    sim, sent = make_sim(cohort_and_series)
+    home = next(m for m in cohort_and_series[0] if m.care_setting == "home")
+    icu = next(m for m in cohort_and_series[0] if m.care_setting == "icu")
+    sim.sync([{"patient_id": home.patient_id, "care_setting": "home", "device_kind": "watch"},
+              {"patient_id": icu.patient_id, "care_setting": "home", "device_kind": "simulator"},
+              {"patient_id": "p-unknown", "care_setting": "icu", "device_kind": None}])
+    assert _by_patient(sim, sent, home.patient_id) == []            # a real watch speaks for this patient now
+    assert _by_patient(sim, sent, icu.patient_id)[0].context == "home"
+    sim.sync([{"patient_id": home.patient_id, "care_setting": "home", "device_kind": "simulator"}])
+    assert len(_by_patient(sim, sent, home.patient_id)) == 1

@@ -300,7 +300,7 @@ class PatientBundleBuilder:
             "identifier": [{"system": "urn:rpm:iot:thing", "value": device_id}],
             "deviceName": [{"name": device_id, "type": "user-friendly-name"}],
             "type": {"text": {"watch": "Smartwatch (Galaxy Watch / Wear OS)",
-                              "bedside": "ICU bedside monitor (via edge gateway)",
+                              "icu_monitor": "ICU bedside monitor",
                               "simulator": "Simulated wearable"}[kind]},
             "patient": self._ref(m),
         }

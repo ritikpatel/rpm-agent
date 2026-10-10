@@ -172,6 +172,22 @@ def build_cohort(ds: MimicDataset, anchor: datetime, icu_count: int = 25, seed: 
     return members
 
 
+def select_cohort(members: list[CohortMember], icu: int = 0, home: int = 0, seed: str = "rpm-v1") -> list[CohortMember]:
+    """A smaller, deterministic slice of the cohort (0 keeps everyone in that setting). The seed tool and the
+    simulator both call this with the same numbers, so they agree on who is monitored."""
+    def take(setting: str, n: int) -> list[CohortMember]:
+        group = sorted((m for m in members if m.care_setting == setting), key=lambda m: _h(seed, "pick:" + m.subject_id))
+        return group[:n] if n else group
+    chosen = {m.patient_id for m in take("icu", icu) + take("home", home)}
+    return [m for m in members if m.patient_id in chosen]
+
+
+def sim_device_id(patient_id: str, setting: str) -> str:
+    """The simulator's device for a patient in a care setting."""
+    suffix = patient_id.removeprefix("p-")
+    return f"sim-icu-{suffix}" if setting == "icu" else f"sim-{suffix}"
+
+
 def pick_demo_patient(members: list[CohortMember], requested: str | None) -> CohortMember | None:
     """Patient streamed by the real Galaxy Watch. 'auto' = first home-monitored CHF patient (the storyline's
     high-readmission-risk heart-failure discharge). Loader and simulator both call this, so they agree."""

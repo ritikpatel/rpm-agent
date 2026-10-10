@@ -2,9 +2,9 @@
 
     SELECT *, timestamp() AS ingest_ts_ms, topic(4) AS thing, topic(5) AS kind
     FROM 'rpm/v1/dev/+/+' WHERE topic(5) = 'telemetry' OR topic(5) = 'events'
-    -> SQS rpm-telemetry (real-time path) and SQS rpm-telemetry-archive (S3 lake)
+    -> SQS rpm-patient-events
 
-On AWS this service is not deployed; the rule is created by Terraform (infra/terraform/aws/iot.tf).
+On AWS this tool is not deployed; the rule is created by CloudFormation (infra/cloudformation/rpm.yaml).
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ DROPPED = Counter("rpm_bridge_dropped_total", "Messages dropped", ["reason"])
 
 
 class BridgeSettings(BaseServiceSettings):
-    service_name: str = "iot-bridge"
+    service_name: str = "iot-rule-emulator"
     mqtt_host: str = "localhost"
     mqtt_port: int = 1883
 
@@ -93,18 +93,17 @@ def main() -> None:
             except queue.Full:
                 DROPPED.labels("backpressure").inc()
 
-    def queue_urls() -> dict[str, str]:
-        names = {"ingest": cfg.sqs_telemetry_queue, "archive": cfg.sqs_archive_queue}
+    def queue_url() -> str | None:
         while not stop.is_set():
             try:
-                return {k: sqs.get_queue_url(QueueName=n)["QueueUrl"] for k, n in names.items() if n}
+                return sqs.get_queue_url(QueueName=cfg.sqs_events_queue)["QueueUrl"]
             except (BotoCoreError, ClientError) as exc:
                 log.warning("waiting for sqs", extra={"error": str(exc)[:200]})
                 stop.wait(2)
-        return {}
+        return None
 
     def forward() -> None:
-        urls = queue_urls()
+        url = queue_url()
         while not stop.is_set():
             try:
                 first = q.get(timeout=0.5)
@@ -117,18 +116,15 @@ def main() -> None:
                 except queue.Empty:
                     break
             bodies = [json.dumps(d) for d in batch]
-            lost = send_all(sqs, urls["ingest"], bodies)   # like the rule: one action per destination
+            lost = send_all(sqs, url, bodies)
             if lost:
                 DROPPED.labels("sqs_error").inc(lost)
                 log.error("records dropped after retries", extra={"count": lost})
-            if "archive" in urls:
-                DROPPED.labels("archive_error").inc(send_all(sqs, urls["archive"], bodies))
             for d in batch:
                 FORWARDED.labels(d["kind"]).inc()
 
     # Persistent session (fixed id, clean_session=False, QoS 1 subscriptions): while this emulator is disconnected
-    # the broker queues matching messages for it, like an IoT rule that is always subscribed. Found by the
-    # broker-outage chaos experiment, which lost 75% of outage-period windows with a clean session.
+    # the broker queues matching messages for it, like an IoT rule that is always subscribed.
     client_ = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="iot-rule-emulator", clean_session=False)
     client_.on_connect, client_.on_message = on_connect, on_message
     client_.reconnect_delay_set(1, 10)
@@ -138,7 +134,7 @@ def main() -> None:
     worker.start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
-    log.info("iot rule emulator running", extra={"queue": cfg.sqs_telemetry_queue, "broker": cfg.mqtt_host})
+    log.info("iot rule emulator running", extra={"queue": cfg.sqs_events_queue, "broker": cfg.mqtt_host})
     stop.wait()
     client_.loop_stop()
 
