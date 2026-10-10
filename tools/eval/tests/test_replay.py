@@ -4,14 +4,13 @@ from pathlib import Path
 
 import pytest
 
-DATA = Path(__file__).resolve().parents[2] / "synthetic_mimic_150patients"
+DATA = Path(__file__).resolve().parents[3] / "synthetic_mimic_150patients"
 pytestmark = pytest.mark.skipif(not DATA.exists(), reason="dataset not present")
 
 
 def test_small_replay_detects_injected_deterioration_and_restores_clocks():
     from rpm_eval.cli import _cohort
     from rpm_eval.replay import Case, metrics, run
-    from rpm_icu_gateway import gateway as gw
     from rpm_simulator import engine
 
     members, series = _cohort(str(DATA), "rpm-v1", 25)
@@ -21,10 +20,10 @@ def test_small_replay_detects_injected_deterioration_and_restores_clocks():
     cases = [Case(home[0].patient_id, home[0].device_id, "home", "sepsis", 5400, 180, 1200),
              Case(icu[0].patient_id, icu[0].device_id, "icu", "hypoxia", 5400, 120, 600),
              Case(home[1].patient_id, home[1].device_id, "home", "motion_artifact", 5400, 1, 300)]
-    before = (engine.time, engine.utcnow, gw.time)
+    before = (engine.time, engine.utcnow)
     result = run(cohort, {k: v for k, v in series.items() if k in {m.subject_id for m in icu}}, hours=2.5,
                  cases=cases)
-    assert (engine.time, engine.utcnow, gw.time) == before  # module globals restored
+    assert (engine.time, engine.utcnow) == before  # module globals restored
     m = metrics(result)
     rows = {c["scenario"]: c for c in m["cases"]}
     assert rows["sepsis"]["detected"] and rows["hypoxia"]["detected"]

@@ -1,39 +1,32 @@
-"""Offline replay: the real simulator, ICU gateway and stream-engine processor, wired in memory on a virtual clock.
+"""Offline replay: the real simulator and the real stream processor, wired in memory on a virtual clock.
 
-A day of the 149-device cohort runs in minutes with deterministic ground truth (which patient deteriorates, when,
-and how), so alarm burden, sensitivity, time-to-detect and PPV can be measured and rule changes compared on
-identical data. Infrastructure (MQTT, SQS, Redis, Postgres) is replaced by in-memory equivalents with the
-same semantics; the clinical logic under test is the production code, unmodified.
+A day of the whole cohort runs in minutes with deterministic ground truth (which patient deteriorates, when, and
+how), so alert burden, sensitivity, time-to-detect and PPV can be measured and rule changes compared on identical
+data. Infrastructure (MQTT, SQS, Postgres, care-api) is replaced by in-memory equivalents with the same semantics;
+the clinical logic under test is the production code, unmodified.
 
-Alert model: one active alert per patient (as care_api.alerts.AlertStore). A simulated clinician resolves each alert
+Alert model: one active alert per patient (as care-api's AlertStore). A simulated clinician resolves each alert
 `resolve_after_s` after it opened; alert-worthy events while it is open attach, and only a severity increase
 re-pages. This is what turns raw rule findings into the alert and page counts a care team would experience.
 """
 
 from __future__ import annotations
 
+import json
 import random
-import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from rpm_core.contracts import SEVERITY_RANK
-from rpm_icu_gateway import gateway as gw_module
-from rpm_icu_gateway import hl7
-from rpm_icu_gateway import outbox as outbox_module
-from rpm_icu_gateway.gateway import Gateway
-from rpm_icu_gateway.outbox import Outbox
 from rpm_core.mimic import CohortMember
 from rpm_simulator import engine as sim_engine
 from rpm_simulator.engine import CLINICAL_SCENARIOS, Simulator
-from rpm_simulator.hl7_monitor import observations
 from rpm_simulator.scenarios import SCENARIOS
 from stream_processor.processor import Processor
 from stream_processor.registry import PatientRef
+from stream_processor.state import LocalState
 
-GATEWAY = "icu-gw-01"
 NEGATIVE_SCENARIOS = ("motion_artifact", "device_offline")  # must not alert
 
 
@@ -56,63 +49,6 @@ class VirtualClock:
 
 
 # ---------------------------------------------------------------------- in-memory stand-ins
-class MemoryState:
-    """RedisState semantics (dedupe, suppression keys with TTL, latest vitals, rule state) on the virtual clock."""
-
-    def __init__(self, clock: VirtualClock):
-        self.clock = clock
-        self.kv: dict[str, tuple[object, float | None]] = {}
-        self.latest: dict[str, dict] = {}
-        self.seen_ids: set[str] = set()
-
-    def _get(self, key):
-        v = self.kv.get(key)
-        if v is None or (v[1] is not None and v[1] <= self.clock.t):
-            return None
-        return v[0]
-
-    def seen(self, ids):
-        return {i for i in ids if i in self.seen_ids}
-
-    def mark_seen(self, ids):
-        self.seen_ids.update(ids)
-
-    def swap_max(self, key, value):
-        prev = self._get(key)
-        if prev is None or value > prev:
-            self.kv[key] = (value, None)
-        return prev
-
-    def update_latest(self, pid, values):
-        self.latest.setdefault(pid, {}).update(values)
-
-    def get_latest(self, pid):
-        return dict(self.latest.get(pid, {}))
-
-    def get_rule_state(self, pid):
-        return self._get(f"rules:{pid}")
-
-    def set_rule_state(self, pid, raw):
-        self.kv[f"rules:{pid}"] = (raw, None)
-
-    def should_emit(self, pid, etype, rank, ttl):
-        if ttl <= 0:
-            return True
-        key = f"sup:{pid}:{etype}"
-        cur = self._get(key)
-        if cur is None or rank > cur:
-            self.kv[key] = (rank, self.clock.t + ttl)
-            return True
-        return False
-
-    def release_emit(self, slots):
-        for pid, etype in slots:
-            self.kv.pop(f"sup:{pid}:{etype}", None)
-
-    def publish_live(self, _msgs):
-        pass
-
-
 class Registry:
     def __init__(self, refs: dict[str, PatientRef]):
         self.refs = refs
@@ -120,41 +56,26 @@ class Registry:
     def resolve(self, device_id):
         return self.refs.get(device_id)
 
+    def invalidate(self, _patient_id):
+        pass
+
 
 class EventSink:
-    """Stands in for Postgres + SQS: keeps every emitted clinical event and the vitals rows."""
+    """Stands in for Postgres and care-api: keeps every emitted clinical event and counts the vitals rows."""
 
     def __init__(self):
         self.events: list = []
         self.windows = 0
 
-    def write(self, vitals, _status, _events):
+    def write(self, vitals, _status, _events, _rule_states=None, _ehr=None):
         self.windows += len(vitals)
 
     def emit(self, events):
         self.events.extend(events)
 
 
-class CaptureUplink:
-    """ICU gateway uplink: turns its publishes into ingest records stamped with the gateway thing."""
-
-    def __init__(self, clock: VirtualClock, records: list):
-        self.clock, self.records = clock, records
-
-    @property
-    def connected(self) -> bool:
-        return True
-
-    def publish(self, topic: str, payload: str) -> bool:
-        self.records.append(_record(topic, payload, self.clock))
-        return True
-
-    def close(self) -> None:
-        pass
-
-
 def _record(topic: str, payload: str, clock: VirtualClock) -> dict:
-    import json
+    """What the IoT rule adds to a device message."""
     parts = topic.split("/")
     return {**json.loads(payload), "thing": parts[3], "kind": parts[4], "ingest_ts_ms": int(clock.time() * 1000)}
 
@@ -280,52 +201,29 @@ def restore_overrides(saved: dict) -> None:
 
 
 def run(members: list[CohortMember], series: dict, *, hours: float = 24, seed: str = "rpm-v1", step_s: float = 5,
-        resolve_after_s: float = 1800, icu_via_gateway: bool = True, cases: list[Case] | None = None,
-        progress=None) -> ReplayResult:
+        resolve_after_s: float = 1800, cases: list[Case] | None = None, progress=None) -> ReplayResult:
     start = datetime(2026, 10, 1, 0, 0, tzinfo=UTC)
     clock = VirtualClock(start)
-    # the code under test reads time through these module globals
-    saved = (sim_engine.time, sim_engine.utcnow, gw_module.time, gw_module.utcnow, outbox_module.time)
-    sim_engine.time = gw_module.time = outbox_module.time = clock
-    sim_engine.utcnow = gw_module.utcnow = clock.utcnow
+    saved = (sim_engine.time, sim_engine.utcnow)   # the simulator reads time through these module globals
+    sim_engine.time, sim_engine.utcnow = clock, clock.utcnow
     try:
-        return _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, icu_via_gateway, cases,
-                    progress)
+        return _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, cases, progress)
     finally:
-        sim_engine.time, sim_engine.utcnow, gw_module.time, gw_module.utcnow, outbox_module.time = saved
+        sim_engine.time, sim_engine.utcnow = saved
 
 
-def _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, icu_via_gateway, cases, progress):
-    refs = {m.device_id: PatientRef(m.patient_id, m.care_setting, m.condition, m.hypercapnic, False, {},
-                                    GATEWAY if (icu_via_gateway and m.care_setting == "icu") else None)
+def _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, cases, progress):
+    refs = {m.device_id: PatientRef(m.patient_id, m.care_setting, m.condition, m.hypercapnic, False, {})
             for m in members}
     sink = EventSink()
-    proc = Processor(Registry(refs), MemoryState(clock), sink, sink, clock=clock.utcnow)
+    proc = Processor(Registry(refs), LocalState(pool=None, clock=clock.time), sink, sink, clock=clock.utcnow)
     records: list[dict] = []
-    icu_ids = {m.device_id for m in members if m.care_setting == "icu"}
 
-    tmp = tempfile.TemporaryDirectory()
-    gateway = None
-    if icu_via_gateway:
-        gateway = Gateway(GATEWAY, Outbox(Path(tmp.name) / "gw.db"), window_s=15, clock=clock.utcnow)
-        gateway.uplink = CaptureUplink(clock, records)
-        gateway.on_config(_bed_config(members).encode())
-    control = {"n": 0}
-
-    def publish(key: str, topic: str, payload: str) -> None:
-        if gateway is not None and key in icu_ids:
-            if topic.endswith("/telemetry"):
-                import json
-                t = json.loads(payload)
-                obs = observations(t["metrics"])
-                if obs:
-                    control["n"] += 1
-                    gateway.on_hl7(hl7.oru(key, f"R{control['n']}", clock.utcnow(), obs))
-            return
+    def publish(_key: str, topic: str, payload: str) -> None:
         records.append(_record(topic, payload, clock))
 
     sim = Simulator(members, series, publish, window_s=30, speed=1.0, seed=seed, tz_offset_h=4.0,
-                    auto_scenarios_per_hour=0, icu_period_s=5 if gateway else None)
+                    auto_scenarios_per_hour=0, icu_window_s=15)
     cases = cases if cases is not None else schedule(members, hours, seed)
     pending = sorted(cases, key=lambda c: c.onset_s)
     clinician = ClinicianModel(resolve_after_s)
@@ -337,9 +235,6 @@ def _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, ic
             c = pending.pop(0)
             sim.start_scenario(c.patient_id, c.scenario)
         sim.tick(step_s)
-        if gateway is not None:
-            gateway.tick()
-            gateway.drain()
         if records:
             proc.handle_batch(records)
             records.clear()
@@ -350,16 +245,9 @@ def _run(members, series, clock, start, hours, seed, step_s, resolve_after_s, ic
         if progress and clock.t >= next_report:
             progress(clock.t / 3600, len(sink.events), len(clinician.alerts))
             next_report += 3600
-    tmp.cleanup()
     return ReplayResult(hours, {"home": sum(m.care_setting == "home" for m in members),
                                 "icu": sum(m.care_setting == "icu" for m in members)},
                         cases, sink.events, clinician.alerts, clinician.pages, sink.windows, start)
-
-
-def _bed_config(members: list[CohortMember]) -> str:
-    from rpm_core.contracts import GatewayConfig
-    return GatewayConfig(gateway_id=GATEWAY, beds={
-        m.device_id: {"spo2_scale": 2 if m.hypercapnic else 1} for m in members if m.care_setting == "icu"}).to_json()
 
 
 # ---------------------------------------------------------------------- metrics

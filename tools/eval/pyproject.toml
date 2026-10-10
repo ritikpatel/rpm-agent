@@ -7,7 +7,7 @@ dependencies = [
     "rpm-core",
     "rpm-simulator",
     "stream-processor",
-    "httpx>=0.27",
+    "agent-service",
 ]
 
 [project.scripts]
@@ -17,6 +17,7 @@ rpm-eval = "rpm_eval.cli:main"
 rpm-core = { workspace = true }
 rpm-simulator = { workspace = true }
 stream-processor = { workspace = true }
+agent-service = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

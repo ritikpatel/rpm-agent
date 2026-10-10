@@ -1,1 +1,1 @@
-"""Evaluation harness: offline replay (alarm burden, sensitivity, PPV), live-stack chaos and load checks."""
+"""Evaluation: replay-based alert quality, latency from stored timestamps, agent audit, guardrail red-team."""

@@ -1612,7 +1612,7 @@ name = "rpm-eval"
 version = "0.2.0"
 source = { editable = "tools/eval" }
 dependencies = [
-    { name = "httpx" },
+    { name = "agent-service" },
     { name = "rpm-core" },
     { name = "rpm-simulator" },
     { name = "stream-processor" },
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
+    { name = "agent-service", editable = "services/agent-service" },
     { name = "rpm-core", editable = "libs/rpm_core" },
     { name = "rpm-simulator", editable = "simulator" },
     { name = "stream-processor", editable = "services/stream-processor" },

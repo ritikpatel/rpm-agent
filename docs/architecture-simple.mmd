@@ -1,33 +1,33 @@
 %%{init: {"flowchart": {"wrappingWidth": 340}}}%%
 flowchart TB
   subgraph SRC["1 · DATA SOURCES"]
-    W["Wearable, post-discharge patient<br/>heart rate, SpO2, activity"]
-    ICU["ICU bedside monitor<br/>HR, BP, SpO2, resp. rate, temp"]
-    EHR["Hospital EHR and lab system<br/>patients, admissions, labs, meds"]
+    W["Wearable (Galaxy Watch app or simulator)<br/>discharged patients only<br/>heart rate, SpO2, activity"]
+    ICU["ICU bedside monitor (simulated)<br/>admitted patients only<br/>HR, BP, SpO2, resp. rate, temp"]
+    EHR["Hospital EHR and lab system<br/>admissions, discharges, labs, meds"]
   end
 
   subgraph ING["2 · INGESTION: one unified stream"]
     IOT["AWS IoT Core<br/>MQTT over TLS, one certificate per device"]
-    FHIR["FHIR R4 server (HAPI FHIR)<br/>hospital integration layer"]
+    FHIR["FHIR R4 server (HAPI FHIR)<br/>hospital integration layer,<br/>notifies on change (subscription)"]
     Q[["SQS queue: patient-events<br/>all sources in one event format"]]
   end
 
   subgraph RT["3 · REAL-TIME MONITORING AND RISK"]
-    SP["Stream processor<br/>validate, store, rolling features,<br/>NEWS2 score, alert rules"]
-    RS["Risk service: 3 ML models<br/>early deterioration (Harnoor)<br/>readmission risk (Tiya)<br/>recovery monitoring (Navya)"]
+    SP["Stream processor<br/>validate, store, NEWS2 score,<br/>alert rules, care-setting changes"]
+    RS["Risk service: 3 model plug-ins<br/>early deterioration (Harnoor)<br/>readmission risk (Tiya)<br/>recovery monitoring (Navya)"]
   end
 
   subgraph ACT["4 · ALERTS AND AGENTIC AI"]
-    API["Care API<br/>alert lifecycle, escalation timers,<br/>notifications, role-based access, audit log"]
-    subgraph AGS["Agent service (LangGraph)"]
+    API["Care API<br/>alerts, escalation timers, notifications,<br/>role-based access, audit log, agent tools"]
+    subgraph AGS["Agent service (LangGraph, holds no patient data)"]
       direction LR
       A1["Monitoring agent<br/>what is happening?"] --> A2["Risk agent<br/>how serious is it?"] --> A3["Escalation agent<br/>who must act, how fast?"] --> A4["Summary agent<br/>cited SBAR report (RAG)"]
     end
-    LLM["Amazon Bedrock<br/>Nova Lite / Nova Pro (LLM)<br/>Titan Embeddings v2"]
+    LLM["Amazon Bedrock<br/>Claude Sonnet 4.6 and Haiku 4.5 (agents)<br/>Titan Embeddings v2 (guideline search)"]
   end
 
   subgraph OUT["5 · CARE TEAM"]
-    UI["Clinician console (web)<br/>live vitals, risk scores, alerts,<br/>summaries, reports, patient messaging"]
+    UI["Clinician console (web)<br/>live vitals, risk scores, alerts, summaries,<br/>patient messaging, audit trail"]
     USERS(["ICU physicians · emergency response team<br/>hospital clinicians · post-discharge providers"])
   end
 
@@ -51,20 +51,20 @@ flowchart TB
   ICU -->|"① vitals"| IOT
   EHR -->|"① records and labs<br/>(FHIR)"| FHIR
   IOT -->|"② IoT rule"| Q
-  FHIR -->|"② new lab, admission<br/>or discharge event"| Q
+  FHIR -->|"② new lab, admission<br/>or discharge<br/>(via Care API hook)"| Q
   Q -->|"③ consume"| SP
-  SP <-->|"④ features in,<br/>risk scores out"| RS
+  SP <-->|"④ score request,<br/>risk scores back"| RS
   SP --->|"⑤ alert: NEWS2<br/>or high risk"| API
   API -->|"⑥ live alert (WebSocket)<br/>+ e-mail page (SES)"| OUT
   UI --- USERS
-  API <-->|"⑦ agent task (SQS)<br/>⑨ tool calls: read data,<br/>save summary, escalate"| AGS
-  AGS <-->|"⑧ reason and embed"| LLM
+  API <-->|"⑦ agent task (SQS)<br/>⑨ tool calls: read data,<br/>search guidelines,<br/>save summary, escalate"| AGS
+  AGS <-->|"⑧ reason"| LLM
   IOT <-.->|"⑩ clinician and<br/>patient messages"| API
   FHIR <-.->|"results written<br/>back as FHIR"| API
 
   SP -.->|"store"| DB
   API <-.-> DB
-  AGS -.->|"guideline search"| DB
+  RS -.->|"read vitals,<br/>store scores"| DB
   RS -.->|"load models"| S3
 
   DB ~~~ SEC

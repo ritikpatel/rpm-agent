@@ -16,9 +16,10 @@ from collections import Counter
 import psycopg
 from psycopg.rows import dict_row
 
+from agent_service.graph import DATA_BLOCKS
+
 PG = "postgresql://rpm:rpm@localhost:5432/rpm"
 PATIENT_FACING = {"REQUEST_SPOT_CHECK", "SEND_CHECKIN", "REQUEST_HOME_READINGS"}
-DATA_BLOCKS = {"CURRENT", "TREND_6H", "RISK", "RECORD", "EVENTS", "ALERT"}
 REF = re.compile(r"\[([A-Za-z0-9_.#-]+)\]")
 
 

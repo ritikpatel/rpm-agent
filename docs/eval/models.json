@@ -1,0 +1,71 @@
+[
+ {
+  "name": "early_deterioration",
+  "version": "0.1.0",
+  "owner": "placeholder (Harnoor's model replaces it)",
+  "validated": false,
+  "metrics": {
+   "note": "not fitted: weights set by hand, no outcome labels in the extract"
+  },
+  "bands": {
+   "medium": 0.2,
+   "high": 0.5
+  },
+  "triggers": [
+   "vitals",
+   "lab"
+  ],
+  "care_settings": [
+   "icu",
+   "home"
+  ],
+  "trained_at": "2026-10-10T10:18:59+00:00"
+ },
+ {
+  "name": "readmission_risk",
+  "version": "0.1.0",
+  "owner": "placeholder (Tiya's model replaces it)",
+  "validated": false,
+  "metrics": {
+   "cv_folds": 5,
+   "auroc": 0.389,
+   "auprc": 0.26,
+   "brier": 0.288,
+   "n": 90,
+   "positives": 28
+  },
+  "bands": {
+   "medium": 0.2,
+   "high": 0.4
+  },
+  "triggers": [
+   "discharge",
+   "daily"
+  ],
+  "care_settings": [
+   "home"
+  ],
+  "trained_at": "2026-10-10T10:18:59+00:00"
+ },
+ {
+  "name": "recovery_monitoring",
+  "version": "0.1.0",
+  "owner": "placeholder (Navya's model replaces it)",
+  "validated": false,
+  "metrics": {
+   "note": "not fitted: weights set by hand, no outcome labels in the extract"
+  },
+  "bands": {
+   "medium": 0.3,
+   "high": 0.6
+  },
+  "triggers": [
+   "vitals",
+   "daily"
+  ],
+  "care_settings": [
+   "home"
+  ],
+  "trained_at": "2026-10-10T10:18:59+00:00"
+ }
+]

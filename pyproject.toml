@@ -47,6 +47,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["E501"]   # a checklist of one-line assertions reads better unwrapped
+
 [tool.ruff.lint.isort]
 known-first-party = ["rpm_core", "rpm_simulator", "stream_processor", "risk_service", "care_api", "agent_service",
                      "rpm_seed", "iot_rule_emulator", "rpm_eval"]

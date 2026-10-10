@@ -1,0 +1,31 @@
+{
+ "window_minutes": 240,
+ "runs": 10,
+ "by_trigger": {
+  "monitor": 4,
+  "reply": 3,
+  "alert": 2,
+  "discharge": 1
+ },
+ "by_provider": {
+  "bedrock": 7,
+  "offline": 3
+ },
+ "actions_executed": {
+  "SET_PROFILE_ELEVATED": 2,
+  "PATIENT_REPLY": 3,
+  "ESCALATE": 2,
+  "SET_PROFILE_CRITICAL": 2,
+  "REQUEST_SPOT_CHECK": 1,
+  "REQUEST_HOME_READINGS": 1,
+  "SEND_CHECKIN": 1
+ },
+ "briefs": 3,
+ "citations_checked": 23,
+ "citation_accuracy": 1.0,
+ "briefs_inconsistent_with_severity": 0,
+ "run_seconds_p50": 36.087223,
+ "run_seconds_p95": 49.685596,
+ "violations": [],
+ "violation_count": 0
+}

@@ -1,5 +1,5 @@
 # Every check that gates a merge. Runs without AWS credentials or the (git-ignored) dataset: tests that need the
-# dataset skip; Postgres-backed tests run against a service container.
+# dataset or fitted models skip; Postgres-backed tests run against a service container.
 name: ci
 on:
   push: { branches: [main] }
@@ -30,11 +30,11 @@ jobs:
 
   console:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: apps/clinician-console } }
+    defaults: { run: { working-directory: apps/console } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: apps/clinician-console/package-lock.json }
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/console/package-lock.json }
       - run: npm ci
       - run: npm run build          # tsc --noEmit + vite build
       - run: npm audit --omit=dev --audit-level=high
@@ -49,33 +49,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew --no-daemon :shared:test :wear:assembleDebug :phone:assembleDebug
 
-  infra:
+  images:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-      - run: terraform -chdir=infra/terraform/aws fmt -check -recursive
-      - run: terraform -chdir=infra/terraform/aws init -backend=false -input=false && terraform -chdir=infra/terraform/aws validate
-      - uses: azure/setup-helm@v4
-      - name: Helm lint + render + schema check
-        run: |
-          ARGS="--set image.registry=x --set simulator.mqttHost=iot.example --set config.redisUrl=r \
-                --set config.mimicDir=s3://b/m --set auth.issuer=i --set auth.clientId=c --set auth.domain=d \
-                --set auditExport.bucket=b --set telemetryArchiver.bucket=b"
-          helm lint deploy/helm/rpm $ARGS
-          for mode in container greengrass off; do
-            helm template rpm deploy/helm/rpm $ARGS --set icuGateway.mode=$mode \
-              --set icuGateway.hl7Endpoint=10.0.0.1:2575 --set observability.enabled=true > /tmp/rendered-$mode.yaml
-          done
-          docker run --rm -v /tmp:/s ghcr.io/yannh/kubeconform:v0.7.0 -summary -ignore-missing-schemas \
-            -kubernetes-version 1.33.0 /s/rendered-container.yaml /s/rendered-greengrass.yaml /s/rendered-off.yaml
+      - run: docker build -f deploy/docker/python.Dockerfile -t rpm/platform:ci .
+      - run: docker build -f deploy/docker/console.Dockerfile -t rpm/console:ci .
+      - run: docker compose -f deploy/compose/docker-compose.yml config -q
 
-  secrets-and-iac:
+  secrets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Secrets (fail) and IaC misconfiguration (report)
+      - name: Secrets scan
         run: |
           docker run --rm -v "$PWD:/src" aquasec/trivy:0.66.0 fs --scanners secret --exit-code 1 \
             --skip-dirs /src/edge/android/shared/src/test/resources/pki /src
-          docker run --rm -v "$PWD:/src" aquasec/trivy:0.66.0 config --severity HIGH,CRITICAL /src/infra /src/deploy

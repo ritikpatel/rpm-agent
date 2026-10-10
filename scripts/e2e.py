@@ -129,7 +129,6 @@ def main() -> None:
     step("recovery monitoring model scored the home patient", True, f"{hrisk[0]['probability']:.2f} ({hrisk[0]['band']})")
 
     print("3. Deterioration -> alert -> page -> agents")
-    t0 = time.monotonic()
     api.call("POST", "/api/demo/scenario", demo, {"patient_id": sick["patient_id"], "scenario": "sepsis",
                                                   "ramp_s": a.ramp_s})
     alert, waited = wait("alert opened", lambda: next(

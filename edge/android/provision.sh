@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Provision a device identity into the watch (direct mode) or phone gateway app over adb.
+# Provision a device identity into the watch app (or the optional phone companion) over adb.
 #
 #   edge/android/provision.sh plain [--host 10.0.2.2]      tcp://HOST:1883, no TLS (emulator dev loop)
 #   edge/android/provision.sh local [--host 10.0.2.2]      mutual TLS to the local Mosquitto on 8883 with a dev CA,
 #                                                          mirroring IoT Core (client cert required, topic ACL)
 #   edge/android/provision.sh aws                          mutual TLS to AWS IoT Core with the certificate that
-#                                                          infra/scripts/cloud-up.sh wrote to .secrets/
+#                                                          `make cloud-device D=<id>` wrote to .secrets/devices/<id>/
 # Options: --app wear|phone (default wear)  --device ID (default gw-demo-01)  --serial ADB_SERIAL
 #
 # Writes provisioning.json + device.p12 + ca.pem into the app's files directory (see rpm.edge.Provisioning) and
@@ -95,9 +95,10 @@ case "$MODE" in
     ensure_dev_pki
     URI="ssl://$HOST:8883"; CERT="$PKI/$DEVICE.cert.pem"; KEY="$PKI/$DEVICE.key.pem"; CA="$PKI/ca.pem" ;;
   aws)
-    CERT="$SECRETS/$DEVICE.cert.pem"; KEY="$SECRETS/$DEVICE.key.pem"; CA="$SECRETS/AmazonRootCA1.pem"
+    CERT="$SECRETS/devices/$DEVICE/cert.pem"; KEY="$SECRETS/devices/$DEVICE/key.pem"
+    CA="$SECRETS/AmazonRootCA1.pem"
     for f in "$CERT" "$KEY" "$CA" "$SECRETS/iot-endpoint.txt"; do
-      [[ -f "$f" ]] || { echo "missing $f: run infra/scripts/cloud-up.sh first" >&2; exit 1; }
+      [[ -f "$f" ]] || { echo "missing $f: run 'make cloud-device D=$DEVICE' first" >&2; exit 1; }
     done
     URI="ssl://$(cat "$SECRETS/iot-endpoint.txt"):8883" ;;
 esac

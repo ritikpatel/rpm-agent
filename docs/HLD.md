@@ -1,152 +1,117 @@
-# High-level design: agentic AI remote patient monitoring (ICU and post-discharge)
+# Design: agentic AI remote patient monitoring
 
-Cloud Box Technologies · ISB AMPBA capstone. This document describes the system as built. Decisions and their
-alternatives are in [adr/](adr); the build plan and progress are in [PLAN.md](PLAN.md). Measured behaviour is in
-[evaluation-report.md](evaluation-report.md), and security in [security/](security).
+Cloud Box Technologies · ISB AMPBA capstone. This describes the system as built. Measurements are in
+[evaluation-report.md](evaluation-report.md), security in [security.md](security.md).
 
 ## 1. What the system does
 
-Patients are monitored in two settings:
+Patients are monitored in two settings, and a patient is in exactly one of them at a time:
 
-- **After discharge:** at home, wearing a Samsung Galaxy Watch paired with a phone.
-- **In ICU:** through bedside monitors feeding a gateway.
+- **In the ICU:** a bedside monitor reports every vital sign every few seconds.
+- **At home after discharge:** a wrist wearable (a Galaxy Watch, or a simulated one) reports heart rate, SpO2 and
+  activity every 30 seconds.
 
-Vitals stream in real time to AWS, where deterministic clinical rules decide within about a second whether a care
-team must be paged. Claude-based agents then assess the situation and act within strict policy. They can request a
-spot check, ask the patient a question on the watch, sample faster, or escalate. They also write an
-evidence-cited SBAR brief for the clinician. Everything is recorded in FHIR, and every access to patient data is
-audited.
+Readings stream to the platform, where deterministic clinical rules decide within a second whether the care team
+must be paged. Three risk models score each patient. When an alert opens, four AI agents assess the situation, act
+within strict policy and write a cited handover summary. Admissions, discharges and lab results arrive from the
+hospital record over FHIR, and the platform writes its results back the same way.
 
-Design principles:
+Three rules shape the design:
 
-1. **Rules page; agents assist.** The safety net never depends on the LLM (ADR 0001).
-2. **No patient identifiers on the wire or at the edge.** Devices know only their own identity; the mapping to
-   patients lives server-side (ADR 0005).
-3. **Everything measurable.** Latency is stamped at every hop, and alert quality is proven by replay against
-   ground truth.
+1. **Rules alert, agents advise.** Paging never waits on a language model. Agents can raise an alert's urgency;
+   they cannot lower it or close it.
+2. **Agents run per alert, not per reading.** Model cost and delay stay off the real-time path.
+3. **Agents reach patient data only through the Care API.** Every read and action is checked and audited under the
+   agent's own name; the agent service has no database access.
 
 ## 2. Architecture
 
-```mermaid
-flowchart LR
-  subgraph Edge
-    W["Galaxy Watch app<br/>windows · signal quality · edge rules · SOS"] -->|Data Layer| PH[Phone gateway<br/>durable outbox]
-    W -->|"MQTT mTLS (direct)"| IOT
-    PH -->|MQTT mTLS| IOT
-    MON[ICU bedside monitors] -->|HL7 v2 ORU^R01 / MLLP| GW["ICU gateway (Greengrass)<br/>bedside NEWS2 · alarms · outbox"]
-    GW -->|MQTT mTLS / IPC| IOT
-  end
-  subgraph AWS
-    IOT[AWS IoT Core<br/>rule adds thing + ingest time] --> QI[SQS telemetry] --> SE["stream-engine<br/>validate · dedupe · NEWS2 · rules"]
-    IOT --> QA[SQS telemetry-archive] --> AR[telemetry-archiver] --> LK[(S3 lake<br/>gzip NDJSON)]
-    SE --> PG[(RDS Postgres + pgvector)]
-    SE --> RS[(ElastiCache Redis)]
-    SE --> SQ1[SQS alert-intake] --> AS["alert-service<br/>one alert per patient · escalation · outbox"]
-    SE --> SQ2[SQS clinical-events] --> AG["agent-service (LangGraph)<br/>assess → policy gate → act → cited brief"]
-    AG --> MS[model-serving<br/>ONNX risk models]
-    AG --> RAG[RAG: FTS + pgvector]
-    AG -->|Bedrock / API| CL[Claude]
-    AG & AS -->|commands| IOT
-    AS --> N[SES e-mail · SNS SMS · console · watch]
-    API[api<br/>Cognito JWT · RBAC · audit] --> PG
-    CON[clinician console<br/>React] --> API
-    FHIR[HAPI FHIR R4] --- AG
-    PG --> AUD[audit-export → S3 Object Lock]
-  end
-```
+![Architecture](architecture-simple.png)
 
-## 3. Components
+Source: [architecture-simple.mmd](architecture-simple.mmd).
 
-| Component | Responsibility | Key properties | Code |
-|---|---|---|---|
-| Watch app | Sensor windows (30/15/5 s by profile), signal quality, on-device rules and haptics, SOS, check-ins | Samsung SDK, Health Services or scripted sources; works offline | `edge/android/wear` |
-| Phone gateway | IoT identity, durable outbox, relays commands to the watch | SQLite outbox, mTLS | `edge/android/phone` |
-| ICU gateway | HL7 v2 to canonical telemetry, bedside NEWS2 and alarms, store-and-forward | Relays for registered beds only; drops PID segments; retained per-bed config from the cloud | `edge/icu-gateway` |
-| IoT Core + rule | Device authentication, topic authorisation, fan-out to the ingest queue and the archive queue | Topic is authoritative (`topic(4)` becomes the thing) | `infra/terraform/aws/iot.tf` |
-| stream-engine | Validates, de-duplicates, resolves device to patient, scores NEWS2, runs rules, persists, emits clinical events | Exactly-once effects; per-patient NEWS2 baseline, activity context and persistence | `services/stream-engine`, `libs/rpm_features` |
-| alert-service | Opens or updates one alert per patient; pages the tier for its severity; timed escalation and reminders | Postgres timers (`SKIP LOCKED`), transactional outbox, pages coalesced per burst | `services/alert-service`, `libs/rpm_alerts` |
-| agent-service | Assess, apply the policy gate, act (device commands, escalate), then write a cited SBAR brief | Claude on Bedrock or the API; offline fallback; one run per burst | `services/agent-service` |
-| model-serving | Risk models as ONNX packages with explanations, published as FHIR RiskAssessment | Plug-in contract for the data team's models; `validated` flag | `services/model-serving` (ADR 0009) |
-| RAG | Protocols plus per-patient summaries; hybrid retrieval; citation checking | Stable citable chunk ids | `libs/rpm_rag` (ADR 0010) |
-| api + console | Worklist, patient view, briefs with evidence, actions, presenter controls | Cognito PKCE, RBAC, audit, `no-store` responses | `services/api`, `apps/clinician-console` |
-| audit-export | `audit_log` to FHIR AuditEvent, hash-chained, in WORM storage | Hourly CronJob | `services/api/src/rpm_api/audit_export.py` |
+## 3. How one reading flows
 
-## 4. How a reading flows (the latency path)
-
-```mermaid
-sequenceDiagram
-  participant W as Watch
-  participant I as IoT Core
-  participant K as SQS
-  participant S as stream-engine
-  participant A as alert-service
-  participant G as agent-service
-  participant C as Clinician
-  W->>W: 30 s window, quality, edge rules (window_end)
-  W->>I: rpm.telemetry.v1 (edge_sent)
-  I->>K: + thing, ingest_ts
-  K->>S: batch (long poll: returns on arrival)
-  S->>S: NEWS2, rules (processed_at)
-  S-->>A: clinical event (requires_alert)
-  S-->>G: clinical event
-  A->>C: page (email / SMS / console / watch)
-  G->>G: assess → policy gate → act
-  G->>W: command (e.g. check-in question)
-  G->>C: cited SBAR brief on the alert
-```
-
-Measured locally at p95 (evaluation report §2):
-
-| Path | p95 |
+| Step | What happens |
 |---|---|
-| Sensor window → scored, home | about 1.0 s |
-| Sensor window → scored, ICU | about 1.4 s |
-| Sensor window → page | about 1.9 s |
+| ① | A device publishes a reading to AWS IoT Core over MQTT with TLS. EHR and lab records enter through the FHIR server. |
+| ② | Both land on one SQS queue, `patient-events`, in one envelope. The IoT rule stamps the device and arrival time; FHIR changes arrive through a subscription to the Care API, which queues them. |
+| ③ | The stream processor validates the event, stores it and computes the NEWS2 score. |
+| ④ | It asks the risk service for scores in the background: early deterioration on new vitals and labs, readmission at discharge and daily, recovery every 15 minutes for patients at home. |
+| ⑤ | If NEWS2 or a rule crosses its threshold, the processor hands a clinical event to the Care API. A validated model entering its high band does the same. |
+| ⑥ | The Care API opens (or updates) the patient's alert, pushes it to the console and e-mails the on-call tier. An unacknowledged alert escalates to the next tier on a timer. |
+| ⑦ | The Care API queues one agent task per alert. |
+| ⑧ | Monitoring, Risk, Escalation and Summary agents run in a fixed chain on Amazon Bedrock. |
+| ⑨ | The agents read through Care API tools, search the protocols, and save a cited summary plus their escalation decision, which passes a deterministic policy gate first. |
+| ⑩ | Clinicians message the patient's watch; check-in answers come back over the same channel. |
 
-The dominant hop is the stream engine's 1 s Kinesis poll.
+A discharge is step ①–③ with a different event: the hospital finishes the FHIR Encounter, the processor moves the
+patient to home monitoring, the ICU monitor stops being that patient's device, the wearable takes over, and the
+readmission model runs. Nothing measured in the ICU is carried into home scoring.
 
-## 5. Deployment
+## 4. Components
 
-| | Local (development and evaluation) | AWS demo (`make cloud-up`) |
+| Component | Responsibility | Code |
 |---|---|---|
-| Devices | Wear OS emulator or Galaxy Watch; 149-device simulator | Same simulator (in EKS); watch provisioned with an IoT certificate |
-| Ingest | Mosquitto (plain, plus mTLS on 8883), rule emulator, ElasticMQ, archiver to `data/lake` | IoT Core, IoT rule, two SQS queues, archiver to S3 |
-| Compute | docker compose | EKS 1.33 on Graviton (arm64) managed nodes (ADR 0006); ICU gateway as a pod or on a Greengrass core (t4g.small) |
-| Data | Postgres + pgvector, Redis, HAPI FHIR, ElasticMQ | RDS Postgres, ElastiCache, HAPI FHIR on EKS, SQS |
-| Identity | API-minted dev tokens (same verification path) | Cognito user pool, IoT X.509, EKS Pod Identity |
-| Observability | Prometheus + Grafana (`make obs`) | kube-prometheus-stack (`OBSERVABILITY=1`), CloudWatch |
-| Audit | `audit_log` and local export | Hourly export and CloudTrail to an S3 Object Lock bucket |
+| Stream processor | Validate, de-duplicate, resolve device to patient, NEWS2, alert rules, care-setting changes, lab history | `services/stream-processor` |
+| Risk service | Load model plug-ins, build the patient context, score, band, explain | `services/risk-service`, `models/plugins` |
+| Care API | One alert per patient, escalation timers, notifications, sign-in and roles, audit, live WebSocket, FHIR hook and write-back, agent tools, device messages | `services/care-api` |
+| Agent service | Four agents as bounded tool loops on Bedrock, policy gate, citation check, deterministic fallback | `services/agent-service` |
+| Console | Worklist, patient view, alert actions, messages, demo controls, audit trail | `apps/console` |
+| FHIR server | Hospital record stand-in: patients, encounters, conditions, labs, medications; rest-hook subscriptions | HAPI FHIR (off the shelf) |
+| Database | Vitals, scores, alerts, audit log, guideline index (pgvector) | PostgreSQL (off the shelf) |
+| Devices | Wear OS app; simulated wearables and ICU monitors | `edge/android`, `simulator` |
 
-All infrastructure is code: Terraform (`infra/terraform`), a Helm chart (`deploy/helm/rpm`) and compose
-(`deploy/compose`). `cloud-up` builds everything from scratch; `cloud-down` removes everything except the state
-bucket.
+### The agents
 
-## 6. Non-functional requirements
-
-| NFR | Target | How it is met | Evidence |
+| Agent | Question | Reads | Model |
 |---|---|---|---|
-| Alert latency | Sensor → page p95 < 5 s | Deterministic rules on the stream; alert outbox; 0.25 s coalescing | Grafana; evaluation §2 |
-| Alert quality | < 1 alert per patient-day at home, with sensitivity kept | Activity context, personal NEWS2 baseline, persistence, one alert per patient | Replay: 0.66 per patient-day, 35/36 (evaluation §1) |
-| Availability of the safety net | Pages without the LLM | Rules path independent of agents; SQS retention | Chaos `agent-down` |
-| No data loss | Zero loss through network, broker or consumer outages | Edge outboxes, QoS 1, SQS redelivery with dead-letter queues, dedupe on `msg_id` | Chaos `broker-outage`, `stream-engine-kill`, `archiver-kill` |
-| Security and privacy | HIPAA- and GDPR-aligned | mTLS, KMS everywhere, Cognito + RBAC, NetworkPolicies, WORM audit | `security/` |
-| Scalability | 10k devices (AWS) | SQS (no shard limit), parallel batched receives, one consumer with Redis state, IoT Core | Load test (evaluation §4) |
-| Cost | Demo ≤ about US$10/day, torn down after use | Graviton, single NAT, on-demand EKS, budget alarm | `security.tf` budget |
+| Monitoring | What is happening, and is the signal trustworthy? | vitals, recent events | Claude Haiku 4.5 |
+| Risk | How serious is it, given history and the risk models? | risk scores, record, labs | Claude Haiku 4.5 |
+| Escalation | Who must act, how fast, what reduces uncertainty? | alert state, protocols | Claude Sonnet 4.6 |
+| Summary | Cited SBAR handover for the on-call team | protocols, discharge summary, record | Claude Sonnet 4.6 |
 
-## 7. Key decisions
+Each agent may make a few tool calls and must then submit a structured result. If a model call fails, Amazon Nova
+Lite is tried; if that fails too, the run degrades to deterministic rules and a templated summary, labelled as such.
+The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 
-| ADR | Decision |
-|---|---|
-| [0001](adr/0001-deterministic-safety-net.md) | Rules page; the LLM never gates an alert |
-| [0002](adr/0002-event-bus-and-consumer.md) | *(superseded by 0014)* Kinesis with a custom consumer; SQS for work queues |
-| [0003](adr/0003-local-emulators.md) | Open-source local emulators instead of LocalStack |
-| [0004](adr/0004-news2-for-wearables.md) | NEWS2, including partial scoring for wearables |
-| [0005](adr/0005-device-identity-and-phi.md) | One thing per device; topic is authoritative; no PHI on the wire |
-| [0006](adr/0006-graviton-nodes.md) | Graviton (arm64) nodes |
-| [0007](adr/0007-agents-and-llm.md) | LangGraph agents, Claude on Bedrock or the API, per-route effort |
-| [0008](adr/0008-escalation-on-postgres.md) | Escalation timers on Postgres (not Step Functions) |
-| [0009](adr/0009-model-plugin-contract.md) | ONNX model package contract for the data team |
-| [0010](adr/0010-rag-design.md) | Hybrid retrieval with citable chunks |
-| [0011](adr/0011-edge-gateways-and-provisioning.md) | ICU gateway relay identity, retained bed config, provisioning |
-| [0012](adr/0012-authentication-and-rbac.md) | Cognito + API-side RBAC; dev tokens only locally |
-| [0013](adr/0013-alert-quality.md) | Context-aware rules tuned by deterministic replay |
+## 5. Deliverables in the brief
+
+| Deliverable | Where it lives | Coverage |
+|---|---|---|
+| Real-time patient monitoring | IoT Core → SQS → stream processor → console | Full |
+| Agentic AI clinical monitoring engine | Agent service, four agents | Full |
+| Early warning and alert system | Alert rules, Care API escalation, console and e-mail | Full; no SMS (blocked on the Free plan) |
+| Predictive risk modelling | Risk service with three model plug-ins | Three models; placeholders until the team's models arrive |
+| FHIR-based integration | HAPI FHIR, subscriptions in, write-back out | Full |
+| RAG-powered clinical summarisation | Summary agent, pgvector, Titan embeddings, citation check | Full |
+| Smart hospital connectivity | Live console, two-way messages to the watch | Messaging; no video |
+| Multi-source data pipeline | The single `patient-events` queue | Full |
+| Scalable microservices (Docker/Kubernetes) | Four services in containers; docker compose locally, k3s on AWS | One node, so no real high availability |
+| Evaluation and validation | `tools/eval`, `make e2e` | Alert quality and latency measured; clinical impact simulated only |
+| Security and compliance | Cognito, TLS, encryption at rest, audit trail | Aligned by design; synthetic data only |
+
+## 6. Deployment
+
+| | Local (`make up`) | AWS |
+|---|---|---|
+| Devices | Simulator; Wear OS emulator or watch | Simulator in the cluster and from a laptop; Galaxy Watch |
+| Ingest | Mosquitto, rule emulator, ElasticMQ | IoT Core, IoT rule, SQS |
+| Compute | docker compose | k3s (Kubernetes) on one EC2 instance |
+| Data | PostgreSQL with pgvector, HAPI FHIR | The same containers, on the instance's encrypted disk |
+| Models | Bedrock with your sign-in, or offline | Bedrock through the instance role |
+| Sign-in | Dev tokens minted by the Care API (same checks) | Cognito user pool |
+| E-mail | Mailpit | Amazon SES |
+
+## 7. Decisions and their trade-offs
+
+| Decision | Why | Cost |
+|---|---|---|
+| One queue for every source | One consumer, one event format, one place to reason about ordering and duplicates | Device and EHR events share a backlog |
+| Rules page, agents advise | Safety and latency must not depend on a language model | Agents cannot stop a false alert; a clinician resolves it |
+| Agents behind Care API tools | Audited, least-privilege access; the agent service holds no data | An extra network hop per tool call |
+| Fixed chain of four agents | Easy to explain, test and bound in cost | Less flexible than a free-form planner |
+| Models as plug-ins with their own feature code | The data team ships a folder; training and serving share one feature file | Feature code runs inside the risk service, so it is trusted code |
+| One PostgreSQL for everything | One thing to run and back up | Services share a database, which strict microservice design avoids |
+| k3s on one instance | Real Kubernetes at about US$1 a day | No tolerance of node failure |
+| One image for all Python services | One build, one pull | Each container carries code it does not use |
