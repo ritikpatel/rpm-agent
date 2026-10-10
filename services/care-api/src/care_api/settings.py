@@ -24,6 +24,7 @@ class CareSettings(BaseServiceSettings):
     escalation_policy_file: str | None = None
     care_team_file: str | None = None
     escalation_timeout_scale: float = 1.0
+    max_reminders: int | None = None   # reminders to the top tier for an alert nobody acknowledges (policy default: 3)
     notify_email: str | None = None    # override: send every tier's e-mail to these comma-separated addresses
     console_url: str = "http://localhost:3000"
     email_backend: str = "log"         # ses | smtp | log

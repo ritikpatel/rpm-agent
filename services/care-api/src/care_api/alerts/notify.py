@@ -99,11 +99,12 @@ class EmailChannel:
                 refs.append(self._one(address, subject, body))
                 sent.append(address)
             except Exception as exc:  # noqa: BLE001
-                failed.append(f"{address}: {str(exc)[:160]}")
+                why = "address not verified in Amazon SES" if "not verified" in str(exc) else str(exc)[:120]
+                failed.append(f"{address}: {why}")
                 log.warning("alert e-mail not delivered", extra={"to": address, "error": str(exc)[:200]})
         if not sent:
             raise RuntimeError("; ".join(failed))
-        return (", ".join(sent) + (f" (failed: {'; '.join(failed)})" if failed else ""), refs[0], None)
+        return (", ".join(sent) + (f" (not delivered: {'; '.join(failed)})" if failed else ""), refs[0], None)
 
 
 class WebhookChannel:

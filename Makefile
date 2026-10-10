@@ -1,6 +1,10 @@
 # Remote patient monitoring platform: local development and the AWS deployment.
 SHELL := /bin/bash
-COMPOSE := docker compose -f deploy/compose/docker-compose.yml
+# .env holds your own settings (for example RPM_EMAIL_SENDER); .run.env is written by `make up` and records how the
+# stack was started (agents, mail, AWS sign-in), so every later command (seed, sim, logs) uses the same settings.
+ENV_FILES := deploy/compose/.env deploy/compose/.run.env
+COMPOSE := docker compose --env-file deploy/compose/.env --env-file deploy/compose/.run.env \
+	-f deploy/compose/docker-compose.yml
 AWS_PROFILE ?= rpm-capstone
 DATA ?= Training Data
 LLM ?= offline
@@ -31,30 +35,37 @@ model-check:     ## check every model plug-in against models/CONTRACT.md
 	uv run pytest services/risk-service/tests/test_plugins.py -q
 
 # ------------------------------------------------------------------ local stack
-build:           ## build the images
+build: $(ENV_FILES) ## build the images
 	$(COMPOSE) build care-api console
 
 # LLM=bedrock uses the Claude agents on Amazon Bedrock; the default, offline, uses deterministic rules and templates.
 # MAIL=ses sends alert e-mail to the care team in deploy/config/care-team.yaml through Amazon SES, from the address in
 # RPM_EMAIL_SENDER (set it in deploy/compose/.env); the default, local, keeps e-mail in the inbox at localhost:8025.
+# With real inboxes the escalation timers run at their real length (5 minutes a tier) and an alert nobody
+# acknowledges is repeated once, not three times, so nobody's mailbox is flooded.
 # Both use your AWS sign-in: run `aws login --profile $(AWS_PROFILE)` first.
-up:              ## start the local stack: make up [LLM=bedrock] [MAIL=ses]
-	@if [ "$(LLM)" = "bedrock" ] || [ "$(MAIL)" = "ses" ]; then \
-	  eval "$$(aws configure export-credentials --profile $(AWS_PROFILE) --format env)" || exit 1; \
-	fi; \
-	if [ "$(LLM)" = "bedrock" ]; then export RPM_LLM_PROVIDER=bedrock; fi; \
-	if [ "$(MAIL)" = "ses" ]; then export RPM_EMAIL_BACKEND=ses; fi; \
+$(ENV_FILES):
+	@touch $@ && chmod 600 $@
+
+up: $(ENV_FILES) ## start the local stack: make up [LLM=bedrock] [MAIL=ses]
+	@{ echo "RPM_LLM_PROVIDER=$(if $(filter bedrock,$(LLM)),bedrock,offline)"; \
+	   echo "RPM_EMAIL_BACKEND=$(if $(filter ses,$(MAIL)),ses,smtp)"; \
+	   $(if $(filter ses,$(MAIL)),echo "RPM_ESCALATION_TIMEOUT_SCALE=$${RPM_ESCALATION_TIMEOUT_SCALE:-1}"; echo "RPM_MAX_REMINDERS=$${RPM_MAX_REMINDERS:-1}";,) \
+	   if [ "$(LLM)" = "bedrock" ] || [ "$(MAIL)" = "ses" ]; then \
+	     aws configure export-credentials --profile $(AWS_PROFILE) --format env-no-export || exit 1; \
+	   fi; } > deploy/compose/.run.env.tmp && mv deploy/compose/.run.env.tmp deploy/compose/.run.env \
+	  && chmod 600 deploy/compose/.run.env
 	$(COMPOSE) up -d --build postgres mosquitto sqs mailpit fhir iot-rule-emulator care-api stream-processor \
 	  risk-service agent-service console
-	@echo "console http://localhost:3000   alert e-mail http://localhost:8025   FHIR http://localhost:8080"
+	@echo "console http://localhost:3000   FHIR http://localhost:8080   agents: $(LLM)   alert e-mail: $(if $(filter ses,$(MAIL)),Amazon SES to the care team,local inbox http://localhost:8025)"
 
-seed:            ## load the cohort: registry, FHIR record, guideline index, FHIR subscriptions
+seed: $(ENV_FILES) ## load the cohort: registry, FHIR record, guideline index, FHIR subscriptions
 	$(COMPOSE) --profile seed run --rm seed
 
-sim:             ## start the simulated devices (ICU monitors for admitted patients, wearables at home)
+sim: $(ENV_FILES) ## start the simulated devices (ICU monitors for admitted patients, wearables at home)
 	$(COMPOSE) --profile sim up -d simulator
 
-sim-stop:        ## stop the simulated devices
+sim-stop: $(ENV_FILES) ## stop the simulated devices
 	$(COMPOSE) --profile sim stop simulator
 
 scenario:        ## make a patient deteriorate: make scenario P=SYN-000143 S=sepsis [RAMP=60]
@@ -84,14 +95,14 @@ stats:           ## pipeline numbers (patients streaming, latency, events)
 e2e:             ## end-to-end check of the running local stack
 	python3 scripts/e2e.py $(ARGS)
 
-logs:            ## follow the platform logs
+logs: $(ENV_FILES) ## follow the platform logs
 	$(COMPOSE) logs -f --tail 50 care-api stream-processor risk-service agent-service
 
-ps:              ## container status
+ps: $(ENV_FILES) ## container status
 	@$(COMPOSE) --profile sim ps --format 'table {{.Service}}\t{{.Status}}'
 
-down:            ## stop everything (keeps the data)
+down: $(ENV_FILES) ## stop everything (keeps the data)
 	$(COMPOSE) --profile sim --profile seed down --remove-orphans
 
-reset:           ## stop everything and delete this stack's local data
+reset: $(ENV_FILES) ## stop everything and delete this stack's local data
 	$(COMPOSE) --profile sim --profile seed down --remove-orphans --volumes

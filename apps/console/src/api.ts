@@ -6,6 +6,7 @@ export type Latest = Record<string, { v: number | string; ts: string }>;
 
 export interface PatientRow {
   patient_id: string; display_name: string; sex: string; age: number; primary_condition: string;
+  primary_diagnosis: string | null; data_origin: string | null;
   care_setting: "home" | "icu"; discharge_at: string | null; device_id: string | null; last_seen: string | null;
   news2: number | null; news2_band: string | null; news2_partial: boolean | null; latest: Latest | null;
   alerts_24h: number; risk: Record<string, { probability: number; band: string }> | null;

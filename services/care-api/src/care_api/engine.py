@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from dataclasses import replace
 
 from prometheus_client import Counter, Histogram
 
@@ -55,6 +56,8 @@ class AlertEngine:
     def __init__(self, cfg: CareSettings, pool, sqs, commander: DeviceCommander):
         self.cfg, self.pool, self.sqs = cfg, pool, sqs
         self.policy = EscalationPolicy.load(cfg.escalation_policy_file, cfg.escalation_timeout_scale)
+        if cfg.max_reminders is not None:
+            self.policy = replace(self.policy, max_reminders=cfg.max_reminders)
         team = CareTeam.load(cfg.care_team_file)
         if cfg.notify_email:
             for contact in team.contacts.values():

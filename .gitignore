@@ -63,3 +63,5 @@ training_data/
 
 # --- the team's model training data (never committed)
 Training Data/
+deploy/compose/.run.env
+deploy/compose/.run.env.tmp

@@ -27,7 +27,7 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
 
   const rows = useMemo(() => patients
     .filter((p) => setting === "all" || p.care_setting === setting)
-    .filter((p) => !query || `${p.display_name} ${p.patient_id} ${p.primary_condition}`.toLowerCase()
+    .filter((p) => !query || `${p.display_name} ${p.patient_id} ${p.primary_diagnosis ?? ""}`.toLowerCase()
       .includes(query.toLowerCase()))
     .sort((a, b) => (b.news2 ?? -1) - (a.news2 ?? -1) || a.patient_id.localeCompare(b.patient_id)),
   [patients, setting, query]);
@@ -69,7 +69,7 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
             </button>
           ))}
         </div>
-        <input type="search" placeholder="Search name, id, condition" value={query}
+        <input type="search" placeholder="Search name, id, diagnosis" value={query}
                onChange={(e) => setQuery(e.target.value)} aria-label="Search patients" />
       </div>
 
@@ -117,7 +117,8 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
                     <tr key={p.patient_id} className={`clickable${flashed.has(p.patient_id) ? " flash" : ""}`}
                         onClick={() => { location.hash = `#/patients/${p.patient_id}`; }}>
                       <td><div>{p.display_name}</div><div className="muted small">{p.patient_id} · {p.age}{p.sex} ·
-                        {" "}{p.primary_condition} · {p.care_setting === "icu" ? "ICU" : "home"}</div></td>
+                        {" "}{p.care_setting === "icu" ? "ICU" : "home"}
+                        {p.primary_diagnosis ? ` · ${p.primary_diagnosis.slice(0, 44)}` : ""}</div></td>
                       <td><News2Badge score={p.news2} band={p.news2_band} partial={p.news2_partial} /></td>
                       <td>{topRisk(p)}</td>
                       <td><Sparkline values={trends[p.patient_id] ?? []} label={`${p.display_name} heart rate`} /></td>

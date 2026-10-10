@@ -141,10 +141,15 @@ def main() -> None:
     lat = min((n["latency_ms"] for n in sent if n["latency_ms"] is not None), default=None)
     step("care team paged without waiting for the agents", bool(sent),
          f"{', '.join(n['channel'] for n in sent)}; sensor reading -> page {lat} ms")
-    if a.mailpit:
+    emails = [n for n in sent if n["channel"] == "email"]
+    local = emails and all("@rpm.local" in n["recipient"] for n in emails)
+    if a.mailpit and local:
         mail, _ = wait("alert e-mail", lambda: [m for m in api.call(
             "GET", "/api/v1/messages", base=a.mailpit)["messages"] if sick["patient_id"][-4:] in m["Subject"]], 30)
         step("alert e-mail carries no clinical details", "needs review" in mail[0]["Subject"], mail[0]["Subject"])
+    else:
+        step("alert e-mail handed to Amazon SES for the paged tier", bool(emails),
+             "; ".join(n["recipient"][:150] for n in emails))
     detail, waited = wait("agents' summary", lambda: (lambda d: d if d["brief"] else None)(
         api.call("GET", f"/api/alerts/{alert['alert_id']}", clin)), 240, 3)
     brief = detail["brief"]

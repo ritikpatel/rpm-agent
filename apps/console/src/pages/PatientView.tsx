@@ -121,7 +121,8 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
         <div className="row">
           <a href="#/">← Worklist</a>
           <h1 style={{ marginLeft: 8 }}>{p.display_name}</h1>
-          <span className="muted">{p.age}{p.sex} · {p.primary_condition} · {p.care_setting === "icu" ? "ICU"
+          <span className="muted">{p.patient_id} · {p.age}{p.sex} · {p.primary_diagnosis ?? "no diagnosis on record"}
+            {" "}· {p.data_origin === "mimic_real" ? "MIMIC patient" : "synthetic patient"} · {p.care_setting === "icu" ? "ICU"
             : `home, discharged ${p.discharge_at ? new Date(p.discharge_at).toLocaleDateString() : "–"}`}
             {" "}· device {p.device_id ?? "none"} · last data {ago(p.last_seen, now)}</span>
         </div>

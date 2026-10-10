@@ -39,7 +39,8 @@ def test_one_unverified_address_does_not_block_the_others():
     ses = FakeSes(reject={"new@example.org"})
     to, _, _ = EmailChannel("ses", "s@example.org", ses=ses).send(
         ALERT, "RPM nurse", {"email": ["new@example.org", "ok@example.org"]}, "https://c/x")
-    assert to.startswith("ok@example.org (failed: new@example.org") and len(ses.sent) == 1
+    assert to == "ok@example.org (not delivered: new@example.org: address not verified in Amazon SES)"
+    assert len(ses.sent) == 1
     with pytest.raises(RuntimeError, match="not verified"):
         EmailChannel("ses", "s@example.org", ses=FakeSes(reject={"new@example.org"})).send(
             ALERT, "RPM nurse", {"email": "new@example.org"}, "https://c/x")

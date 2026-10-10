@@ -62,12 +62,12 @@ function PresenterOnly({ me }: { me: Me }) {
         <section className="card demo">
           <header><h2>Demo controls</h2><span className="muted small">no access to patient data</span></header>
           <div className="body row">
-            <input value={pid} onChange={(e) => setPid(e.target.value.trim())} placeholder="p-90000012"
+            <input value={pid} onChange={(e) => setPid(e.target.value.trim())} placeholder="SYN-000143"
                    aria-label="Patient id" />
             <select value={scenario} onChange={(e) => setScenario(e.target.value)} aria-label="Scenario">
               {SCENARIOS.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
             </select>
-            <button className="btn" disabled={!/^p-\d+$/.test(pid)} onClick={() => {
+            <button className="btn" disabled={!/^[A-Za-z0-9-]{3,40}$/.test(pid)} onClick={() => {
               api.scenario({ patient_id: pid, scenario, ramp_s: 60 }).then(() => setMsg(`Started ${scenario}`),
                 (e) => setMsg(String(e)));
             }}>Start scenario</button>
