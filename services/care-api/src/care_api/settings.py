@@ -24,7 +24,7 @@ class CareSettings(BaseServiceSettings):
     escalation_policy_file: str | None = None
     care_team_file: str | None = None
     escalation_timeout_scale: float = 1.0
-    notify_email: str | None = None    # send every tier's e-mail here (SES sandbox: one verified address)
+    notify_email: str | None = None    # override: send every tier's e-mail to these comma-separated addresses
     console_url: str = "http://localhost:3000"
     email_backend: str = "log"         # ses | smtp | log
     email_sender: str = "alerts@rpm.local"

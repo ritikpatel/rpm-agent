@@ -1,0 +1,17 @@
+# Who is paged at each escalation tier. Copy to care-team.yaml (git-ignored) and put in real addresses.
+# `email` is one address or a list; everyone on the tier gets their own message.
+#
+# Tier 1 (nurse) is paged first for medium alerts; high alerts start at tier 2, critical at tier 3. An alert nobody
+# acknowledges moves up one tier when its timer runs out.
+#
+# With Amazon SES in sandbox mode (the Free plan), every address here must first be verified in SES.
+nurse:
+  name: RPM nurse on call
+  email: [nurse.one@example.org, nurse.two@example.org]
+physician:
+  name: Physician on call
+  email: [physician.one@example.org]
+emergency:
+  name: Rapid response team
+  email: [rapid.response@example.org]
+  webhook: ""          # optional: an HTTPS endpoint (for example a pager integration) called for tier 3

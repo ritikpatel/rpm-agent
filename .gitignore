@@ -56,3 +56,7 @@ models/registry/
 # --- fitted model files (derived from the dataset; rebuilt by `make models`, published to S3 for AWS)
 models/plugins/**/model.joblib
 models/plugins/**/model.onnx
+
+# --- real care-team contacts and the team's training data stay out of git
+deploy/config/care-team.yaml
+training_data/

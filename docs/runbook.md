@@ -21,6 +21,27 @@ Care API <http://localhost:8000> (interactive docs at `/docs` locally).
 `aws login --profile rpm-capstone`. The sign-in lasts 12 hours; after it expires the agents fall back to offline
 rules until you sign in again and re-run `make up LLM=bedrock`.
 
+### Alert e-mail to real inboxes
+
+By default alert e-mail stays in a local inbox (<http://localhost:8025>). To send it to the care team's own
+mailboxes through Amazon SES:
+
+1. List the people on each escalation tier in `deploy/config/care-team.yaml` (copy `care-team.example.yaml`; the
+   file is git-ignored).
+2. Put the sender in `deploy/compose/.env` as `RPM_EMAIL_SENDER=<address>` (also git-ignored).
+3. Verify every address once in Amazon SES. AWS e-mails each person a link; `make mail-status` shows who has
+   clicked. An unverified recipient receives nothing, and the alert's Notifications table says so; the others on
+   the tier are still paged.
+4. Start with `make up MAIL=ses` (combine with `LLM=bedrock` as needed).
+
+The sender cannot be an `@isb.edu` address: ISB's mail policy rejects mail that claims to come from `isb.edu` but
+was not sent by ISB's own systems. Mail from a personal address sent through SES may land in Junk the first time;
+marking it "not junk" once fixes that. A domain you own, verified in SES with DKIM, avoids the problem entirely.
+
+Each person gets their own message, containing only the patient's initials, the last four characters of the id,
+the severity and a link to the console. On the local stack that link points to `localhost`, so only the machine
+running the stack can open it; on AWS it is the public console address.
+
 ### Settings worth knowing
 
 Set these in the shell before `make up`.

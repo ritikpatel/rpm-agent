@@ -24,10 +24,11 @@ patient_channels_on_open: [watch]      # home patients get a reassurance message
 max_reminders: 3
 """
 
+# `email` is one address or a list: everyone on a tier is paged. deploy/config/care-team.yaml replaces this.
 DEFAULT_CARE_TEAM = """
-nurse:     {name: On-call RPM nurse,   email: nurse@rpm.local,     phone: "+10000000001"}
-physician: {name: On-call physician,   email: physician@rpm.local, phone: "+10000000002"}
-emergency: {name: Rapid response team, email: rrt@rpm.local,       phone: "+10000000003", webhook: ""}
+nurse:     {name: On-call RPM nurse,   email: [nurse@rpm.local]}
+physician: {name: On-call physician,   email: [physician@rpm.local]}
+emergency: {name: Rapid response team, email: [rrt@rpm.local], webhook: ""}
 """
 
 
@@ -82,7 +83,9 @@ class CareTeam:
 
     @classmethod
     def load(cls, path: str | None = None) -> CareTeam:
-        return cls(yaml.safe_load(Path(path).read_text() if path else DEFAULT_CARE_TEAM))
+        """A missing file means "use the built-in demo contacts", so a fresh checkout runs without configuration."""
+        text = Path(path).read_text() if path and Path(path).is_file() else DEFAULT_CARE_TEAM
+        return cls(yaml.safe_load(text))
 
     def contact(self, role: str, patient_override: dict | None = None) -> dict:
         base = dict(self.contacts.get(role, {}))

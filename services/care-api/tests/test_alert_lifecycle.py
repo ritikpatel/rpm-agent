@@ -10,6 +10,7 @@ import psycopg
 import pytest
 
 from care_api.alerts import AlertStore, CareTeam, EscalationPolicy, Notifier
+from care_api.alerts.notify import recipients
 from rpm_core.contracts import ClinicalEvent
 from rpm_core.db import make_pool, migrate
 
@@ -59,7 +60,7 @@ class FakeChannel:
         if self.fail:
             raise RuntimeError("provider down")
         self.sent.append((alert["alert_id"], tier_name, link))
-        return (contact.get("email") or contact.get("phone") or tier_name, "fake", None)
+        return (", ".join(recipients(contact)) or tier_name, "fake", None)
 
 
 @pytest.fixture

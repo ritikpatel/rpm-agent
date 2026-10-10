@@ -4,11 +4,12 @@ COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 AWS_PROFILE ?= rpm-capstone
 MIMIC ?= synthetic_mimic_150patients
 LLM ?= offline
+MAIL ?= local
 SIM := uv run rpm-sim
 
 .DEFAULT_GOAL := help
 .PHONY: help setup test lint models model-check build up seed sim sim-stop scenario clear scenarios cohort \
-        discharge send stats logs ps down reset e2e eval audit-export
+        discharge send stats logs ps down reset e2e mail-status
 
 help:            ## list targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -33,13 +34,16 @@ model-check:     ## check every model plug-in against models/CONTRACT.md
 build:           ## build the images
 	$(COMPOSE) build care-api console
 
-# LLM=bedrock uses Amazon Bedrock with your AWS sign-in (run `aws login --profile $(AWS_PROFILE)` first);
-# the default, offline, uses deterministic rules and templates and needs no credentials.
-up:              ## start the local stack: make up [LLM=bedrock]
-	@if [ "$(LLM)" = "bedrock" ]; then \
+# LLM=bedrock uses the Claude agents on Amazon Bedrock; the default, offline, uses deterministic rules and templates.
+# MAIL=ses sends alert e-mail to the care team in deploy/config/care-team.yaml through Amazon SES, from the address in
+# RPM_EMAIL_SENDER (set it in deploy/compose/.env); the default, local, keeps e-mail in the inbox at localhost:8025.
+# Both use your AWS sign-in: run `aws login --profile $(AWS_PROFILE)` first.
+up:              ## start the local stack: make up [LLM=bedrock] [MAIL=ses]
+	@if [ "$(LLM)" = "bedrock" ] || [ "$(MAIL)" = "ses" ]; then \
 	  eval "$$(aws configure export-credentials --profile $(AWS_PROFILE) --format env)" || exit 1; \
-	  export RPM_LLM_PROVIDER=bedrock RPM_EMBEDDINGS=$${RPM_EMBEDDINGS:-hash}; \
 	fi; \
+	if [ "$(LLM)" = "bedrock" ]; then export RPM_LLM_PROVIDER=bedrock; fi; \
+	if [ "$(MAIL)" = "ses" ]; then export RPM_EMAIL_BACKEND=ses; fi; \
 	$(COMPOSE) up -d --build postgres mosquitto sqs mailpit fhir iot-rule-emulator care-api stream-processor \
 	  risk-service agent-service console
 	@echo "console http://localhost:3000   alert e-mail http://localhost:8025   FHIR http://localhost:8080"
@@ -67,6 +71,10 @@ cohort:          ## list the monitored patients
 
 send:            ## send one reading now: make send P=p-90000001 ARGS="--hr 134 --spo2 86"
 	$(SIM) send --target $(P) $(ARGS)
+
+mail-status:     ## which alert e-mail addresses Amazon SES has verified (unverified ones receive nothing)
+	@aws sesv2 list-email-identities --profile $(AWS_PROFILE) --region ap-southeast-2 \
+	  --query 'EmailIdentities[].[IdentityName,VerificationStatus]' --output table
 
 stats:           ## pipeline numbers (patients streaming, latency, events)
 	@TOKEN=$$(curl -s -X POST localhost:8000/api/auth/dev/token -H 'content-type: application/json' \

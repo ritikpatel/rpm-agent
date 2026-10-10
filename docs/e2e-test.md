@@ -18,6 +18,10 @@ make sim
 `make up LLM=bedrock` needs a current AWS sign-in: run `aws login --profile rpm-capstone` first. Wait about a
 minute after `make sim` so every patient has data.
 
+Add `MAIL=ses` to deliver alert e-mail to the care team's real mailboxes instead of the local inbox (see "Alert
+e-mail to real inboxes" in the [runbook](runbook.md)). The automated check then needs
+`make e2e ARGS='--mailpit ""'`.
+
 ## Part A: automated check
 
 ```bash
@@ -57,8 +61,9 @@ that moved it. They are labelled "placeholder, not validated" until the team's m
 1. Open an ICU patient with no alert. In **Demo controls** choose `sepsis`, ramp 60, **Start scenario**.
 2. Watch the chart: heart rate and respiratory rate climb, blood pressure falls, NEWS2 rises.
 3. Within about a minute an **Active alert** appears on the page and in the worklist's alert inbox.
-4. The alert e-mail arrives at <http://localhost:8025>. It names the patient only by initials and the last four
-   characters of the id, with no clinical details.
+4. The alert e-mail arrives: in the local inbox at <http://localhost:8025>, or with `MAIL=ses` in the mailboxes of
+   the people on the paged tier. It names the patient only by initials and the last four characters of the id, with
+   no clinical details.
 5. In the alert's **Notifications** table, "Cause → sent" shows the time from the sensor reading to the page. It
    should be well under a second.
 

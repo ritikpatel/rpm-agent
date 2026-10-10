@@ -15,7 +15,7 @@ Addendum, so this document describes controls **aligned with** HIPAA and GDPR, n
 | Agent access | Agents read and act only through Care API tools; no database credentials in the agent service; no tool lowers or closes an alert | `care_api/internal.py`, `agent_service/api.py` |
 | Agent guardrails | Deterministic policy gate before any action; citations checked against retrieved passages; structured outputs validated | `agent_service/policy.py`, `graph.py` |
 | Audit | Every read of patient data and every action is logged with the actor (clinician, service or agent by name); the table refuses UPDATE, DELETE and TRUNCATE; hourly export as hash-chained FHIR AuditEvent files | `audit_log`, `care_api/audit_export.py` |
-| Minimum necessary | Alert e-mails carry initials, the last four characters of the id and a console link; no vitals or diagnoses | `care_api/alerts/notify.py` |
+| Minimum necessary | Alert e-mails carry initials, the last four characters of the id and a console link; no vitals or diagnoses; one message per recipient, so nobody sees who else is on call | `care_api/alerts/notify.py` |
 | Encryption in transit | MQTT over TLS with client certificates; HTTPS to the console; TLS to AWS services | IoT Core, CloudFront |
 | Encryption at rest | Encrypted instance disk, S3 and SQS | CloudFormation template |
 | Browser | `Cache-Control: no-store` on API responses; strict Content-Security-Policy; the WebSocket token travels as a subprotocol, not in the URL | console nginx config, `care_api/main.py` |

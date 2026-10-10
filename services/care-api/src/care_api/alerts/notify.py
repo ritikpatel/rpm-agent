@@ -45,20 +45,47 @@ class ConsoleChannel:
         return (tier_name, "live-feed", None)  # the console shows active alerts in real time over WebSocket
 
 
+def recipients(contact: dict) -> list[str]:
+    """A tier's e-mail addresses: `email` may be one address or a list (a tier is usually several people)."""
+    value = contact.get("email") or []
+    return [value] if isinstance(value, str) else [str(v) for v in value if v]
+
+
 class EmailChannel:
     name = "email"
 
     def __init__(self, backend: str, sender: str, smtp_host: str = "localhost", smtp_port: int = 1025,
-                 region: str = "ap-southeast-2"):
+                 region: str = "ap-southeast-2", ses=None):
         self.backend, self.sender = backend, sender
         self.smtp_host, self.smtp_port = smtp_host, smtp_port
         if backend == "ses":
-            import boto3
+            if ses is None:
+                import boto3
+                from botocore.config import Config
 
-            self.ses = boto3.client("sesv2", region_name=region)
+                # the SES sandbox allows one message a second: let the SDK pace and retry instead of failing a page
+                ses = boto3.client("sesv2", region_name=region, config=Config(
+                    retries={"mode": "adaptive", "max_attempts": 6}, connect_timeout=5, read_timeout=10))
+            self.ses = ses
+
+    def _one(self, to: str, subject: str, body: str) -> str:
+        if self.backend == "ses":
+            resp = self.ses.send_email(FromEmailAddress=self.sender, Destination={"ToAddresses": [to]},
+                                       Content={"Simple": {"Subject": {"Data": subject},
+                                                           "Body": {"Text": {"Data": body}}}})
+            return resp.get("MessageId", "")
+        if self.backend == "smtp":
+            msg = EmailMessage()
+            msg["From"], msg["To"], msg["Subject"] = self.sender, to, subject
+            msg.set_content(body)
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=5) as s:
+                s.send_message(msg)
+            return "smtp"
+        log.info("email (log backend)", extra={"to": to, "subject": subject})
+        return "log"
 
     def send(self, alert, tier_name, contact, link):
-        to = contact.get("email")
+        to = recipients(contact)
         if not to:
             raise ValueError(f"no email configured for {tier_name}")
         sev = alert["severity"].upper()
@@ -66,20 +93,17 @@ class EmailChannel:
         body = (f"Severity: {sev}\nEscalation tier: {tier_name}\nPatient: {minimal_ref(alert)}\n"
                 f"Opened: {alert['opened_at']:%Y-%m-%d %H:%M UTC}\n\nReview and acknowledge in the secure console:\n"
                 f"{link}\n\nThis message intentionally contains no clinical details. Do not reply.")
-        if self.backend == "ses":
-            resp = self.ses.send_email(FromEmailAddress=self.sender, Destination={"ToAddresses": [to]},
-                                       Content={"Simple": {"Subject": {"Data": subject},
-                                                           "Body": {"Text": {"Data": body}}}})
-            return (to, resp.get("MessageId", ""), None)
-        if self.backend == "smtp":
-            msg = EmailMessage()
-            msg["From"], msg["To"], msg["Subject"] = self.sender, to, subject
-            msg.set_content(body)
-            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=5) as s:
-                s.send_message(msg)
-            return (to, "smtp", None)
-        log.info("email (log backend)", extra={"to": to, "subject": subject})
-        return (to, "log", None)
+        sent, refs, failed = [], [], []
+        for address in to:   # one message each: nobody sees who else is on call, and one bad address blocks no one
+            try:
+                refs.append(self._one(address, subject, body))
+                sent.append(address)
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"{address}: {str(exc)[:160]}")
+                log.warning("alert e-mail not delivered", extra={"to": address, "error": str(exc)[:200]})
+        if not sent:
+            raise RuntimeError("; ".join(failed))
+        return (", ".join(sent) + (f" (failed: {'; '.join(failed)})" if failed else ""), refs[0], None)
 
 
 class WebhookChannel:

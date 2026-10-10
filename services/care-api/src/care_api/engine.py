@@ -58,7 +58,7 @@ class AlertEngine:
         team = CareTeam.load(cfg.care_team_file)
         if cfg.notify_email:
             for contact in team.contacts.values():
-                contact["email"] = cfg.notify_email
+                contact["email"] = [a.strip() for a in cfg.notify_email.split(",") if a.strip()]
         channels = {
             "console": ConsoleChannel(),
             "email": EmailChannel(cfg.email_backend, cfg.email_sender, cfg.smtp_host, cfg.smtp_port, cfg.aws_region),
