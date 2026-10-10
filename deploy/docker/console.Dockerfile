@@ -7,7 +7,7 @@ COPY apps/clinician-console/ ./
 RUN npm run build
 
 FROM nginx:1.29-alpine
-ENV API_UPSTREAM=api:8000
+ENV API_UPSTREAM=api:8000 AUTH_ORIGIN=""
 COPY deploy/docker/console/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 8080

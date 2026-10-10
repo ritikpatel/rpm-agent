@@ -157,6 +157,9 @@ def build() -> dict:
 
 
 if __name__ == "__main__":
-    out = Path(__file__).with_name("dashboards") / "rpm-latency.json"
-    out.write_text(json.dumps(build(), indent=1, ensure_ascii=False) + "\n")
-    print(f"wrote {out}")
+    here = Path(__file__).resolve().parent
+    text = json.dumps(build(), indent=1, ensure_ascii=False) + "\n"
+    # compose Grafana mounts the first; the Helm chart ships the second (kube-prometheus-stack ConfigMap)
+    for out in (here / "dashboards" / "rpm-latency.json", here.parents[2] / "helm/rpm/dashboards/rpm-latency.json"):
+        out.write_text(text)
+        print(f"wrote {out}")

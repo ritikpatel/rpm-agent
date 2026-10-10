@@ -45,6 +45,10 @@ locals {
       { Effect = "Allow", Action = ["ses:SendEmail"], Resource = "*" },
       { Effect = "Allow", Action = ["sns:Publish"], Resource = "*" }, # SMS to phone numbers (no topic ARN)
     ]
+    "audit-export" = [local.kms_use,
+      # write-once FHIR AuditEvent batches; no read, delete or retention-bypass rights
+      { Effect = "Allow", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.audit.arn}/app-audit/*" },
+    ]
     "api" = [
       # cloud -> device commands (used from week 2 by the agents / console)
       { Effect = "Allow", Action = ["iot:Publish"], Resource = "${local.iot_arn}:topic/rpm/v1/dev/*/cmd" },

@@ -14,6 +14,7 @@ class ScenarioSpec:
     name: str
     description: str
     deltas: dict[str, float] = field(default_factory=dict)  # metric -> offset at full effect
+    targets: dict[str, float] = field(default_factory=dict)  # metric -> absolute value at full effect
     ramp_s: float = 300
     default_duration_s: float = 900
     recover_s: float = 180
@@ -35,7 +36,9 @@ SCENARIOS: dict[str, ScenarioSpec] = {s.name: s for s in [
     ScenarioSpec("hypoxia", "Isolated desaturation", {"spo2": -12}, ramp_s=120, default_duration_s=600),
     ScenarioSpec("af_rvr", "Atrial fibrillation with rapid ventricular response",
                  {"heart_rate": 62, "hrv_rmssd": 45}, ramp_s=20, default_duration_s=600, arrhythmia=True),
-    ScenarioSpec("bradycardia", "Symptomatic bradycardia", {"heart_rate": -36}, ramp_s=60, default_duration_s=600),
+    # absolute target: a fixed offset from a high baseline (89 -> 53 bpm) is not symptomatic bradycardia
+    ScenarioSpec("bradycardia", "Symptomatic bradycardia (HR ~38/min whatever the baseline)",
+                 targets={"heart_rate": 38}, ramp_s=60, default_duration_s=600),
     ScenarioSpec("motion_artifact", "Vigorous movement corrupting PPG (must NOT alert)", {}, ramp_s=1,
                  default_duration_s=300, recover_s=1, motion_artifact=True),
     ScenarioSpec("device_offline", "Connectivity loss; data buffered and backfilled on reconnect", {}, ramp_s=1,

@@ -7,7 +7,7 @@ import VitalsPanels from "../components/VitalsPanels";
 import { ago, Badge, bandStatus, fmt, hhmm, News2Badge, severityStatus } from "../components/ui";
 
 const TIER = ["", "RPM nurse", "On-call physician", "Rapid response team"];
-const SCENARIOS = ["sepsis", "chf_decompensation", "copd_exacerbation", "hypoxia", "af_rvr", "bradycardia",
+export const SCENARIOS = ["sepsis", "chf_decompensation", "copd_exacerbation", "hypoxia", "af_rvr", "bradycardia",
                    "motion_artifact", "device_offline", "fall", "sos"];
 const REF = /\[([A-Za-z0-9_\-]+(?:#\d+)?)\]/g;
 
@@ -32,8 +32,9 @@ function Markdown({ text }: { text: string }) {
     : ln.startsWith("- ") ? <div key={i}>• {ln.slice(2)}</div> : <p key={i} style={{ margin: "4px 0" }}>{ln}</p>)}</div>;
 }
 
-export default function PatientView({ id, now, live, demo }: { id: string; now: number; live: LiveMessage | null;
-                                                                demo: boolean }) {
+export default function PatientView({ id, now, live, demo, canAct }: { id: string; now: number;
+                                                                        live: LiveMessage | null; demo: boolean;
+                                                                        canAct: boolean }) {
   const [p, setP] = useState<Record<string, any> | null>(null);
   const [alert, setAlert] = useState<AlertDetail | null>(null);
   const [vitals, setVitals] = useState<VitalRow[]>([]);
@@ -126,7 +127,7 @@ export default function PatientView({ id, now, live, demo }: { id: string; now: 
               <div style={{ fontWeight: 600 }}>{alert.title}</div>
               <div className="muted small">opened {ago(alert.opened_at, now)} · {alert.event_count} event(s):
                 {" "}{alert.event_types.join(", ")}</div>
-              <div className="row" style={{ marginTop: 10 }}>
+              {canAct && <div className="row" style={{ marginTop: 10 }}>
                 <input type="text" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
                        aria-label="Acknowledgement note" style={{ minWidth: 220 }} />
                 <button className="btn primary" disabled={alert.status === "acknowledged"}
@@ -139,7 +140,7 @@ export default function PatientView({ id, now, live, demo }: { id: string; now: 
                   if (r && r.length >= 3) void act(() => api.resolve(alert.alert_id, r), "Resolved");
                 }}>Resolve</button>
                 {msg && <span className="muted small">{msg}</span>}
-              </div>
+              </div>}
 
               <h3 style={{ marginTop: 16 }}>Agent brief (SBAR)</h3>
               {!brief && <div className="muted">Agent brief pending…</div>}
@@ -228,7 +229,7 @@ export default function PatientView({ id, now, live, demo }: { id: string; now: 
         </div>
 
         <div className="stack">
-          <section className="card" aria-labelledby="actions-h">
+          {canAct && <section className="card" aria-labelledby="actions-h">
             <header><h2 id="actions-h">Actions</h2><span className="muted small">sent to the patient's device</span></header>
             <div className="body row">
               <button className="btn" disabled={p.care_setting !== "home"}
@@ -240,7 +241,7 @@ export default function PatientView({ id, now, live, demo }: { id: string; now: 
               <button className="btn" onClick={() => act(() => api.command(id, { cmd: "SET_PROFILE", profile: "elevated" }),
                 "Sampling raised")}>Raise sampling</button>
             </div>
-          </section>
+          </section>}
 
           <section className="card" aria-labelledby="risk-h">
             <header><h2 id="risk-h">Risk models</h2><span className="muted small">decision support only</span></header>

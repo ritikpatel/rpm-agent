@@ -1,0 +1,10 @@
+{
+ "measured_at": "2026-09-25T14:05Z",
+ "setup": "local compose stack, 149 devices (124 home wearables, 25 ICU beds via HL7 gateway), after the load backlog drained; 5 scenarios injected (2 SOS, fall, hypoxia, AF) to produce pages",
+ "window_end_to_scored_s": {"home": {"n": 1239, "p50": 0.38, "p95": 0.69}, "icu": {"n": 333, "p50": 0.44, "p95": 0.70}},
+ "per_hop_p50_ms": {"home": {"edge": 2, "uplink": 3, "pipeline": 498}, "icu": {"edge": 3, "uplink": 3, "pipeline": 631}},
+ "sensor_to_page_s": {"n": 19, "p50": 0.45, "p95": 0.77, "max": 0.78,
+                       "by_channel_p95": {"console": 0.74, "email": 0.76, "sms": 0.71, "watch": 0.76}},
+ "first_page_by_scenario_s": {"SOS": [0.28, 0.75], "FALL": 0.44, "SPO2_CRITICAL (hypoxia)": 0.44, "HR_SUSTAINED_HIGH (af_rvr)": 0.67},
+ "notes": "Latency measured from what caused the page (sensor window end / device event time). The pipeline hop is dominated by the stream engine's 1 s Kinesis poll. Earlier (week 3, busier machine) p95 was 0.98 s home / 1.4 s ICU; the Prometheus 5-min view during the load-test drain is excluded."
+}

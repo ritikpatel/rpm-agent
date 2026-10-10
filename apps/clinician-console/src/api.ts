@@ -1,3 +1,5 @@
+import { accessToken, sessionRejected, type Me } from "./auth";
+
 // Typed client for the RPM API + the live WebSocket feed.
 
 export type Latest = Record<string, { v: number | string; ts: string }>;
@@ -66,30 +68,14 @@ export interface Stats {
 
 export interface Chunk { chunk_id: string; title: string; heading: string; text: string; kind: string }
 
-export const USERS = [
-  { id: "nurse.jane", role: "nurse", name: "Jane Doe, RPM nurse" },
-  { id: "dr.khan", role: "physician", name: "Dr. Omar Khan, physician" },
-];
-
-let currentUser = USERS[0];
-try {
-  const saved = localStorage.getItem("rpm.user");
-  const found = USERS.find((u) => u.id === saved);
-  if (found) currentUser = found;
-} catch { /* storage unavailable */ }
-
-export function getUser() { return currentUser; }
-export function setUser(id: string) {
-  currentUser = USERS.find((u) => u.id === id) ?? USERS[0];
-  try { localStorage.setItem("rpm.user", currentUser.id); } catch { /* ignore */ }
-}
-
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await accessToken();
+  if (!token) { sessionRejected(); throw new Error("not signed in"); }
   const res = await fetch(path, {
     ...init,
-    headers: { "content-type": "application/json", "x-user": currentUser.id, "x-role": currentUser.role,
-               ...(init?.headers ?? {}) },
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
   });
+  if (res.status === 401) sessionRejected();  // expired or revoked: back to sign-in (403 = role, not session)
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json() as Promise<T>;
 }
@@ -97,6 +83,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T,>(path: string, body: unknown) => call<T>(path, { method: "POST", body: JSON.stringify(body) });
 
 export const api = {
+  me: () => call<Me>("/api/auth/me"),
   patients: () => call<PatientRow[]>("/api/patients"),
   patient: (id: string) => call<PatientRow & Record<string, unknown>>(`/api/patients/${id}`),
   vitals: (id: string, minutes: number) => call<VitalRow[]>(`/api/patients/${id}/vitals?minutes=${minutes}&limit=5000`),
@@ -128,12 +115,16 @@ export function connectLive(onMessage: (m: LiveMessage) => void, onStatus: (up: 
   let ws: WebSocket | null = null;
   let closed = false;
   let retry: number | undefined;
-  const open = () => {
-    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live`);
+  const open = async () => {
+    const token = await accessToken();  // fresh (refreshed if needed) on every reconnect
+    if (closed) return;
+    if (!token) { sessionRejected(); return; }
+    // the token rides as a WebSocket subprotocol: browsers cannot set Authorization, and URLs end up in logs
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live`, ["rpm.v1", token]);
     ws.onopen = () => onStatus(true);
     ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch { /* ignore malformed */ } };
-    ws.onclose = () => { onStatus(false); if (!closed) retry = window.setTimeout(open, 2000); };
+    ws.onclose = () => { onStatus(false); if (!closed) retry = window.setTimeout(() => { void open(); }, 2000); };
   };
-  open();
+  void open();
   return () => { closed = true; window.clearTimeout(retry); ws?.close(); };
 }

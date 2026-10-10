@@ -106,3 +106,23 @@ output "greengrass_core_private_ip" {
   description = "HL7 endpoint for the simulated monitors when the gateway runs on Greengrass (empty otherwise)."
   value       = var.enable_greengrass_core ? aws_instance.gg_core[0].private_ip : ""
 }
+
+output "cognito_issuer" {
+  value = "https://cognito-idp.${var.region}.amazonaws.com/${aws_cognito_user_pool.clinicians.id}"
+}
+
+output "cognito_client_id" {
+  value = aws_cognito_user_pool_client.console.id
+}
+
+output "cognito_domain" {
+  value = "https://${aws_cognito_user_pool_domain.console.domain}.auth.${var.region}.amazoncognito.com"
+}
+
+output "cognito_user_pool_id" {
+  value = aws_cognito_user_pool.clinicians.id
+}
+
+output "audit_bucket" {
+  value = aws_s3_bucket.audit.id
+}

@@ -20,6 +20,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -58,6 +59,7 @@ ACTION_HEADINGS = ("action", "response", "immediate", "if the patient")
 
 class RunState(TypedDict, total=False):
     run_id: str
+    started_at: datetime
     event: dict
     trigger: str
     ctx: dict
@@ -155,7 +157,7 @@ class AgentGraph:
 
     def run(self, event: ClinicalEvent) -> RunState:
         state: RunState = {"run_id": str(uuid7()), "event": event.to_dict(), "trigger": classify(event.to_dict()),
-                           "actions": [], "usage": [], "trace": [], "errors": []}
+                           "actions": [], "usage": [], "trace": [], "errors": [], "started_at": utcnow()}
         return self.app.invoke(state)
 
     # ------------------------------------------------------------------ nodes
@@ -311,10 +313,10 @@ class AgentGraph:
             "degraded" if s.get("errors") else "succeeded" if s["trigger"] != "record" else "skipped"
         with self.d.pool.connection() as conn:
             conn.execute(
-                "INSERT INTO agent_runs (run_id, event_id, patient_id, alert_id, trigger, finished_at, status, "
-                "provider, model, input_tokens, output_tokens, cache_read_tokens, assessment, actions, brief, trace, "
-                "error) VALUES (%s,%s,%s,%s,%s,now(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (s["run_id"], ev["event_id"], ev["patient_id"], alert_id, s["trigger"], status,
+                "INSERT INTO agent_runs (run_id, event_id, patient_id, alert_id, trigger, started_at, finished_at, "
+                "status, provider, model, input_tokens, output_tokens, cache_read_tokens, assessment, actions, brief, "
+                "trace, error) VALUES (%s,%s,%s,%s,%s,%s,now(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (s["run_id"], ev["event_id"], ev["patient_id"], alert_id, s["trigger"], s["started_at"], status,
                  (s.get("assessment_by") or "none").split(":")[0],
                  usage[0]["model"] if usage else s.get("assessment_by"),
                  sum(u["input"] for u in usage) or None, sum(u["output"] for u in usage) or None,

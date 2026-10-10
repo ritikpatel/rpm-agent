@@ -127,6 +127,8 @@ helm upgrade --install rpm "$ROOT/deploy/helm/rpm" -n "$NS" --wait --timeout 25m
   --set alertService.emailSender="$(out alert_sender_email)" \
   --set alertService.escalationTimeoutScale="${ESCALATION_TIMEOUT_SCALE:-0.2}" \
   --set agentService.llmProvider="${LLM_PROVIDER:-bedrock}" \
+  --set auth.issuer="$(out cognito_issuer)" --set auth.clientId="$(out cognito_client_id)" \
+  --set auth.domain="$(out cognito_domain)" --set auditExport.bucket="$(out audit_bucket)" \
   "${ICU_ARGS[@]}" "${OBS_ARGS[@]}" ${HELM_EXTRA_ARGS:-}
 if [[ -n "$GG_IP" ]]; then
   step "ICU gateway component -> Greengrass core ${GW} (${GG_IP})"

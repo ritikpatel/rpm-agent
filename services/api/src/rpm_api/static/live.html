@@ -145,16 +145,25 @@ function addEvent(e, prepend = true) {
   while (evs.length > 200) evs[evs.length - 1].remove();
 }
 
+// Local ops board: signs itself in with a dev token (the API only serves this page in RPM_ENV=local dev mode).
+let token = null;
+async function signIn() {
+  const r = await fetch("/api/auth/dev/token", { method: "POST", headers: { "content-type": "application/json" },
+                                                 body: JSON.stringify({ username: "ops.board", role: "admin" }) });
+  token = (await r.json()).access_token;
+}
+const get = (u) => fetch(u, { headers: { authorization: `Bearer ${token}` } }).then(r => r.json());
+
 async function load() {
-  const [ps, evs, st] = await Promise.all(["/api/patients", "/api/events?limit=60", "/api/stats"]
-    .map(u => fetch(u).then(r => r.json())));
+  if (!token) await signIn();
+  const [ps, evs, st] = await Promise.all(["/api/patients", "/api/events?limit=60", "/api/stats"].map(get));
   ps.forEach(p => patients.set(p.patient_id, p));
   render(); tiles(st);
   $("#events").innerHTML = ""; evs.forEach(e => addEvent(e, false));
 }
 
 function connect() {
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live`);
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live`, ["rpm.v1", token]);
   ws.onopen = () => { $("#conn").classList.add("on"); $("#connText").textContent = "live"; };
   ws.onclose = () => { $("#conn").classList.remove("on"); $("#connText").textContent = "reconnecting…"; setTimeout(connect, 2000); };
   ws.onmessage = (m) => {
@@ -175,7 +184,7 @@ document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tabs button").forEach(x => x.classList.remove("active"));
   b.classList.add("active"); filter = b.dataset.f; render();
 });
-setInterval(() => fetch("/api/stats").then(r => r.json()).then(tiles).catch(() => {}), 5000);
+setInterval(() => token && get("/api/stats").then(tiles).catch(() => {}), 5000);
 setInterval(render, 15000);
 load().then(connect);
 </script>

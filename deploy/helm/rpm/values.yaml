@@ -21,6 +21,11 @@ config:
   iotEndpoint: ""         # AWS IoT Core ATS endpoint (device commands via the IoT data plane)
   demoControls: true      # presenter scenario controls in the console
 
+auth:                     # Amazon Cognito (terraform outputs cognito_issuer / cognito_client_id / cognito_domain)
+  issuer: ""
+  clientId: ""
+  domain: ""
+
 secrets:
   db: rpm-db              # DATABASE_URL, JDBC_URL, DB_USER, DB_PASSWORD (created by cloud-up.sh)
   simMqtt: rpm-sim-mqtt   # ca.pem, cert.pem, key.pem for the simulator fleet certificate
@@ -135,3 +140,12 @@ simulator:
 observability:
   enabled: false                   # true when kube-prometheus-stack runs in the cluster (cloud-up.sh OBSERVABILITY=1)
   prometheusRelease: kube-prometheus-stack
+
+networkPolicies:
+  enabled: true                    # default-deny ingress + explicit allow-list (templates/networkpolicies.yaml)
+  monitoringNamespace: monitoring
+
+auditExport:
+  enabled: true
+  schedule: "17 * * * *"           # hourly
+  bucket: ""                       # terraform output audit_bucket (S3 Object Lock)

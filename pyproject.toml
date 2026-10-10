@@ -19,6 +19,7 @@ dependencies = [
     "rpm-rag",
     "agent-service",
     "rpm-icu-gateway",
+    "rpm-eval",
 ]
 
 [dependency-groups]
@@ -29,7 +30,7 @@ train = ["scikit-learn>=1.5", "skl2onnx>=1.17", "numpy>=1.26", "onnxruntime>=1.1
 package = false
 
 [tool.uv.workspace]
-members = ["libs/*", "services/*", "simulator", "edge/icu-gateway"]
+members = ["libs/*", "services/*", "simulator", "edge/icu-gateway", "eval"]
 
 [tool.uv.sources]
 rpm-contracts = { workspace = true }
@@ -47,9 +48,10 @@ model-serving = { workspace = true }
 rpm-rag = { workspace = true }
 agent-service = { workspace = true }
 rpm-icu-gateway = { workspace = true }
+rpm-eval = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["libs", "services", "simulator", "contracts", "edge/icu-gateway"]
+testpaths = ["libs", "services", "simulator", "contracts", "edge/icu-gateway", "eval"]
 addopts = "-q --import-mode=importlib"
 log_level = "DEBUG"  # execute every log call in tests (catches LogRecord key collisions)
 
@@ -63,4 +65,4 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.isort]
 known-first-party = ["rpm_contracts", "rpm_features", "rpm_mimic", "rpm_common", "rpm_simulator", "stream_engine",
                      "fhir_loader", "iot_bridge", "rpm_api", "rpm_alerts", "alert_service", "model_serving", "rpm_rag", "agent_service",
-                     "rpm_icu_gateway"]
+                     "rpm_icu_gateway", "rpm_eval"]

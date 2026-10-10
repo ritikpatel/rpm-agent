@@ -16,7 +16,9 @@ spec:
         - name: nginx
           image: {{ include "rpm.image" (list . "console") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          env: [{ name: API_UPSTREAM, value: "api:80" }]
+          env:
+            - { name: API_UPSTREAM, value: "api:80" }
+            - { name: AUTH_ORIGIN, value: {{ .Values.auth.domain | quote }} }   # CSP: browser token exchange
           ports: [{ name: http, containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /, port: http }, periodSeconds: 10 }
           resources: {{- toYaml .Values.console.resources | nindent 12 }}

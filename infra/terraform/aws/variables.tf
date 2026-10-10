@@ -96,3 +96,21 @@ variable "greengrass_instance_type" {
   type        = string
   default     = "t4g.small"
 }
+
+variable "console_urls" {
+  description = "Origins the clinician console is served from (Cognito callback/logout). Demo: the port-forward."
+  type        = list(string)
+  default     = ["http://localhost:3000"]
+}
+
+variable "audit_lock_mode" {
+  description = "S3 Object Lock mode for the audit bucket: GOVERNANCE (demo, removable by cloud-down) or COMPLIANCE."
+  type        = string
+  default     = "GOVERNANCE"
+}
+
+variable "audit_retention_days" {
+  description = "Write-once retention for audit records (HIPAA documentation retention is 6 years = 2190 days)."
+  type        = number
+  default     = 7
+}

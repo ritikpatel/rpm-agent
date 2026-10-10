@@ -1,0 +1,35 @@
+{{- if .Values.auditExport.enabled }}
+# Hourly: new audit_log rows -> FHIR AuditEvent NDJSON in the Object Lock bucket (hash-chained batches).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: audit-export
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.auditExport.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels: { app: audit-export }
+        spec:
+          serviceAccountName: audit-export
+          restartPolicy: OnFailure
+          securityContext: {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: export
+              image: {{ include "rpm.image" (list . "api") }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["rpm-audit-export", "--dest", {{ printf "s3://%s/app-audit" (required "auditExport.bucket is required" .Values.auditExport.bucket) | quote }}]
+              env:
+                {{- include "rpm.env" . | nindent 16 }}
+              securityContext: {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              volumeMounts: [{ name: tmp, mountPath: /tmp }]
+              resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 256Mi } }
+          volumes: [{ name: tmp, emptyDir: {} }]
+{{- end }}

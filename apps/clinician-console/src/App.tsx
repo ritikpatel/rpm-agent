@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, connectLive, getUser, setUser, USERS, type AlertRow, type LiveMessage, type PatientRow,
-         type Stats } from "./api";
-import PatientView from "./pages/PatientView";
+import { api, connectLive, type AlertRow, type LiveMessage, type PatientRow, type Stats } from "./api";
+import { completeSignIn, loadConfig, onAuthChange, signedIn, signOut, type AuthConfig, type Me } from "./auth";
+import SignIn from "./components/SignIn";
+import PatientView, { SCENARIOS } from "./pages/PatientView";
 import Worklist from "./pages/Worklist";
 
 function useHashRoute() {
@@ -16,7 +17,68 @@ function useHashRoute() {
 
 type Theme = "system" | "light" | "dark";
 
+/** Sign-in gate: completes an OIDC redirect, shows the sign-in screen, then the console for the user's role. */
 export default function App() {
+  const [config, setConfig] = useState<AuthConfig | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
+  const [error, setError] = useState<string>();
+  const [, rerender] = useState(0);
+
+  useEffect(() => onAuthChange(() => { setMe(null); rerender((n) => n + 1); }), []);
+  useEffect(() => {
+    completeSignIn().catch((e) => setError(String(e instanceof Error ? e.message : e)))
+      .finally(() => loadConfig().then(setConfig).catch(() => setError("API unreachable")));
+  }, []);
+  const authed = signedIn();
+  useEffect(() => {
+    if (authed && config && !me) api.me().then(setMe).catch((e) => setError(String(e)));
+  }, [authed, config, me]);
+
+  if (!config) return <div className="page muted">{error ?? "Loading…"}</div>;
+  if (!authed) return <SignIn config={config} error={error} />;
+  if (!me) return <div className="page muted">Signing in…</div>;
+  if (!me.can.read) return <PresenterOnly me={me} />;
+  return <Console me={me} />;
+}
+
+function UserMenu({ me }: { me: Me }) {
+  return (
+    <span className="small muted">{me.username} · {me.role}{" "}
+      <button className="btn" onClick={() => { void signOut(); }}>Sign out</button></span>
+  );
+}
+
+/** A presenter without clinical access: can drive the demo, cannot see patient data (RBAC in the API too). */
+function PresenterOnly({ me }: { me: Me }) {
+  const [pid, setPid] = useState("");
+  const [scenario, setScenario] = useState(SCENARIOS[0]);
+  const [msg, setMsg] = useState("");
+  return (
+    <>
+      <header className="topbar"><div className="brand"><h1>RPM Console</h1></div><div className="spacer" />
+        <UserMenu me={me} /></header>
+      <div className="page" style={{ maxWidth: 640 }}>
+        <section className="card demo">
+          <header><h2>Presenter controls</h2><span className="muted small">no access to patient data</span></header>
+          <div className="body row">
+            <input value={pid} onChange={(e) => setPid(e.target.value.trim())} placeholder="p-90000012"
+                   aria-label="Patient id" />
+            <select value={scenario} onChange={(e) => setScenario(e.target.value)} aria-label="Scenario">
+              {SCENARIOS.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
+            </select>
+            <button className="btn" disabled={!/^p-\d+$/.test(pid)} onClick={() => {
+              api.scenario({ patient_id: pid, scenario, ramp_s: 90 }).then(() => setMsg(`Injected ${scenario}`),
+                (e) => setMsg(String(e)));
+            }}>Inject</button>
+            {msg && <span className="muted small">{msg}</span>}
+          </div>
+        </section>
+      </div>
+    </>
+  );
+}
+
+function Console({ me }: { me: Me }) {
   const route = useHashRoute();
   const [patients, setPatients] = useState<PatientRow[]>([]);
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
@@ -26,7 +88,6 @@ export default function App() {
   const [live, setLive] = useState<LiveMessage | null>(null);
   const [up, setUp] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [user, setUserState] = useState(getUser().id);
   const [theme, setTheme] = useState<Theme>(() => {
     try { return (localStorage.getItem("rpm.theme") as Theme) || "system"; } catch { return "system"; }
   });
@@ -79,20 +140,16 @@ export default function App() {
         </div>
         <span className="muted small">Synthetic data · decision support, not a diagnosis</span>
         <div className="spacer" />
-        <label className="small muted">Signed in as{" "}
-          <select value={user} onChange={(e) => { setUser(e.target.value); setUserState(e.target.value); }}>
-            {USERS.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
-        </label>
+        <UserMenu me={me} />
         <div className="seg" role="group" aria-label="Theme">
           {(["system", "light", "dark"] as const).map((t) =>
             <button key={t} aria-pressed={theme === t} onClick={() => setTheme(t)}>{t}</button>)}
         </div>
       </header>
       {patientMatch
-        ? <PatientView id={patientMatch[1]} now={now} live={live} demo />
+        ? <PatientView id={patientMatch[1]} now={now} live={live} demo={me.can.demo} canAct={me.can.act} />
         : <Worklist patients={patients} alerts={alerts} stats={stats} trends={trends} flashed={flashed} now={now}
-                    onChange={loadAlerts} />}
+                    onChange={loadAlerts} canAct={me.can.act} />}
     </>
   );
 }

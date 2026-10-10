@@ -178,7 +178,14 @@ class Simulator:
             return {}, False, False, False
         k = sc.intensity(now)
         hold = sc.in_hold(now)
-        return ({m: v * k for m, v in sc.spec.deltas.items()}, sc.spec.motion_artifact and hold,
+        deltas = {m: v * k for m, v in sc.spec.deltas.items()}
+        for m, target in sc.spec.targets.items():  # absolute targets become offsets from the current value
+            if isinstance(dev.gen, IcuReplay):  # ICU: the charted value right now, not the admission baseline
+                current = dev.gen._at(m, dev.gen.stay_hour(now - self.t0))
+            else:
+                current = dev.member.baseline.get(m)
+            deltas[m] = deltas.get(m, 0) + (target - (current if current is not None else target)) * k
+        return (deltas, sc.spec.motion_artifact and hold,
                 sc.spec.arrhythmia and k > 0.5, sc.spec.offline and hold)
 
     def _event(self, dev: SimDevice, etype: str, data: dict) -> None:

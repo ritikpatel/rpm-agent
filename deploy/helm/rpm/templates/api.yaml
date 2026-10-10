@@ -21,6 +21,10 @@ spec:
           env:
             {{- include "rpm.env" . | nindent 12 }}
             - { name: RPM_DEMO_CONTROLS, value: {{ .Values.config.demoControls | quote }} }
+            - { name: RPM_AUTH_MODE, value: oidc }   # dev tokens are refused outside RPM_ENV=local anyway
+            - { name: RPM_OIDC_ISSUER, value: {{ required "auth.issuer (Cognito) is required" .Values.auth.issuer | quote }} }
+            - { name: RPM_OIDC_CLIENT_ID, value: {{ required "auth.clientId is required" .Values.auth.clientId | quote }} }
+            - { name: RPM_OIDC_DOMAIN, value: {{ required "auth.domain is required" .Values.auth.domain | quote }} }
           ports: [{ name: http, containerPort: 8000 }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20, failureThreshold: 3 }

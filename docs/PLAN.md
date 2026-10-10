@@ -349,3 +349,46 @@ docs/                 PLAN, HLD, ADRs, compliance, runbook, demo script
 - The ICU gateway runs as a pod on EKS by default; Greengrass on EC2 is one flag away (ADR 0011).
 - New contract `rpm.gateway_config.v1`, retained, for per-bed clinical context at the edge.
 - kube-prometheus-stack is opt-in, because it needs about 1 GiB of cluster memory.
+
+### Week 4 — delivered (2026-09-25)
+- [x] **Security**
+      - Cognito authentication (authorization code + PKCE) and API-side RBAC for nurse, physician, admin and
+        presenter. Dev tokens are allowed only with `RPM_ENV=local`, and the `X-User` header has been removed.
+        Verified by 14 tests (ADR 0012).
+      - Console sign-in with permission-aware UI; WebSocket authenticated through the subprotocol header.
+      - PHI responses are `no-store`; strict CSP; HSTS.
+      - Kubernetes NetworkPolicies (default-deny ingress plus an allow-list), enforced by the VPC CNI.
+      - Append-only `audit_log`. Hourly hash-chained export of FHIR AuditEvents to an S3 Object Lock bucket.
+        CloudTrail with log-file validation.
+      - Threat model (STRIDE) and a HIPAA/GDPR compliance matrix (`docs/security/`).
+- [x] **Evaluation harness** (`eval/`, `rpm-eval`), with results in `docs/evaluation-report.md`:
+      - Deterministic 24-h replay with ground-truth scenarios: burden, PPV, sensitivity, time to detect.
+      - Chaos experiments: 4 of 4 pass.
+      - Load test.
+      - Guardrail red-team set: 13 of 13 contained.
+      - Audit of what the agents actually did.
+- [x] **Alert quality** (ADR 0013). On an identical workload, home burden fell from 5.71 to 0.66 alerts per
+      patient-day and ICU burden from 24.6 to 4.3 per bed-day. PPV rose from 0.03 to 0.28 (home) and from 0.015
+      to 0.11 (ICU). Sensitivity stayed at 35 of 36, and 0 of 10 negative scenarios alerted.
+- [x] **Docs:** HLD, runbook, demo script, ADRs 0012 and 0013. CI workflow covering lint, tests with Postgres,
+      console build, Android tests, Terraform, Helm and kubeconform, secret scan and CVE scans.
+
+### Found and fixed in week 4
+- **Live stack:** the IoT-rule emulator stalled for good after a single Kinesis timeout: the forward thread died
+  and a blocking queue froze MQTT.
+- **Chaos testing:** the local broker lost 75% of the data published during an outage (clean session, no
+  persistence). Fixed with persistence and a persistent session.
+- **Audit exporter tests:** the watermark could skip rows that were not yet settled.
+- **Replay:** the bradycardia scenario generator produced HR 53 on a high baseline, which mislabelled the ground
+  truth.
+- **Agent audit:** the offline brief recommended "routine monitoring" on NEWS2 9, because it always quoted the
+  protocol's first line.
+- **Agent runs:** recorded durations were always 0, because the start time was taken at insert.
+
+### Open after week 4
+- [ ] `make cloud-up` on the AWS account (the machine has no `aws`/`terraform` CLI or credentials yet). Covers the
+      Cognito sign-in, Greengrass core and kube-prometheus-stack on AWS.
+- [ ] Live Claude runs and an LLM-judge faithfulness evaluation (needs `ANTHROPIC_API_KEY` or Bedrock access).
+- [ ] Real Galaxy Watch (watch model and the Samsung SDK `.aar`) and a paired phone for companion mode.
+- [ ] A rhythm-irregularity rule for AF (the one remaining replay miss).
+- [ ] Demo recording and two dry runs (script: `docs/demo-script.md`).

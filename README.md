@@ -6,7 +6,9 @@ raises alerts, and hands context to Claude-based agents for triage, escalation a
 Everything is recorded in FHIR.
 
 - **Plan & schedule:** [docs/PLAN.md](docs/PLAN.md)
-- **Architecture decisions:** [docs/adr/](docs/adr)
+- **Design:** [docs/HLD.md](docs/HLD.md) · **decisions:** [docs/adr/](docs/adr)
+- **Evaluation:** [docs/evaluation-report.md](docs/evaluation-report.md) · **security:** [docs/security/](docs/security)
+- **Operations:** [docs/runbook.md](docs/runbook.md) · **demo:** [docs/demo-script.md](docs/demo-script.md)
 - **Message contracts:** [contracts/](contracts)
 
 > All data is synthetic (MIMIC-IV-shaped). HIPAA/GDPR-aligned controls are implemented as if it were real PHI.
@@ -18,7 +20,7 @@ Everything is recorded in FHIR.
 | 1 | Contracts, simulator, IoT ingest, stream engine (NEWS2 + rules), FHIR load, local stack, AWS IaC | **done locally**; AWS apply pending credentials |
 | 2 | Model serving, agents (LangGraph + Claude), RAG, alert lifecycle + escalation + notifications, clinician console | **done locally** (agents verified in offline mode; live Claude run needs a key or Bedrock access) |
 | 3 | Wear OS app (Galaxy Watch + emulator), phone gateway, Greengrass ICU gateway, dashboards | **done locally**: verified on the Wear OS emulator with mTLS; real watch needs the Samsung SDK `.aar` |
-| 4 | Security hardening, evaluation, documentation, demo | |
+| 4 | Security hardening, evaluation, documentation, demo | **done locally**: auth + RBAC, WORM audit, network policies; replay-tuned alerting (0.66 alerts/patient-day at home, 35/36 detected); chaos 4/4; docs. AWS run and live Claude pending access |
 
 ## Repository layout
 
@@ -46,7 +48,8 @@ deploy/compose          local stack (+ observability: Prometheus, Grafana dashbo
 deploy/helm/rpm         Kubernetes chart      deploy/docker   image build
 infra/terraform         AWS (VPC, EKS, RDS, ElastiCache, IoT Core, Greengrass core, Kinesis, Firehose, SQS, S3, KMS, ECR)
 infra/scripts           cloud-up.sh / cloud-down.sh
-docs/                   plan, ADRs
+eval/                   evaluation harness: replay (alert quality), chaos, load, guardrails, agent audit
+docs/                   plan, HLD, ADRs, evaluation report, security (threat model, compliance), runbook, demo
 ```
 
 ## Local quickstart (≈5 minutes)
@@ -60,7 +63,7 @@ make models                      # train/export baseline risk models (placeholde
 make up                          # infra + platform services + console
 RPM_DEMO_PATIENT=auto make seed  # FHIR + registry + RAG index; reserves one CHF patient for the Galaxy Watch
 RPM_DEMO_PATIENT=auto make sim   # 149 simulated devices (25 ICU beds via the HL7 gateway, 124 home wearables)
-open http://localhost:3000       # clinician console (email sink: http://localhost:8025)
+open http://localhost:3000       # clinician console: dev sign-in (pick a role); email sink http://localhost:8025
 make obs                         # optional: latency dashboards at http://localhost:3001
 ```
 

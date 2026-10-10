@@ -67,18 +67,48 @@ def assess(ctx: dict, event: dict) -> dict:
     }
 
 
+URGENCY = {"critical": ("emergency", "immediate"), "high": ("emergency", "immediate", "urgent"),
+           "medium": ("urgent", "within")}
+
+
+def recommendation_line(text: str, event: dict) -> str:
+    """The protocol line that applies to this event: by NEWS2 aggregate or SpO2 threshold when the protocol is
+    graded that way, else the first line whose urgency matches the event's severity. (Taking the first line
+    regardless once recommended "routine monitoring" for a NEWS2 of 9.)"""
+    lines = [ln.strip().lstrip("-").strip() for ln in text.splitlines() if ln.strip().startswith("-")]
+    if not lines:
+        return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    ev = event.get("evidence") or {}
+    total = (event.get("news2") or {}).get("total", ev.get("news2_total"))
+    spo2 = ev.get("spo2")
+    lower = [ln.lower() for ln in lines]
+    wanted: str | None = None
+    if any("aggregate" in ln for ln in lower) and total is not None:
+        wanted = "7 or more" if total >= 7 else "5-6" if total >= 5 else \
+            "single parameter" if ev.get("red_params") else "0-4"
+    elif any(ln.startswith("below") for ln in lower) and spo2 is not None:
+        wanted = "below 85" if spo2 < 85 else "below 90" if spo2 < 90 else "below 92"
+    if wanted:
+        hit = next((ln for ln, lo in zip(lines, lower, strict=True) if wanted in lo), None)
+        if hit:
+            return hit
+    words = URGENCY.get(event.get("severity", ""), ())
+    return next((ln for ln, lo in zip(lines, lower, strict=True) if any(w in lo for w in words)), lines[0])
+
+
 def brief(ctx: dict, event: dict, assessment: dict, hits: list) -> dict:
     p, st = ctx["profile"], ctx["status"] or {}
     protocols = [h for h in hits if h.kind == "protocol"]
     summary = next((h for h in hits if h.kind == "discharge_summary"), None)
     top_doc = protocols[0].doc_id if protocols else None
     action_chunk = next((h for h in protocols if h.doc_id == top_doc and
-                         h.heading.lower().startswith(("action", "response", "immediate", "if the patient"))),
+                         h.heading.lower().startswith(("action", "response", "immediate", "if the patient",
+                                                       "threshold"))),
                         protocols[0] if protocols else None)
     cites, rec = [], "Clinician review per RPM escalation protocol."
     if action_chunk:
-        first = next((ln.strip("-0123456789. ") for ln in action_chunk.text.splitlines() if ln.strip()), "")
-        rec = f"Per {action_chunk.title.split(' (')[0]}: {first} [{action_chunk.chunk_id}]"
+        line = recommendation_line(action_chunk.text, event)
+        rec = f"Per {action_chunk.title.split(' (')[0]}: {line} [{action_chunk.chunk_id}]"
         cites.append({"ref": action_chunk.chunk_id, "supports": "recommended escalation steps"})
     background = f"{p['primary_condition']}; {p['care_setting']} monitoring."
     if summary:

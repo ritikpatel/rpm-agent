@@ -25,11 +25,29 @@ data "aws_iam_policy_document" "kms" {
   }
 }
 
+data "aws_iam_policy_document" "kms_cloudtrail" {
+  source_policy_documents = [data.aws_iam_policy_document.kms.json]
+  statement {
+    sid       = "CloudTrailEncrypt"
+    actions   = ["kms:GenerateDataKey*", "kms:DescribeKey"]
+    resources = ["*"]
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:aws:cloudtrail:arn"
+      values   = ["arn:${local.partition}:cloudtrail:*:${local.account_id}:trail/*"]
+    }
+  }
+}
+
 resource "aws_kms_key" "main" {
   description             = "${local.name}: RDS, S3, Kinesis, SQS, Secrets Manager, ElastiCache, logs"
   enable_key_rotation     = true
   deletion_window_in_days = 7
-  policy                  = data.aws_iam_policy_document.kms.json
+  policy                  = data.aws_iam_policy_document.kms_cloudtrail.json
 }
 
 resource "aws_kms_alias" "main" {

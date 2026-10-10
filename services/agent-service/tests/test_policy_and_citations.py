@@ -87,3 +87,21 @@ def test_burst_runs_once_on_most_severe_event():
     assert burst_lead(edge, [rising, edge])["event_id"] == "2"
     twin = ev("5", "SPO2_LOW", "high", True)
     assert burst_lead(edge, [twin, edge])["event_id"] == "2"  # ties keep the triggering event
+
+
+def test_offline_recommendation_matches_the_event_not_the_first_protocol_line():
+    from agent_service.offline import recommendation_line
+
+    news2 = ("- Aggregate 0-4: routine monitoring.\n- Any single parameter scoring 3 (red score): urgent review.\n"
+             "- Aggregate 5-6: urgent response.\n- Aggregate 7 or more: emergency response.")
+    ev = lambda total, **evidence: {"severity": "high", "news2": {"total": total}, "evidence": evidence}  # noqa: E731
+    assert recommendation_line(news2, ev(9)).startswith("Aggregate 7 or more")
+    assert recommendation_line(news2, ev(5)).startswith("Aggregate 5-6")
+    assert recommendation_line(news2, ev(3, red_params=["sbp"])).startswith("Any single parameter")
+    assert recommendation_line(news2, ev(2)).startswith("Aggregate 0-4")
+    hypoxia = "- Below 92 %: review within 30 minutes.\n- Below 90 %: urgent review.\n- Below 85 %: emergency response."
+    spo2 = lambda v, sev: {"severity": sev, "evidence": {"spo2": v}}  # noqa: E731
+    assert recommendation_line(hypoxia, spo2(83, "critical")).startswith("Below 85")
+    assert recommendation_line(hypoxia, spo2(89, "medium")).startswith("Below 90")
+    assert recommendation_line("- Call the patient.\n- Immediate ambulance if unresponsive.",
+                               {"severity": "critical"}).startswith("Immediate")

@@ -16,9 +16,13 @@ module "eks" {
   cloudwatch_log_group_retention_in_days = 14
 
   addons = {
-    coredns                = {}
-    kube-proxy             = {}
-    vpc-cni                = { before_compute = true }
+    coredns    = {}
+    kube-proxy = {}
+    vpc-cni = {
+      before_compute = true
+      # enforce Kubernetes NetworkPolicies (the chart ships default-deny ingress + an allow-list)
+      configuration_values = jsonencode({ enableNetworkPolicy = "true" })
+    }
     eks-pod-identity-agent = { before_compute = true }
   }
 

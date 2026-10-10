@@ -105,3 +105,16 @@ def test_sos_is_emitted_immediately_even_if_next_tick_is_late(cohort_and_series)
     assert sim.start_scenario(dev.device_id, "sos")
     events = [DeviceEvent.model_validate_json(p) for t, p in sent if t.endswith("/events")]
     assert [e.type for e in events] == ["SOS"]
+
+
+def test_bradycardia_targets_an_absolute_rate_whatever_the_baseline(cohort_and_series):
+    members, series = cohort_and_series
+    home = [m for m in members if m.care_setting == "home"]
+    fast, slow = max(home, key=lambda m: m.baseline["heart_rate"]), min(home, key=lambda m: m.baseline["heart_rate"])
+    sim = Simulator([fast, slow], {}, lambda *_: None)
+    for m in (fast, slow):
+        sim.start_scenario(m.patient_id, "bradycardia")
+        dev = sim.devices[m.device_id]
+        dev.scenario.started -= 120  # past the 60 s ramp: full effect
+        deltas, *_ = sim._deltas(dev, time.monotonic())
+        assert m.baseline["heart_rate"] + deltas["heart_rate"] == pytest.approx(38)

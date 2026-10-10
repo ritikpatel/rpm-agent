@@ -5,9 +5,9 @@ import { ago, Badge, fmt, News2Badge, severityStatus, Sparkline } from "../compo
 
 const TIER = ["", "RPM nurse", "Physician", "Rapid response"];
 
-export default function Worklist({ patients, alerts, stats, trends, flashed, now, onChange }: {
+export default function Worklist({ patients, alerts, stats, trends, flashed, now, onChange, canAct }: {
   patients: PatientRow[]; alerts: AlertRow[]; stats: Stats | null; trends: Record<string, number[]>;
-  flashed: Set<string>; now: number; onChange: () => void;
+  flashed: Set<string>; now: number; onChange: () => void; canAct: boolean;
 }) {
   const [setting, setSetting] = useState<"all" | "home" | "icu">("all");
   const [query, setQuery] = useState("");
@@ -75,7 +75,7 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
                 <div className="actions">
                   {a.status === "acknowledged"
                     ? <span className="tag">ack {a.acknowledged_by}</span>
-                    : <button className="btn" disabled={busy === a.alert_id}
+                    : canAct && <button className="btn" disabled={busy === a.alert_id}
                               onClick={(e) => { e.stopPropagation(); void ack(a); }}>Acknowledge</button>}
                 </div>
                 <div className="meta">{a.title} · {a.event_count} event{a.event_count > 1 ? "s" : ""} ·

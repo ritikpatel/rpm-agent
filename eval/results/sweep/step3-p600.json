@@ -1,0 +1,580 @@
+{
+ "hours": 12.0,
+ "patients": {
+  "home": 124,
+  "icu": 25
+ },
+ "windows_scored": 232521,
+ "sensitivity": {
+  "detected": 34,
+  "cases": 36,
+  "negative_scenarios_alerting": 0
+ },
+ "missed": [
+  {
+   "patient_id": "p-90000072",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000071",
+   "context": "icu",
+   "scenario": "bradycardia",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  }
+ ],
+ "alert_worthy_events": 221,
+ "burden": {
+  "home": {
+   "alerts_per_patient_day": 1.016,
+   "steady_state_alerts_per_patient_day": 1.021,
+   "control_alerts_per_patient_day": 0.667,
+   "pages_per_patient_day": 1.177,
+   "alerts": 63,
+   "alerts_during_scenarios": 23,
+   "ppv": 0.365,
+   "control_alerts_by_first_rule": {
+    "SPO2_LOW": 15,
+    "NEWS2_MEDIUM": 9,
+    "NEWS2_RED_PARAM": 5,
+    "HR_SUSTAINED_LOW": 1
+   }
+  },
+  "icu": {
+   "alerts_per_patient_day": 3.76,
+   "steady_state_alerts_per_patient_day": 2.705,
+   "control_alerts_per_patient_day": 3.846,
+   "pages_per_patient_day": 4.48,
+   "alerts": 47,
+   "alerts_during_scenarios": 11,
+   "ppv": 0.234,
+   "control_alerts_by_first_rule": {
+    "NEWS2_HIGH": 15,
+    "NEWS2_RED_PARAM": 4,
+    "NEWS2_MEDIUM": 3,
+    "SPO2_LOW": 3
+   }
+  }
+ },
+ "scenarios": {
+  "home/af_rvr": {
+   "n": 4,
+   "detected": 4,
+   "paged": 4,
+   "median_time_to_detect_s": 131.6
+  },
+  "home/bradycardia": {
+   "n": 4,
+   "detected": 3,
+   "paged": 3,
+   "median_time_to_detect_s": 161.1
+  },
+  "home/chf_decompensation": {
+   "n": 4,
+   "detected": 4,
+   "paged": 4,
+   "median_time_to_detect_s": 369.1
+  },
+  "home/copd_exacerbation": {
+   "n": 4,
+   "detected": 4,
+   "paged": 4,
+   "median_time_to_detect_s": 380.8
+  },
+  "home/device_offline": {
+   "n": 5,
+   "detected": 0,
+   "paged": 0,
+   "median_time_to_detect_s": null
+  },
+  "home/hypoxia": {
+   "n": 4,
+   "detected": 4,
+   "paged": 4,
+   "median_time_to_detect_s": 116.0
+  },
+  "home/motion_artifact": {
+   "n": 5,
+   "detected": 0,
+   "paged": 0,
+   "median_time_to_detect_s": null
+  },
+  "home/sepsis": {
+   "n": 4,
+   "detected": 4,
+   "paged": 4,
+   "median_time_to_detect_s": 406.9
+  },
+  "icu/af_rvr": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 98.6
+  },
+  "icu/bradycardia": {
+   "n": 2,
+   "detected": 1,
+   "paged": 1,
+   "median_time_to_detect_s": 142.1
+  },
+  "icu/chf_decompensation": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 246.2
+  },
+  "icu/copd_exacerbation": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 206.4
+  },
+  "icu/hypoxia": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 93.5
+  },
+  "icu/sepsis": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 234.5
+  }
+ },
+ "cases": [
+  {
+   "patient_id": "p-90000036",
+   "context": "home",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 435.6,
+   "time_to_page_s": 435.6
+  },
+  {
+   "patient_id": "p-90000094",
+   "context": "home",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 182.2,
+   "time_to_page_s": 182.2
+  },
+  {
+   "patient_id": "p-90000045",
+   "context": "home",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 294.7,
+   "time_to_page_s": 294.7
+  },
+  {
+   "patient_id": "p-90000013",
+   "context": "home",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 406.9,
+   "time_to_page_s": 406.9
+  },
+  {
+   "patient_id": "p-90000046",
+   "context": "icu",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 234.5,
+   "time_to_page_s": 234.5
+  },
+  {
+   "patient_id": "p-90000107",
+   "context": "icu",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 166.8,
+   "time_to_page_s": 166.8
+  },
+  {
+   "patient_id": "p-90000073",
+   "context": "home",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 280.9,
+   "time_to_page_s": 280.9
+  },
+  {
+   "patient_id": "p-90000069",
+   "context": "home",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 369.1,
+   "time_to_page_s": 369.1
+  },
+  {
+   "patient_id": "p-90000067",
+   "context": "home",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 298.7,
+   "time_to_page_s": 298.7
+  },
+  {
+   "patient_id": "p-90000089",
+   "context": "home",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 775.9,
+   "time_to_page_s": 775.9
+  },
+  {
+   "patient_id": "p-90000106",
+   "context": "icu",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 246.2,
+   "time_to_page_s": 246.2
+  },
+  {
+   "patient_id": "p-90000123",
+   "context": "icu",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 78.9,
+   "time_to_page_s": 78.9
+  },
+  {
+   "patient_id": "p-90000077",
+   "context": "home",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 376.5,
+   "time_to_page_s": 376.5
+  },
+  {
+   "patient_id": "p-90000041",
+   "context": "home",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 179.3,
+   "time_to_page_s": 179.3
+  },
+  {
+   "patient_id": "p-90000005",
+   "context": "home",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 380.8,
+   "time_to_page_s": 380.8
+  },
+  {
+   "patient_id": "p-90000102",
+   "context": "home",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 462.3,
+   "time_to_page_s": 462.3
+  },
+  {
+   "patient_id": "p-90000132",
+   "context": "icu",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 206.4,
+   "time_to_page_s": 206.4
+  },
+  {
+   "patient_id": "p-90000092",
+   "context": "icu",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 107.1,
+   "time_to_page_s": 107.1
+  },
+  {
+   "patient_id": "p-90000035",
+   "context": "home",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 116.0,
+   "time_to_page_s": 116.0
+  },
+  {
+   "patient_id": "p-90000009",
+   "context": "home",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 102.4,
+   "time_to_page_s": 102.4
+  },
+  {
+   "patient_id": "p-90000032",
+   "context": "home",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 65.9,
+   "time_to_page_s": 65.9
+  },
+  {
+   "patient_id": "p-90000056",
+   "context": "home",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 159.7,
+   "time_to_page_s": 159.7
+  },
+  {
+   "patient_id": "p-90000126",
+   "context": "icu",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 56.2,
+   "time_to_page_s": 56.2
+  },
+  {
+   "patient_id": "p-90000139",
+   "context": "icu",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 93.5,
+   "time_to_page_s": 93.5
+  },
+  {
+   "patient_id": "p-90000061",
+   "context": "home",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 348.8,
+   "time_to_page_s": 348.8
+  },
+  {
+   "patient_id": "p-90000095",
+   "context": "home",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 130.4,
+   "time_to_page_s": 130.4
+  },
+  {
+   "patient_id": "p-90000140",
+   "context": "home",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 131.6,
+   "time_to_page_s": 131.6
+  },
+  {
+   "patient_id": "p-90000011",
+   "context": "home",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 116.1,
+   "time_to_page_s": 116.1
+  },
+  {
+   "patient_id": "p-90000008",
+   "context": "icu",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 98.6,
+   "time_to_page_s": 98.6
+  },
+  {
+   "patient_id": "p-90000090",
+   "context": "icu",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 97.4,
+   "time_to_page_s": 97.4
+  },
+  {
+   "patient_id": "p-90000135",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 172.5,
+   "time_to_page_s": 172.5
+  },
+  {
+   "patient_id": "p-90000072",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000122",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 161.1,
+   "time_to_page_s": 161.1
+  },
+  {
+   "patient_id": "p-90000033",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 158.1,
+   "time_to_page_s": 158.1
+  },
+  {
+   "patient_id": "p-90000071",
+   "context": "icu",
+   "scenario": "bradycardia",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000062",
+   "context": "icu",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 142.1,
+   "time_to_page_s": 142.1
+  },
+  {
+   "patient_id": "p-90000147",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000014",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000012",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000053",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000058",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000127",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000087",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000111",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000070",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "p-90000079",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  }
+ ],
+ "overrides": {
+  "BASELINE_STEP": "3",
+  "home.news2_persist_s": "600"
+ },
+ "config": {
+  "hours": 12.0,
+  "seed": "rpm-v1",
+  "resolve_after_min": 30,
+  "icu_via_gateway": true,
+  "label": "step3 home-persist600",
+  "wall_s": 176.8
+ }
+}

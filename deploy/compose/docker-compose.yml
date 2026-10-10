@@ -41,7 +41,7 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     volumes: ["./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro",
-              "../../.secrets/dev-pki/mosquitto:/mosquitto/config/conf.d:ro"]
+              "../../.secrets/dev-pki/mosquitto:/mosquitto/config/conf.d:ro", "mqttdata:/mosquitto/data"]
     ports: ["${RPM_MQTT_PORT:-1883}:1883", "${RPM_MQTTS_PORT:-8883}:8883"]
     mem_limit: 128m
 
@@ -123,6 +123,7 @@ services:
       <<: *env
       RPM_MODEL_SERVING_URL: http://model-serving:8001
       RPM_MQTT_HOST: mosquitto
+      RPM_AUTH_MODE: dev          # local only: API-minted tokens, same verification + RBAC as Cognito on AWS
     ports: ["${RPM_API_PORT:-8000}:8000"]
     depends_on:
       db-migrate: { condition: service_completed_successfully }
@@ -275,3 +276,4 @@ services:
 volumes:
   pgdata:
   gwdata:
+  mqttdata:

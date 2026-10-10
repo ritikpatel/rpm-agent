@@ -52,8 +52,13 @@ scenarios:       ## list available scenarios
 cohort:          ## print the deterministic demo cohort
 	uv run rpm-sim cohort
 
+audit-export:    ## export settled audit_log rows as FHIR AuditEvent NDJSON (hash-chained) to data/audit/
+	uv run rpm-audit-export --dest data/audit
+
 stats:           ## pipeline stats (latency, bands, events)
-	@curl -s localhost:8000/api/stats | python3 -m json.tool
+	@TOKEN=$$(curl -s -XPOST localhost:8000/api/auth/dev/token -H content-type:application/json \
+	  -d '{"username":"ops.cli","role":"admin"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') && \
+	  curl -s localhost:8000/api/stats -H "authorization: Bearer $$TOKEN" | python3 -m json.tool
 
 logs:            ## follow platform logs
 	$(COMPOSE) --profile sim logs -f --tail=50 stream-engine alert-service agent-service api simulator
@@ -82,6 +87,14 @@ cloud-status:    ## pods and recent events in the cluster
 
 cloud-board:     ## port-forward the clinician console to http://localhost:3000
 	kubectl -n rpm port-forward svc/console 3000:80
+
+cloud-user:      ## invite a console user (Cognito emails a temporary password): make cloud-user U=nurse.jane E=jane@example.org R=nurse
+	@test -n "$(U)" -a -n "$(E)" -a -n "$(R)" || { echo "usage: make cloud-user U=<username> E=<email> R=nurse|physician|admin|presenter"; exit 2; }
+	POOL=$$(terraform -chdir=infra/terraform/aws output -raw cognito_user_pool_id) && \
+	aws cognito-idp admin-create-user --user-pool-id $$POOL --username $(U) --desired-delivery-mediums EMAIL \
+	  --user-attributes Name=email,Value=$(E) Name=email_verified,Value=true >/dev/null && \
+	aws cognito-idp admin-add-user-to-group --user-pool-id $$POOL --username $(U) --group-name $(R) && \
+	echo "invited $(U) as $(R); Cognito has emailed $(E) a temporary password"
 
 cloud-scenario:  ## inject a scenario on AWS via IoT Core: make cloud-scenario P=p-90000001 S=sepsis [RAMP=90]
 	aws iot-data publish --topic rpm/v1/sim/control --cli-binary-format raw-in-base64-out \

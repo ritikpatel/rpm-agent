@@ -102,7 +102,10 @@ def main() -> None:
             for _, d in batch:
                 FORWARDED.labels(d["kind"]).inc()
 
-    client_ = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="iot-rule-emulator", clean_session=True)
+    # Persistent session (fixed id, clean_session=False, QoS 1 subscriptions): while this emulator is disconnected
+    # the broker queues matching messages for it, like an IoT rule that is always subscribed. Found by the
+    # broker-outage chaos experiment, which lost 75% of outage-period windows with a clean session.
+    client_ = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="iot-rule-emulator", clean_session=False)
     client_.on_connect, client_.on_message = on_connect, on_message
     client_.reconnect_delay_set(1, 10)
     client_.connect_async(cfg.mqtt_host, cfg.mqtt_port, keepalive=30)

@@ -185,7 +185,7 @@ class Processor:
         hr, hr_q = flat.get("heart_rate", (None, None))
         spo2, spo2_q = flat.get("spo2", (None, None))
         snap = Snapshot(window_start=wstart, ts=wend, heart_rate=hr, hr_quality=hr_q, spo2=spo2, spo2_quality=spo2_q,
-                        news2=news2)
+                        news2=news2, activity=flat.get("activity", (None, None))[0])
         prior = RuleState() if late else RuleState.from_json(self.state.get_rule_state(pid))
         findings, new_state = evaluate(snap, th, prior)
         if not late:
@@ -261,6 +261,10 @@ class Processor:
         severity, requires_alert, _ = DEVICE_EVENT_POLICY[ev.type]
         if ev.type == "EDGE_ALERT" and data.get("severity") in SEVERITY_RANK:
             severity = data["severity"]
+        if ev.type == "EDGE_ALERT" and data.get("origin") == "bedside_gateway":
+            # the bedside alarm has already sounded at the nurse station; the cloud scores the same telemetry
+            # against the patient's baseline, so paging again on the gateway's copy only doubles the alerts
+            requires_alert = False
         summary = {
             "SOS": "Patient pressed SOS on the watch",
             "FALL": "Fall detected by the watch",
