@@ -105,6 +105,8 @@ class AlertEngine:
                 trigger = "alert" if res.created or res.severity_raised else None
             elif ev.type == "CHECKIN_REPLY":
                 self._record_reply(ev)
+            elif ev.type == "RISK_HIGH" and not (ev.evidence or {}).get("validated"):
+                trigger = None  # an unvalidated model is shown, but it starts no agent work and no patient contact
             if trigger is None:
                 continue
             key = (ev.patient_id, trigger)

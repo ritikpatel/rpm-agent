@@ -230,6 +230,8 @@ class AgentGraph:
                                                          "buckets, and the 12 most recent windows."),
                  self._read(s, "monitoring", "events", "Clinical events of the last 24 hours, the active alert, "
                                                          "recent agent actions and messages with the patient.")]
+        if self.d.llm is None:
+            return {}  # offline by configuration: the escalation node applies the deterministic rules
         try:
             data, usage = self._agent("monitoring", self.d.model_fast, MONITORING_SYSTEM,
                                       self._event_block(s) + "\n\nAssess the patient's current state.",

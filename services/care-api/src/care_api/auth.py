@@ -23,7 +23,8 @@ ROLES = ("physician", "nurse", "admin", "presenter")  # precedence order for the
 PERMISSIONS: dict[str, frozenset[str]] = {
     "read": frozenset({"nurse", "physician", "admin"}),   # patients, vitals, alerts, briefs, evidence
     "act": frozenset({"nurse", "physician"}),             # ack / escalate / resolve alerts, device commands
-    "demo": frozenset({"presenter", "admin"}),            # presenter scenario controls
+    "demo": frozenset({"presenter", "admin"}),            # scenario, discharge and lab controls for demonstrations
+    "audit": frozenset({"admin"}),                        # who read or changed which patient's data
 }
 LEEWAY_S = 30
 
@@ -130,3 +131,4 @@ def require(permission: str):
 Reader = Annotated[User, Depends(require("read"))]
 Actor = Annotated[User, Depends(require("act"))]
 Presenter = Annotated[User, Depends(require("demo"))]
+Auditor = Annotated[User, Depends(require("audit"))]

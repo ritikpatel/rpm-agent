@@ -177,7 +177,7 @@ def dev_token(body: DevLoginIn) -> dict:
 @app.get("/api/auth/me")
 def me(user: Annotated[User, Depends(current_user)]) -> dict:
     return {"username": user.username, "role": user.role, "roles": sorted(user.roles),
-            "can": {p: user.can(p) for p in ("read", "act", "demo")},
+            "can": {p: user.can(p) for p in ("read", "act", "demo", "audit")},
             "demo_controls": settings.demo_controls}
 
 

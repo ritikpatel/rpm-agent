@@ -1,46 +1,46 @@
-# Local stack: mirrors the AWS architecture with open-source stand-ins
-#   IoT Core -> Mosquitto + iot-bridge (rule emulator) | SQS -> ElasticMQ | S3 lake -> data/lake
-#   RDS -> Postgres+pgvector | ElastiCache -> Redis | FHIR -> HAPI FHIR (same image as on EKS)
+# Local stack: the same containers that run on AWS, with open-source stand-ins for the managed services
+#   AWS IoT Core -> Mosquitto + iot-rule-emulator      Amazon SQS -> ElasticMQ      Amazon SES -> Mailpit
+#   Amazon Bedrock -> the real service when AWS credentials are present (make up LLM=bedrock), else offline rules
 name: rpm
 
 x-env: &env
   RPM_ENV: local
   RPM_LOG_LEVEL: ${RPM_LOG_LEVEL:-INFO}
   RPM_DATABASE_URL: postgresql://rpm:rpm@postgres:5432/rpm
-  RPM_REDIS_URL: redis://redis:6379/0
   RPM_AWS_REGION: ap-southeast-2
   RPM_SQS_ENDPOINT: http://sqs:9324
   RPM_FHIR_BASE_URL: http://fhir:8080/fhir
-  AWS_ACCESS_KEY_ID: local
-  AWS_SECRET_ACCESS_KEY: local
+  RPM_CARE_API_URL: http://care-api:8000
+  RPM_RISK_SERVICE_URL: http://risk-service:8001
+  RPM_SERVICE_TOKEN: ${RPM_SERVICE_TOKEN:-dev-service-token}
+  RPM_COHORT_ICU: ${RPM_COHORT_ICU:-6}
+  RPM_COHORT_HOME: ${RPM_COHORT_HOME:-18}
+  # ElasticMQ accepts any credentials; real ones (exported by `make up LLM=bedrock`) are only used for Bedrock
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
 
-x-build: &build
-  context: ../..
-  dockerfile: deploy/docker/python-service.Dockerfile
+x-platform: &platform
+  image: rpm/platform:dev
+  build: { context: ../.., dockerfile: deploy/docker/python.Dockerfile }
+  restart: unless-stopped
 
 services:
-  # ------------------------------------------------------------------ infrastructure
+  # ------------------------------------------------------------------ stand-ins for managed services
   postgres:
     image: pgvector/pgvector:0.8.6-pg16
     environment: { POSTGRES_USER: rpm, POSTGRES_PASSWORD: rpm, POSTGRES_DB: rpm }
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - db:/var/lib/postgresql/data
       - ./postgres/01-databases.sql:/docker-entrypoint-initdb.d/01-databases.sql:ro
     ports: ["${RPM_PG_PORT:-5432}:5432"]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U rpm -d rpm"], interval: 3s, retries: 30 }
     mem_limit: 512m
 
-  redis:
-    image: redis:7.4-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
-    ports: ["${RPM_REDIS_PORT:-6379}:6379"]
-    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 3s, retries: 30 }
-    mem_limit: 300m
-
   mosquitto:
     image: eclipse-mosquitto:2
     volumes: ["./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro",
-              "../../.secrets/dev-pki/mosquitto:/mosquitto/config/conf.d:ro", "mqttdata:/mosquitto/data"]
+              "../../.secrets/dev-pki/mosquitto:/mosquitto/config/conf.d:ro", "mqtt:/mosquitto/data"]
     ports: ["${RPM_MQTT_PORT:-1883}:1883", "${RPM_MQTTS_PORT:-8883}:8883"]
     mem_limit: 128m
 
@@ -50,7 +50,12 @@ services:
     ports: ["${RPM_SQS_PORT:-9324}:9324"]
     mem_limit: 256m
 
-  fhir:
+  mailpit:  # alert e-mails are viewable at http://localhost:8025 (Amazon SES on AWS)
+    image: axllent/mailpit:v1.31
+    ports: ["${RPM_MAILPIT_UI_PORT:-8025}:8025"]
+    mem_limit: 128m
+
+  fhir:  # the hospital record (same image on AWS); rest-hook subscriptions notify care-api of changes
     image: hapiproject/hapi:v8.12.0-1
     depends_on: { postgres: { condition: service_healthy } }
     environment:
@@ -62,223 +67,108 @@ services:
       SPRING_JPA_PROPERTIES_HIBERNATE_SEARCH_ENABLED: "false"
       HAPI_FHIR_FHIR_VERSION: R4
       HAPI_FHIR_CR_ENABLED: "false"
+      HAPI_FHIR_SUBSCRIPTION_RESTHOOK_ENABLED: "true"
       HAPI_FHIR_TESTER_HOME_NAME: RPM local FHIR
-      JAVA_TOOL_OPTIONS: -Xms256m -Xmx900m -XX:+UseSerialGC
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx768m -XX:+UseSerialGC
     ports: ["${RPM_FHIR_PORT:-8080}:8080"]
-    mem_limit: 1300m
+    mem_limit: 1200m
 
-  mailpit:  # local SMTP sink: escalation emails are viewable at http://localhost:8025 (SES on AWS)
-    image: axllent/mailpit:v1.31
-    ports: ["${RPM_MAILPIT_UI_PORT:-8025}:8025", "1025:1025"]
-    mem_limit: 128m
-
-  # ------------------------------------------------------------------ platform services
-  db-migrate:
-    build: { <<: *build, args: { PACKAGE: rpm-common } }
-    image: rpm/rpm-common:dev
-    command: ["python", "-m", "rpm_common.migrate"]
-    environment: *env
-    depends_on: { postgres: { condition: service_healthy } }
-    restart: "no"
-
-  iot-bridge:
-    build: { <<: *build, args: { PACKAGE: iot-bridge } }
-    image: rpm/iot-bridge:dev
-    command: ["iot-bridge"]
-    environment: { <<: *env, RPM_MQTT_HOST: mosquitto, RPM_METRICS_PORT: "9102" }
-    ports: ["9102:9102"]
+  iot-rule-emulator:  # LOCAL ONLY: MQTT -> patient-events queue, as the AWS IoT topic rule does
+    <<: *platform
+    command: ["iot-rule-emulator"]
+    environment: { <<: *env, RPM_MQTT_HOST: mosquitto }
     depends_on: [mosquitto, sqs]
-    restart: unless-stopped
     mem_limit: 128m
 
-  stream-engine:
-    build: { <<: *build, args: { PACKAGE: stream-engine } }
-    image: rpm/stream-engine:dev
-    command: ["stream-engine"]
-    environment: { <<: *env, RPM_METRICS_PORT: "9101" }
-    ports: ["9101:9101"]
-    depends_on:
-      db-migrate: { condition: service_completed_successfully }
-      redis: { condition: service_healthy }
-      sqs: { condition: service_started }
-    restart: unless-stopped
-    mem_limit: 256m
-
-  telemetry-archiver:  # raw archive: second ingest queue -> gzip NDJSON under data/lake (the S3 lake on AWS)
-    image: rpm/stream-engine:dev
-    command: ["rpm-telemetry-archiver"]
+  # ------------------------------------------------------------------ the platform
+  care-api:
+    <<: *platform
+    command: ["care-api"]
     environment:
       <<: *env
-      RPM_METRICS_PORT: "9105"
-      RPM_ARCHIVE_DEST: /home/app/data/lake/telemetry
-      RPM_ARCHIVE_FLUSH_S: "${RPM_ARCHIVE_FLUSH_S:-30}"
-    volumes: ["../../data/lake:/home/app/data/lake"]
-    ports: ["9105:9105"]
-    depends_on:
-      stream-engine: { condition: service_started }   # shares its image
-      sqs: { condition: service_started }
-    restart: unless-stopped
-    mem_limit: 128m
-
-  api:
-    build: { <<: *build, args: { PACKAGE: rpm-api } }
-    image: rpm/api:dev
-    command: ["rpm-api"]
-    environment:
-      <<: *env
-      RPM_MODEL_SERVING_URL: http://model-serving:8001
+      RPM_AUTH_MODE: dev            # local only: care-api mints tokens; same verification and roles as Cognito
       RPM_MQTT_HOST: mosquitto
-      RPM_AUTH_MODE: dev          # local only: API-minted tokens, same verification + RBAC as Cognito on AWS
-    ports: ["${RPM_API_PORT:-8000}:8000"]
-    depends_on:
-      db-migrate: { condition: service_completed_successfully }
-      redis: { condition: service_healthy }
-    restart: unless-stopped
-    mem_limit: 256m
-
-  model-serving:
-    build: { <<: *build, args: { PACKAGE: model-serving } }
-    image: rpm/model-serving:dev
-    command: ["model-serving"]
-    environment: { <<: *env, RPM_MODEL_REGISTRY: /models }
-    volumes: ["../../models/registry:/models:ro"]
-    ports: ["8001:8001"]
-    depends_on: { db-migrate: { condition: service_completed_successfully } }
-    restart: unless-stopped
-    mem_limit: 384m
-
-  alert-service:
-    build: { <<: *build, args: { PACKAGE: alert-service } }
-    image: rpm/alert-service:dev
-    command: ["alert-service"]
-    environment:
-      <<: *env
-      RPM_METRICS_PORT: "9103"
       RPM_EMAIL_BACKEND: smtp
       RPM_SMTP_HOST: mailpit
-      RPM_SMTP_PORT: "1025"
-      RPM_SMS_BACKEND: log
-      RPM_MQTT_HOST: mosquitto
-      RPM_CONSOLE_URL: http://localhost:3000
-      RPM_ESCALATION_TIMEOUT_SCALE: "${RPM_ESCALATION_TIMEOUT_SCALE:-0.2}"   # demo: 5 min -> 1 min
-    ports: ["9103:9103"]
+      RPM_CONSOLE_URL: http://localhost:${RPM_CONSOLE_PORT:-3000}
+      RPM_ESCALATION_TIMEOUT_SCALE: "${RPM_ESCALATION_TIMEOUT_SCALE:-0.2}"   # demo: 5 minutes -> 1 minute
+      RPM_EMBEDDINGS: ${RPM_EMBEDDINGS:-hash}
+    ports: ["${RPM_API_PORT:-8000}:8000"]
     depends_on:
-      db-migrate: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
       sqs: { condition: service_started }
       mailpit: { condition: service_started }
-    restart: unless-stopped
-    mem_limit: 192m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 5s
+      retries: 30
+    mem_limit: 384m
+
+  stream-processor:
+    <<: *platform
+    command: ["stream-processor"]
+    environment: { <<: *env, RPM_RUN_MIGRATIONS: "false" }
+    depends_on:
+      care-api: { condition: service_healthy }
+      sqs: { condition: service_started }
+    mem_limit: 256m
+
+  risk-service:
+    <<: *platform
+    command: ["risk-service"]
+    environment: { <<: *env, RPM_MODELS_URI: /models }
+    volumes: ["../../models/plugins:/models:ro"]
+    ports: ["${RPM_RISK_PORT:-8001}:8001"]
+    depends_on: { care-api: { condition: service_healthy } }
+    mem_limit: 512m
 
   agent-service:
-    build: { <<: *build, args: { PACKAGE: agent-service } }
-    image: rpm/agent-service:dev
+    <<: *platform
     command: ["agent-service"]
     environment:
       <<: *env
-      RPM_METRICS_PORT: "9104"
-      RPM_LLM_PROVIDER: "${RPM_LLM_PROVIDER:-offline}"      # offline | anthropic | bedrock
-      RPM_LLM_MODEL: "${RPM_LLM_MODEL:-claude-opus-5}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      RPM_MODEL_SERVING_URL: http://model-serving:8001
-      RPM_MQTT_HOST: mosquitto
-    ports: ["9104:9104"]
+      RPM_LLM_PROVIDER: ${RPM_LLM_PROVIDER:-offline}        # offline | bedrock
+      RPM_MODEL_FAST: ${RPM_MODEL_FAST:-au.anthropic.claude-haiku-4-5-20251001-v1:0}
+      RPM_MODEL_REASONING: ${RPM_MODEL_REASONING:-au.anthropic.claude-sonnet-4-6}
     depends_on:
-      db-migrate: { condition: service_completed_successfully }
-      model-serving: { condition: service_started }
+      care-api: { condition: service_healthy }
       sqs: { condition: service_started }
-    restart: unless-stopped
     mem_limit: 384m
 
   console:
     build: { context: ../.., dockerfile: deploy/docker/console.Dockerfile }
     image: rpm/console:dev
     ports: ["${RPM_CONSOLE_PORT:-3000}:8080"]
-    depends_on: [api]
+    depends_on: [care-api]
     restart: unless-stopped
     mem_limit: 64m
 
-  # ------------------------------------------------------------------ one-shots / tools (profiles)
-  fhir-loader:
+  # ------------------------------------------------------------------ tools (profiles)
+  seed:
+    <<: *platform
     profiles: ["seed"]
-    build: { <<: *build, args: { PACKAGE: fhir-loader } }
-    image: rpm/fhir-loader:dev
-    command: ["fhir-loader", "all"]
-    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_DEMO_PATIENT: "${RPM_DEMO_PATIENT:-}",
-                   RPM_ICU_GATEWAY: "${RPM_ICU_GATEWAY-icu-gw-01}", RPM_MQTT_HOST: mosquitto }
-    volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
-    depends_on: { db-migrate: { condition: service_completed_successfully } }
-    restart: "no"
-
-  rag-index:
-    profiles: ["seed"]
-    build: { <<: *build, args: { PACKAGE: rpm-rag } }
-    image: rpm/rag:dev
-    command: ["rpm-rag", "index"]
-    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_PROTOCOLS_DIR: /knowledge/protocols }
+    command: ["rpm-seed", "all"]
+    environment: { <<: *env, RPM_MIMIC_DIR: /data/mimic, RPM_PROTOCOLS_DIR: /knowledge/protocols,
+                   RPM_EMBEDDINGS: "${RPM_EMBEDDINGS:-hash}" }
     volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro", "../../knowledge:/knowledge:ro"]
-    depends_on: { db-migrate: { condition: service_completed_successfully } }
+    depends_on:
+      care-api: { condition: service_healthy }
+      fhir: { condition: service_started }
     restart: "no"
-
-  # ------------------------------------------------------------------ ICU bedside gateway (plain-container form of the
-  # Greengrass component): HL7 v2 from the simulated monitors -> bedside NEWS2/alarms -> outbox -> MQTT as icu-gw-01
-  icu-gateway:
-    build: { <<: *build, args: { PACKAGE: rpm-icu-gateway } }
-    image: rpm/icu-gateway:dev
-    command: ["rpm-icu-gateway"]
-    environment:
-      RPM_GW_THING: icu-gw-01
-      RPM_GW_MQTT_HOST: mosquitto
-      RPM_GW_OUTBOX_PATH: /home/app/data/outbox.db
-      RPM_GW_LOG_LEVEL: ${RPM_LOG_LEVEL:-INFO}
-    volumes: ["gwdata:/home/app/data"]
-    ports: ["2575:2575", "8081:8081", "9110:9110"]   # MLLP, nurse-station status, metrics
-    depends_on: [mosquitto]
-    restart: unless-stopped
-    mem_limit: 128m
 
   simulator:
+    <<: *platform
     profiles: ["sim"]
-    build: { <<: *build, args: { PACKAGE: rpm-simulator } }
-    image: rpm/simulator:dev
     command: ["rpm-sim", "run"]
     environment:
       <<: *env
       RPM_MIMIC_DIR: /data/mimic
       RPM_MQTT_HOST: mosquitto
-      RPM_SIM_EXCLUDE: "${RPM_DEMO_PATIENT:-}"
       RPM_SIM_AUTO_SCENARIOS: "${RPM_SIM_AUTO_SCENARIOS:-0}"
-      RPM_SIM_ICU_HL7: "${RPM_SIM_ICU_HL7-icu-gateway:2575}"   # set empty to publish ICU beds over MQTT directly
     volumes: ["../../synthetic_mimic_150patients:/data/mimic:ro"]
-    depends_on: [mosquitto, icu-gateway]
-    restart: unless-stopped
-    mem_limit: 256m
-
-  # ------------------------------------------------------------------ observability (optional: make obs)
-  prometheus:
-    profiles: ["obs"]
-    image: prom/prometheus:v3.5.0
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d"]
-    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
-    ports: ["9090:9090"]
-    mem_limit: 256m
-
-  grafana:
-    profiles: ["obs"]
-    image: grafana/grafana:12.1.1
-    environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"          # local only: read-only viewer without login
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-      GF_SECURITY_ADMIN_PASSWORD: ${RPM_GRAFANA_PASSWORD:-rpm-local}
-      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/rpm-latency.json
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-    volumes:
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports: ["3001:3000"]
-    depends_on: [prometheus]
+    depends_on: [mosquitto, care-api]
     mem_limit: 256m
 
 volumes:
-  pgdata:
-  gwdata:
-  mqttdata:
+  db:      # new names: the previous architecture's volumes (rpm_pgdata, rpm_mqttdata) are left untouched
+  mqtt:

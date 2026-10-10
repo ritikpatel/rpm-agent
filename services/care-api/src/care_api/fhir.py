@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from psycopg.rows import dict_row
 
 from rpm_core.contracts import EhrEvent, utcnow
@@ -92,7 +92,9 @@ def enqueue(ev: EhrEvent) -> None:
     sqs.send_message(QueueUrl=STATE["queue_url"], MessageBody=json.dumps(body))
 
 
-async def _receive(request: Request, token: str | None) -> dict:
+async def _receive(request: Request, token: str | None) -> Response:
+    """Always answers 200 with an empty body once authenticated: the FHIR server treats anything else (including a
+    JSON body that is not a FHIR resource) as a failed delivery and keeps retrying."""
     if not token or not hmac.compare_digest(token, STATE["settings"].service_token):
         raise HTTPException(401, "service token required")
     try:
@@ -100,33 +102,41 @@ async def _receive(request: Request, token: str | None) -> dict:
     except ValueError as exc:
         raise HTTPException(400, "body is not JSON") from exc
     ev = to_ehr_event(resource) if isinstance(resource, dict) else None
-    if ev is None:
-        return {"accepted": False}
-    with STATE["pool"].connection() as conn:
-        known = conn.execute("SELECT 1 FROM patients WHERE patient_id = %s", (ev.patient_id,)).fetchone()
-    if not known:
-        return {"accepted": False, "reason": "patient is not monitored"}
-    enqueue(ev)
-    log.info("EHR event queued", extra={"type": ev.type, "patient_id": ev.patient_id, "msg_id": ev.msg_id})
-    return {"accepted": True, "type": ev.type}
+    if ev is not None:
+        with STATE["pool"].connection() as conn:
+            known = conn.execute("SELECT 1 FROM patients WHERE patient_id = %s AND monitoring_active",
+                                 (ev.patient_id,)).fetchone()
+        if known:
+            enqueue(ev)
+            log.info("EHR event queued", extra={"type": ev.type, "patient_id": ev.patient_id, "msg_id": ev.msg_id})
+    return Response(status_code=200)
 
 
 # HAPI delivers a rest-hook notification with a payload as PUT {endpoint}/{ResourceType}/{id}.
 @router.put("/{rtype}/{rid}")
 async def hook_put(rtype: str, rid: str, request: Request,
-                   x_service_token: Annotated[str | None, Header()] = None) -> dict:
+                   x_service_token: Annotated[str | None, Header()] = None) -> Response:
     return await _receive(request, x_service_token)
 
 
 @router.post("/{rtype}")
-async def hook_post(rtype: str, request: Request, x_service_token: Annotated[str | None, Header()] = None) -> dict:
+async def hook_post(rtype: str, request: Request,
+                    x_service_token: Annotated[str | None, Header()] = None) -> Response:
     return await _receive(request, x_service_token)
 
 
 # ---------------------------------------------------------------------- FHIR out
+RISK_REFRESH_S = 900   # an unchanged band is rewritten to FHIR at most this often
+
+
+def risk_id(patient_id: str, model: str) -> str:
+    return f"risk-{patient_id}-{model.replace('_', '-')}"
+
+
 def risk_assessment(row: dict) -> dict:
+    """One logical RiskAssessment per patient and model; FHIR versioning keeps its history."""
     return {
-        "resourceType": "RiskAssessment", "status": "final",
+        "resourceType": "RiskAssessment", "id": risk_id(row["patient_id"], row["model"]), "status": "final",
         "subject": {"reference": f"Patient/{row['patient_id']}"},
         "occurrenceDateTime": row["computed_at"].isoformat(),
         "method": {"text": f"{row['model']} v{row['model_version']}"},
@@ -166,21 +176,43 @@ def document_reference(row: dict) -> dict:
     }
 
 
-def write_back_once(pool, http: httpx.Client) -> int:
-    done = 0
+def _write_risk(pool, http: httpx.Client) -> int:
+    """The newest unwritten score of each patient and model. Scores arrive every minute; FHIR gets one when the band
+    changes, otherwise at most every RISK_REFRESH_S, and the rows in between are marked as covered."""
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-        scores = cur.execute(
-            "SELECT id, patient_id, model, model_version, probability, band, top_factors, computed_at "
-            "FROM risk_scores WHERE fhir_id IS NULL AND computed_at > now() - interval '1 day' "
-            "ORDER BY computed_at LIMIT 25").fetchall()
+        rows = cur.execute(
+            """SELECT DISTINCT ON (r.patient_id, r.model) r.id, r.patient_id, r.model, r.model_version, r.probability,
+                      r.band, r.top_factors, r.computed_at, w.band AS written_band, w.computed_at AS written_at
+               FROM risk_scores r
+               LEFT JOIN LATERAL (SELECT band, computed_at FROM risk_scores p WHERE p.patient_id = r.patient_id
+                                  AND p.model = r.model AND p.fhir_id IS NOT NULL
+                                  ORDER BY computed_at DESC LIMIT 1) w ON true
+               WHERE r.fhir_id IS NULL AND r.computed_at > now() - interval '1 day'
+               ORDER BY r.patient_id, r.model, r.computed_at DESC LIMIT 50""").fetchall()
+    done = 0
+    for r in rows:
+        rid = f"RiskAssessment/{risk_id(r['patient_id'], r['model'])}"
+        fresh = r["written_at"] is not None and r["written_band"] == r["band"] and \
+            (r["computed_at"] - r["written_at"]).total_seconds() < RISK_REFRESH_S
+        if not fresh:
+            http.put(f"/{rid}", json=risk_assessment(r)).raise_for_status()
+            done += 1
+        with pool.connection() as conn:
+            conn.execute("UPDATE risk_scores SET fhir_id = %s WHERE patient_id = %s AND model = %s "
+                         "AND fhir_id IS NULL AND computed_at <= %s", (rid, r["patient_id"], r["model"],
+                                                                      r["computed_at"]))
+    return done
+
+
+def write_back_once(pool, http: httpx.Client) -> int:
+    done = _write_risk(pool, http)
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         alerts = cur.execute("SELECT alert_id, patient_id, status, severity, title, opened_at FROM alerts "
                              "WHERE fhir_flag_id IS NULL ORDER BY opened_at LIMIT 25").fetchall()
         briefs = cur.execute("SELECT alert_id, patient_id, brief FROM alerts WHERE fhir_brief_id IS NULL "
                              "AND brief IS NOT NULL AND brief_status IN ('ready', 'offline') LIMIT 25").fetchall()
-    jobs = ([("RiskAssessment", risk_assessment(r), "UPDATE risk_scores SET fhir_id = %s WHERE id = %s", r["id"])
-             for r in scores]
-            + [("Flag", flag(r), "UPDATE alerts SET fhir_flag_id = %s WHERE alert_id = %s", r["alert_id"])
-               for r in alerts]
+    jobs = ([("Flag", flag(r), "UPDATE alerts SET fhir_flag_id = %s WHERE alert_id = %s", r["alert_id"])
+             for r in alerts]
             + [("DocumentReference", document_reference(r),
                 "UPDATE alerts SET fhir_brief_id = %s WHERE alert_id = %s", r["alert_id"]) for r in briefs])
     for rtype, resource, sql, key in jobs:

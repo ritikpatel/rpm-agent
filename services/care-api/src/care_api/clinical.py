@@ -18,7 +18,7 @@ from rpm_core.contracts import AgentTask
 from rpm_core.live import publish
 
 from .alerts import ACTIVE
-from .auth import Actor, Presenter, Reader, User
+from .auth import Actor, Auditor, Presenter, Reader, User
 
 router = APIRouter(prefix="/api")
 STATE: dict = {}  # filled by main.lifespan: pool, store, engine, ctx, commander, settings
@@ -173,6 +173,15 @@ def agent_review(patient_id: str, request: Request, user: Actor) -> dict:
     queued = STATE["engine"].enqueue(task)
     audit(request, user, "create", "Task", str(task.task_id), patient_id, {"op": "agent_review"})
     return {"queued": bool(queued), "task_id": str(task.task_id)}
+
+
+@router.get("/audit")
+def audit_trail(user: Auditor, limit: Annotated[int, Query(ge=1, le=500)] = 100,
+                patient_id: str | None = None) -> list[dict]:
+    """Who read or changed what: clinicians, services and each agent by name."""
+    return _rows("SELECT id, at, actor, actor_role, action, resource_type, resource_id, patient_id, outcome "
+                 "FROM audit_log WHERE (%(pid)s::text IS NULL OR patient_id = %(pid)s) ORDER BY id DESC "
+                 "LIMIT %(limit)s", {"pid": patient_id, "limit": limit})
 
 
 # ------------------------------------------------------------------ the patient's device

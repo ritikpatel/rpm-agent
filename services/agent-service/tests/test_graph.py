@@ -77,7 +77,7 @@ def test_without_a_model_the_run_degrades_to_rules_and_still_briefs():
     assert out["assessment_by"] == "offline-rules" and out["brief_status"] == "offline"
     assert api.briefs[0][0] == "a-1" and "[P-HYPOXIA#2]" in api.briefs[0][2]["recommendation"]
     run = api.runs[0]
-    assert run["status"] == "degraded" and run["provider"] == "offline" and run["alert_id"] == "a-1"
+    assert run["status"] == "succeeded" and run["provider"] == "offline" and run["alert_id"] == "a-1"
     assert ("escalation", "device:CHECKIN") in api.calls   # the rules still ask the home patient how they feel
 
 

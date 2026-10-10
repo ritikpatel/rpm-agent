@@ -1,104 +1,89 @@
+# Remote patient monitoring platform: local development and the AWS deployment.
 SHELL := /bin/bash
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
-P ?= p-90000001
-S ?= sepsis
+AWS_PROFILE ?= rpm-capstone
+MIMIC ?= synthetic_mimic_150patients
+LLM ?= offline
+SIM := uv run rpm-sim
 
-.PHONY: help setup test lint models up seed sim sim-auto down reset logs ps scenario clear scenarios cohort board stats
+.DEFAULT_GOAL := help
+.PHONY: help setup test lint models model-check build up seed sim sim-stop scenario clear scenarios cohort \
+        discharge send stats logs ps down reset e2e eval audit-export
 
 help:            ## list targets
-	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
+# ------------------------------------------------------------------ development
 setup:           ## install the Python workspace (uv)
 	uv sync
 
-test:            ## run unit + contract tests
+test:            ## unit and contract tests
 	uv run pytest
 
-lint:            ## ruff lint
+lint:            ## ruff
 	uv run ruff check .
 
-models:          ## train/export the baseline risk models into models/registry (data team replaces these)
-	uv run --group train python models/train_baselines.py
+models:          ## fit the placeholder models into models/plugins (the data team's models replace them)
+	uv run python models/train_placeholders.py --mimic-dir $(MIMIC)
 
-up:              ## start infra + platform services (local stack); LLM: RPM_LLM_PROVIDER=offline|anthropic|bedrock
-	@test -d models/registry || $(MAKE) models
-	$(COMPOSE) up -d --build postgres redis mosquitto sqs fhir mailpit db-migrate iot-bridge stream-engine \
-	  telemetry-archiver model-serving alert-service agent-service api console
-	@echo "tip: agents run offline (rules + templates) unless RPM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY) or bedrock"
-	@echo "console: http://localhost:3000   live board: http://localhost:8000   email: http://localhost:8025   FHIR: http://localhost:8080/fhir"
+model-check:     ## check every model plug-in against models/CONTRACT.md
+	uv run pytest services/risk-service/tests/test_plugins.py -q
 
-seed:            ## FHIR + device registry + RAG index (RPM_DEMO_PATIENT=auto reserves one patient for the watch)
-	$(COMPOSE) --profile seed run --rm --build fhir-loader
-	$(COMPOSE) --profile seed run --rm --build rag-index
+# ------------------------------------------------------------------ local stack
+build:           ## build the images
+	$(COMPOSE) build care-api console
 
-obs:             ## Prometheus + Grafana latency dashboards (http://localhost:3001)
-	$(COMPOSE) --profile obs up -d prometheus grafana
+# LLM=bedrock uses Amazon Bedrock with your AWS sign-in (run `aws login --profile $(AWS_PROFILE)` first);
+# the default, offline, uses deterministic rules and templates and needs no credentials.
+up:              ## start the local stack: make up [LLM=bedrock]
+	@if [ "$(LLM)" = "bedrock" ]; then \
+	  eval "$$(aws configure export-credentials --profile $(AWS_PROFILE) --format env)" || exit 1; \
+	  export RPM_LLM_PROVIDER=bedrock RPM_EMBEDDINGS=$${RPM_EMBEDDINGS:-hash}; \
+	fi; \
+	$(COMPOSE) up -d --build postgres mosquitto sqs mailpit fhir iot-rule-emulator care-api stream-processor \
+	  risk-service agent-service console
+	@echo "console http://localhost:3000   alert e-mail http://localhost:8025   FHIR http://localhost:8080"
 
-sim:             ## start the 150-patient device fleet simulator
-	$(COMPOSE) --profile sim up -d --build simulator
+seed:            ## load the cohort: registry, FHIR record, guideline index, FHIR subscriptions
+	$(COMPOSE) --profile seed run --rm seed
 
-sim-auto:        ## simulator with ~6 random deterioration scenarios per hour
-	RPM_SIM_AUTO_SCENARIOS=6 $(COMPOSE) --profile sim up -d --build simulator
+sim:             ## start the simulated devices (ICU monitors for admitted patients, wearables at home)
+	$(COMPOSE) --profile sim up -d simulator
 
-scenario:        ## inject a scenario: make scenario P=p-90000001 S=sepsis [RAMP=90]
-	$(COMPOSE) --profile sim exec simulator rpm-sim scenario --target $(P) --type $(S) $(if $(RAMP),--ramp-s $(RAMP),)
+sim-stop:        ## stop the simulated devices
+	$(COMPOSE) --profile sim stop simulator
 
-clear:           ## clear a patient's scenario: make clear P=p-90000001
-	$(COMPOSE) --profile sim exec simulator rpm-sim clear --target $(P)
+scenario:        ## make a patient deteriorate: make scenario P=p-90000001 S=sepsis [RAMP=60]
+	$(SIM) scenario --target $(P) --type $(S) $(if $(RAMP),--ramp-s $(RAMP),)
 
-scenarios:       ## list available scenarios
-	uv run rpm-sim scenarios
+clear:           ## end a patient's scenario: make clear P=p-90000001
+	$(SIM) clear --target $(P)
 
-cohort:          ## print the deterministic demo cohort
-	uv run rpm-sim cohort
+scenarios:       ## list the scenarios
+	@$(SIM) scenarios
 
-audit-export:    ## export settled audit_log rows as FHIR AuditEvent NDJSON (hash-chained) to data/audit/
-	uv run rpm-audit-export --dest data/audit
+cohort:          ## list the monitored patients
+	@$(SIM) cohort --mimic-dir $(MIMIC)
 
-stats:           ## pipeline stats (latency, bands, events)
-	@TOKEN=$$(curl -s -XPOST localhost:8000/api/auth/dev/token -H content-type:application/json \
-	  -d '{"username":"ops.cli","role":"admin"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') && \
-	  curl -s localhost:8000/api/stats -H "authorization: Bearer $$TOKEN" | python3 -m json.tool
+send:            ## send one reading now: make send P=p-90000001 ARGS="--hr 134 --spo2 86"
+	$(SIM) send --target $(P) $(ARGS)
 
-logs:            ## follow platform logs
-	$(COMPOSE) --profile sim logs -f --tail=50 stream-engine alert-service agent-service api simulator
+stats:           ## pipeline numbers (patients streaming, latency, events)
+	@TOKEN=$$(curl -s -X POST localhost:8000/api/auth/dev/token -H 'content-type: application/json' \
+	  -d '{"username":"make","role":"admin"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])'); \
+	curl -s localhost:8000/api/stats -H "authorization: Bearer $$TOKEN" | python3 -m json.tool
 
-ps:
-	$(COMPOSE) --profile sim --profile seed ps
+e2e:             ## end-to-end check of the running local stack
+	uv run python tools/e2e/local_e2e.py
 
-down:            ## stop everything (keeps the database volume)
-	$(COMPOSE) --profile sim --profile seed down
+logs:            ## follow the platform logs
+	$(COMPOSE) logs -f --tail 50 care-api stream-processor risk-service agent-service
 
-reset:           ## stop everything and delete local data
-	$(COMPOSE) --profile sim --profile seed down -v
+ps:              ## container status
+	@$(COMPOSE) --profile sim ps --format 'table {{.Service}}\t{{.Status}}'
 
-# ------------------------------------------------------------------ AWS demo environment
-cloud-up:        ## create/update the AWS environment and deploy (AWS_PROFILE=rpm-capstone; AUTO_APPROVE=1)
-	infra/scripts/cloud-up.sh
+down:            ## stop everything (keeps the data)
+	$(COMPOSE) --profile sim --profile seed down --remove-orphans
 
-cloud-deploy:    ## redeploy images + helm only (infra unchanged)
-	SKIP_INFRA=1 infra/scripts/cloud-up.sh
-
-cloud-down:      ## destroy the AWS environment (stops hourly charges)
-	infra/scripts/cloud-down.sh
-
-cloud-status:    ## pods and recent events in the cluster
-	kubectl -n rpm get pods,svc,jobs && kubectl -n rpm get events --sort-by=.lastTimestamp | tail -15
-
-cloud-board:     ## port-forward the clinician console to http://localhost:3000
-	kubectl -n rpm port-forward svc/console 3000:80
-
-cloud-user:      ## invite a console user (Cognito emails a temporary password): make cloud-user U=nurse.jane E=jane@example.org R=nurse
-	@test -n "$(U)" -a -n "$(E)" -a -n "$(R)" || { echo "usage: make cloud-user U=<username> E=<email> R=nurse|physician|admin|presenter"; exit 2; }
-	POOL=$$(terraform -chdir=infra/terraform/aws output -raw cognito_user_pool_id) && \
-	aws cognito-idp admin-create-user --user-pool-id $$POOL --username $(U) --desired-delivery-mediums EMAIL \
-	  --user-attributes Name=email,Value=$(E) Name=email_verified,Value=true >/dev/null && \
-	aws cognito-idp admin-add-user-to-group --user-pool-id $$POOL --username $(U) --group-name $(R) && \
-	echo "invited $(U) as $(R); Cognito has emailed $(E) a temporary password"
-
-cloud-scenario:  ## inject a scenario on AWS via IoT Core: make cloud-scenario P=p-90000001 S=sepsis [RAMP=90]
-	aws iot-data publish --topic rpm/v1/sim/control --cli-binary-format raw-in-base64-out \
-	  --endpoint-url "https://$$(cat .secrets/iot-endpoint.txt)" \
-	  --payload '{"action":"scenario","target":"$(P)","scenario":"$(S)"$(if $(RAMP),$(comma)"ramp_s":$(RAMP),)}'
-
-comma := ,
+reset:           ## stop everything and delete this stack's local data
+	$(COMPOSE) --profile sim --profile seed down --remove-orphans --volumes

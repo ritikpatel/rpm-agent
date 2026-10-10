@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-# One Dockerfile for every Python service; choose the workspace package with --build-arg PACKAGE=<name>.
+# One image for every Python service and tool in the workspace; each container picks its entry point
+# (stream-processor, risk-service, care-api, agent-service, rpm-sim, rpm-seed, rpm-eval, ...).
 FROM ghcr.io/astral-sh/uv:0.9.28 AS uv
 
 FROM python:3.12-slim AS build
@@ -10,15 +11,14 @@ COPY pyproject.toml uv.lock ./
 COPY libs libs
 COPY services services
 COPY simulator simulator
-COPY edge/icu-gateway edge/icu-gateway
-ARG PACKAGE
+COPY tools tools
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --package "${PACKAGE}"
+    uv sync --frozen --no-dev --no-editable --all-packages
 
 FROM python:3.12-slim
-ARG PACKAGE
-LABEL org.opencontainers.image.title="rpm-${PACKAGE}" org.opencontainers.image.source="rpm-platform"
-RUN useradd --uid 10001 --create-home app && install -d -o app /home/app/data   # data/: volume mount point
+LABEL org.opencontainers.image.title="rpm-platform" org.opencontainers.image.source="rpm-platform"
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 10001 --create-home app && install -d -o app /home/app/data
 COPY --from=build /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 USER 10001
