@@ -1,0 +1,124 @@
+{
+ "window_minutes": 20,
+ "sensor_to_scored": [
+  {
+   "context": "home",
+   "windows": 934,
+   "uplink_p50_s": "0.004",
+   "uplink_p95_s": "0.046",
+   "pipeline_p50_s": "0.018",
+   "pipeline_p95_s": "2.855",
+   "sensor_to_scored_p50_s": "0.024",
+   "sensor_to_scored_p95_s": "3.228",
+   "sensor_to_scored_p99_s": "19.168"
+  },
+  {
+   "context": "icu",
+   "windows": 609,
+   "uplink_p50_s": "0.005",
+   "uplink_p95_s": "0.038",
+   "pipeline_p50_s": "0.018",
+   "pipeline_p95_s": "3.557",
+   "sensor_to_scored_p50_s": "0.024",
+   "sensor_to_scored_p95_s": "4.053",
+   "sensor_to_scored_p99_s": "17.834"
+  }
+ ],
+ "sensor_to_page": [
+  {
+   "channel": "console",
+   "cause": "agent",
+   "pages": 3,
+   "p50_s": "0.259",
+   "p95_s": "0.263",
+   "max_s": "0.263"
+  },
+  {
+   "channel": "email",
+   "cause": "agent",
+   "pages": 3,
+   "p50_s": "0.285",
+   "p95_s": "0.287",
+   "max_s": "0.287"
+  },
+  {
+   "channel": "console",
+   "cause": "event",
+   "pages": 5,
+   "p50_s": "0.340",
+   "p95_s": "1.603",
+   "max_s": "1.624"
+  },
+  {
+   "channel": "email",
+   "cause": "event",
+   "pages": 5,
+   "p50_s": "0.619",
+   "p95_s": "1.637",
+   "max_s": "1.655"
+  },
+  {
+   "channel": "watch",
+   "cause": "event",
+   "pages": 2,
+   "p50_s": "1.202",
+   "p95_s": "1.611",
+   "max_s": "1.656"
+  },
+  {
+   "channel": "console",
+   "cause": "timer",
+   "pages": 3,
+   "p50_s": "0.280",
+   "p95_s": "0.781",
+   "max_s": "0.837"
+  },
+  {
+   "channel": "email",
+   "cause": "timer",
+   "pages": 3,
+   "p50_s": "0.335",
+   "p95_s": "1.486",
+   "max_s": "1.614"
+  }
+ ],
+ "agent_runs": [
+  {
+   "trigger": "alert",
+   "provider": "bedrock",
+   "runs": 3,
+   "p50_s": "49.7",
+   "p95_s": "59.6",
+   "avg_input_tokens": "32006",
+   "avg_output_tokens": "4403"
+  },
+  {
+   "trigger": "discharge",
+   "provider": "bedrock",
+   "runs": 1,
+   "p50_s": "63.6",
+   "p95_s": "63.6",
+   "avg_input_tokens": "30831",
+   "avg_output_tokens": "5493"
+  },
+  {
+   "trigger": "monitor",
+   "provider": "bedrock",
+   "runs": 6,
+   "p50_s": "35.5",
+   "p95_s": "37.3",
+   "avg_input_tokens": "17591",
+   "avg_output_tokens": "2958"
+  },
+  {
+   "trigger": "reply",
+   "provider": "offline",
+   "runs": 6,
+   "p50_s": "0.0",
+   "p95_s": "0.1",
+   "avg_input_tokens": null,
+   "avg_output_tokens": null
+  }
+ ],
+ "target": "sensor reading to page, p95 under 5 seconds"
+}

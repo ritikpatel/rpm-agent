@@ -32,7 +32,7 @@ class CareSettings(BaseServiceSettings):
     smtp_port: int = 1025
     tick_s: float = 1.0
     dispatch_settle_s: float = 0.25
-    agent_debounce_s: int = 120        # at most one "monitor" agent run per patient in this window
+    agent_debounce_s: int = 600        # at most one agent run per patient in this window, unless severity rose
 
     # guideline search
     embeddings: str = "hash"           # hash (offline, deterministic) | titan (Amazon Bedrock)
