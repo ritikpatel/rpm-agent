@@ -57,6 +57,9 @@ DEVICE_EVENT_POLICY: dict[str, tuple[str, bool, int]] = {
     "DEVICE_STATUS": ("low", False, 3600),
 }
 SUPPRESS_S: dict[str, int] = {"DATA_GAP": 1800, "NEWS2_RISING": 1800, "DEVICE_SILENT": 3600}
+# A record that waited longer than this between IoT ingest and processing belongs to a backlog. The ingest queue
+# does not hand a backlog out in order, so "sequence numbers are missing" proves nothing until it has drained.
+CATCH_UP_S = 5.0
 
 
 @dataclass
@@ -66,6 +69,7 @@ class Batch:
     events: list[ClinicalEvent] = field(default_factory=list)
     live: list[dict] = field(default_factory=list)
     processed: list[str] = field(default_factory=list)
+    claimed: list[tuple[str, str]] = field(default_factory=list)  # suppression slots taken by this batch
 
 
 def _flatten(m: Metrics) -> dict[str, tuple[float | str, float | None]]:
@@ -129,8 +133,14 @@ class Processor:
             except (ValidationError, KeyError, TypeError, ValueError) as exc:
                 M.RECORDS.labels(rec.get("kind", "?"), "invalid").inc()
                 log.warning("invalid record skipped", extra={"msg_id": msg_id, "error": str(exc)[:300]})
-        self.pg.write(b.vitals, b.status, b.events)
-        self.sqs.emit(b.events)
+        try:
+            self.pg.write(b.vitals, b.status, b.events)
+            self.sqs.emit(b.events)
+        except Exception:
+            # Not delivered: free the suppression slots this batch took, or the retry would find its own events
+            # already "emitted" and swallow them (a duplicate event is safe; a dropped alert is not).
+            self.state.release_emit(b.claimed)
+            raise
         self.state.mark_seen(b.processed)
         self.state.publish_live(b.live)
         M.BATCH_SECONDS.observe(time.perf_counter() - t0)
@@ -151,7 +161,8 @@ class Processor:
         flat = _flatten(t.metrics)
         th = default_thresholds(ref.condition, ctx).merged(ref.thresholds)
 
-        self._check_sequence(ref, t.device_id, t.seq, buffered, wend, b)
+        catching_up = (_secs(meta.ingest_at, self.clock()) or 0.0) > CATCH_UP_S
+        self._check_sequence(ref, t.device_id, t.seq, buffered or catching_up, wend, b)
         late = False
         if not spot:  # on-demand spot checks interleave with windows and must not reorder them
             prev_end = self.state.swap_max(f"wend:{t.device_id}", int(wend.timestamp() * 1000))
@@ -229,10 +240,12 @@ class Processor:
                        "buffered": buffered, "late": late})
         self._observe_latency(t, meta, processed_at, ctx, buffered)
 
-    def _check_sequence(self, ref: PatientRef, device_id: str, seq: int, buffered: bool, occurred: datetime,
+    def _check_sequence(self, ref: PatientRef, device_id: str, seq: int, unordered: bool, occurred: datetime,
                         b: Batch) -> None:
+        """Advance the device's sequence high-water mark; report a gap only where arrival order can be trusted
+        (not for store-and-forward backfill, not while draining a backlog)."""
         prev = self.state.swap_max(f"seq:{device_id}", seq)
-        if prev is None or buffered:
+        if prev is None or unordered:
             return
         missing = seq - prev - 1
         if missing >= self.gap_tolerance:
@@ -289,6 +302,8 @@ class Processor:
         if not self.state.should_emit(ref.patient_id, f.type, SEVERITY_RANK[f.severity], ttl):
             M.SUPPRESSED.labels(f.type).inc()
             return
+        if ttl > 0:
+            b.claimed.append((ref.patient_id, f.type))
         ev = ClinicalEvent(patient_id=ref.patient_id, device_id=device_id, context=ref.context, type=f.type,
                            severity=f.severity, occurred_at=occurred, detected_at=self.clock(), rule_id=f.rule_id,
                            summary=f.summary, requires_alert=f.requires_alert, evidence=f.evidence, news2=news2,

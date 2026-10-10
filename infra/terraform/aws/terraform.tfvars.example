@@ -1,9 +1,10 @@
-region             = "us-east-1"
+region             = "ap-southeast-2"
 environment        = "demo"
 admin_cidrs        = ["203.0.113.10/32"] # your public IP; `curl -s ifconfig.me`
-node_capacity_type = "ON_DEMAND"          # SPOT during development
+node_capacity_type = "ON_DEMAND"          # SPOT during development (not on the Free plan of the new AWS experience)
 budget_email       = "you@example.com"
 budget_limit_usd   = 150
 
 # ICU bedside gateway: false = pod on EKS (default), true = Greengrass v2 core on a t4g.small
+# (Greengrass needs advanced features in the new AWS experience)
 # enable_greengrass_core = true

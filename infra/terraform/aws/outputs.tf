@@ -14,8 +14,8 @@ output "iot_endpoint" {
   value = data.aws_iot_endpoint.ats.endpoint_address
 }
 
-output "kinesis_stream" {
-  value = aws_kinesis_stream.telemetry.name
+output "telemetry_queue" {
+  value = aws_sqs_queue.q["rpm-telemetry"].name
 }
 
 output "queues" {

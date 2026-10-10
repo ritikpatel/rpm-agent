@@ -1,6 +1,7 @@
 variable "region" {
-  type    = string
-  default = "us-east-1"
+  description = "The project's selected Region. In the new AWS experience every Regional resource must live here."
+  type        = string
+  default     = "ap-southeast-2"
 }
 
 variable "environment" {
@@ -25,7 +26,7 @@ variable "node_instance_types" {
 }
 
 variable "node_capacity_type" {
-  description = "ON_DEMAND for demo-day reliability; SPOT to cut cost during development."
+  description = "ON_DEMAND for demo-day reliability. SPOT cuts cost during development but is denied on the Free plan of the new AWS experience."
   type        = string
   default     = "ON_DEMAND"
 }
@@ -49,11 +50,6 @@ variable "db_instance_class" {
 variable "redis_node_type" {
   type    = string
   default = "cache.t4g.micro"
-}
-
-variable "kinesis_shards" {
-  type    = number
-  default = 1
 }
 
 variable "demo_device_id" {
@@ -86,7 +82,7 @@ variable "icu_gateway_id" {
 }
 
 variable "enable_greengrass_core" {
-  description = "Run the ICU gateway as a Greengrass v2 component on an EC2 core device (adds ~$0.02/h) instead of as a pod on EKS."
+  description = "Run the ICU gateway as a Greengrass v2 component on an EC2 core device (adds ~$0.02/h) instead of as a pod on EKS. Greengrass is not available in the new AWS experience without advanced features: keep false there."
   type        = bool
   default     = false
 }

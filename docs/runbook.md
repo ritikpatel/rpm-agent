@@ -19,7 +19,10 @@ assume the repository root.
    - Sensor→page p95 below 5 s, and end-to-end p95 below 3 s.
    - "Failed pages" is 0.
    - "ICU backlog" is 0.
-2. **Kinesis consumer lag:** `rpm_kinesis_millis_behind_latest` is close to 0.
+2. **Ingest queue** (stream-engine metrics):
+   - lag `rpm_ingest_queue_age_seconds` is close to 0;
+   - `rpm_ingest_queue_depth{queue="dlq"}` is 0 (anything there was not processed);
+   - the archiver's `rpm_archive_last_flush_timestamp_seconds` is under 2 minutes old while devices are sending.
 3. **Audit export:** the latest row in `audit_exports` is under 2 h old. The CronJob `audit-export` succeeded in its last run.
 4. **Budget:** the AWS budget alarm e-mail is quiet.
 
@@ -51,8 +54,27 @@ assume the repository root.
 ### Stream lag or stream engine down
 
 1. `kubectl -n rpm get pods` and `kubectl -n rpm logs deploy/stream-engine`.
-2. Restart it if needed. Processing resumes from the Kinesis checkpoint in Postgres, with no loss or duplicates (chaos experiment `stream-engine-kill`).
-3. Kinesis keeps records for 24 h; lag beyond that loses data.
+2. Restart it if needed. Messages wait on the SQS queue `rpm-telemetry` and are processed on restart, with no loss or duplicates (chaos experiment `stream-engine-kill`).
+   - The batch in flight at a hard kill returns after the queue's visibility timeout (60 s). Those windows are stored with `late = true` and are not applied to live state.
+   - While catching up, the engine holds back half of each batch to restore order (`rpm_ingest_reorder_held`).
+3. Run exactly one stream-engine replica. Per-device state is read-modify-write, so two consumers would race (ADR 0014).
+4. The queue keeps messages for 4 days; lag beyond that loses data.
+
+### Messages in a dead-letter queue
+
+`rpm_ingest_queue_depth{queue="dlq"}` above 0, or messages in `rpm-telemetry-archive-dlq`.
+
+1. A message lands there after 10 failed receives. Postgres or Redis being down does not cause this: the engine stops receiving until they answer.
+2. Look at one message and at the engine log line `record failed; left on the queue` (it carries the `msg_id`):
+   `aws sqs receive-message --queue-url <dlq-url> --visibility-timeout 0`.
+3. After fixing the cause, move the messages back:
+   `aws sqs start-message-move-task --source-arn <dlq-arn>`. Reprocessing is safe (`msg_id` dedupe).
+
+### Raw archive behind or failing
+
+1. `kubectl -n rpm logs deploy/telemetry-archiver`; check `rpm_archive_failures_total`.
+2. Nothing is lost while it is down: messages wait on `rpm-telemetry-archive` for up to 4 days, and are deleted only after their S3 object is written. The real-time path uses a different queue and is unaffected.
+3. After a crash the same records can be archived twice. Readers of the lake de-duplicate on `msg_id`.
 
 ### LLM or Bedrock unavailable
 
@@ -71,6 +93,36 @@ assume the repository root.
 1. Create a new certificate and attach it to the thing and policy. Provision the device (`provision.sh aws`).
 2. Confirm it connects: IoT Core logs, or new rows in `vitals`.
 3. Deactivate, then delete, the old certificate.
+
+## AWS plan limits (new AWS experience, Free plan)
+
+The demo project is a "new AWS experience" project on the Free plan (US$100 of credits; the plan ends
+2027-04-10). Its managed policies cannot be changed. Checked on 2026-10-10 with the project's own credentials;
+re-check with `aws freetier get-account-plan-state --profile rpm-capstone` and the
+[managed policies](https://docs.aws.amazon.com/accounts/latest/reference/scps-and-rcps-for-projects.html).
+
+| Limit | What the platform does |
+|---|---|
+| Kinesis Data Streams and Amazon Data Firehose are Paid-plan services (explicit deny) | Device ingest runs on SQS with an in-cluster S3 archiver (ADR 0014) |
+| One Region per project: `ap-southeast-2` here | Terraform, Helm and the scripts take the Region from the CLI profile; nothing is created elsewhere |
+| IAM identity providers cannot be created | EKS Pod Identity for every workload; the cluster is created with `enable_irsa = false` |
+| Spot instances are denied | `node_capacity_type = "ON_DEMAND"` (the default) |
+| AWS IoT Greengrass is not supported | ICU gateway runs as a pod (`icuGateway.mode=container`, the default). Keep `enable_greengrass_core = false` |
+| AWS End User Messaging (SMS) is a Paid-plan service; the SNS SMS calls are denied with it | `alertService.smsBackend: log` (the default). Pages go by e-mail, console and watch |
+| SES starts in the sandbox | Verify the sender and every care-team address, or request production access |
+| Claude on Bedrock needs Anthropic's one-time use-case form, which this project has not submitted | Agents fall back to their offline path. Until access is granted, deploy with `LLM_PROVIDER=offline` (or `anthropic` with an API key) to avoid a failed call per run. See below |
+| No HIPAA BAA in this experience | Synthetic data only (`docs/security/compliance-matrix.md`) |
+
+**Claude on Bedrock, once access is granted.** In `ap-southeast-2` the Claude models are offered through
+inference profiles (`au.anthropic.claude-opus-5` stays in Australia; `global.anthropic.claude-opus-5` may route
+anywhere). On 2026-10-10 neither the Bedrock Mantle endpoint nor `bedrock-runtime` would serve a Claude model to
+this project, so which client and model ID work here is still untested. Check with one request before a demo and
+set `agentService.llmModel` accordingly.
+
+**Cost.** `cloud-up` prints the plan and the remaining credits before it creates anything. The estimate of about
+US$10/day while the environment is up was made with `us-east-1` prices and has not been re-measured in
+`ap-southeast-2`; check AWS Settings > Billing after the first session. Run `make cloud-down` after every
+session.
 
 ## Evaluation and verification
 

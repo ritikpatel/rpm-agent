@@ -37,8 +37,8 @@ flowchart LR
     GW -->|MQTT mTLS / IPC| IOT
   end
   subgraph AWS
-    IOT[AWS IoT Core<br/>rule adds thing + ingest time] --> KIN[Kinesis] --> SE["stream-engine<br/>validate · dedupe · NEWS2 · rules"]
-    IOT --> FH[Firehose → S3 lake]
+    IOT[AWS IoT Core<br/>rule adds thing + ingest time] --> QI[SQS telemetry] --> SE["stream-engine<br/>validate · dedupe · NEWS2 · rules"]
+    IOT --> QA[SQS telemetry-archive] --> AR[telemetry-archiver] --> LK[(S3 lake<br/>gzip NDJSON)]
     SE --> PG[(RDS Postgres + pgvector)]
     SE --> RS[(ElastiCache Redis)]
     SE --> SQ1[SQS alert-intake] --> AS["alert-service<br/>one alert per patient · escalation · outbox"]
@@ -62,7 +62,7 @@ flowchart LR
 | Watch app | Sensor windows (30/15/5 s by profile), signal quality, on-device rules and haptics, SOS, check-ins | Samsung SDK, Health Services or scripted sources; works offline | `edge/android/wear` |
 | Phone gateway | IoT identity, durable outbox, relays commands to the watch | SQLite outbox, mTLS | `edge/android/phone` |
 | ICU gateway | HL7 v2 to canonical telemetry, bedside NEWS2 and alarms, store-and-forward | Relays for registered beds only; drops PID segments; retained per-bed config from the cloud | `edge/icu-gateway` |
-| IoT Core + rule | Device authentication, topic authorisation, fan-out to Kinesis and the S3 archive | Topic is authoritative (`topic(4)` becomes the thing) | `infra/terraform/aws/iot.tf` |
+| IoT Core + rule | Device authentication, topic authorisation, fan-out to the ingest queue and the archive queue | Topic is authoritative (`topic(4)` becomes the thing) | `infra/terraform/aws/iot.tf` |
 | stream-engine | Validates, de-duplicates, resolves device to patient, scores NEWS2, runs rules, persists, emits clinical events | Exactly-once effects; per-patient NEWS2 baseline, activity context and persistence | `services/stream-engine`, `libs/rpm_features` |
 | alert-service | Opens or updates one alert per patient; pages the tier for its severity; timed escalation and reminders | Postgres timers (`SKIP LOCKED`), transactional outbox, pages coalesced per burst | `services/alert-service`, `libs/rpm_alerts` |
 | agent-service | Assess, apply the policy gate, act (device commands, escalate), then write a cited SBAR brief | Claude on Bedrock or the API; offline fallback; one run per burst | `services/agent-service` |
@@ -77,7 +77,7 @@ flowchart LR
 sequenceDiagram
   participant W as Watch
   participant I as IoT Core
-  participant K as Kinesis
+  participant K as SQS
   participant S as stream-engine
   participant A as alert-service
   participant G as agent-service
@@ -85,7 +85,7 @@ sequenceDiagram
   W->>W: 30 s window, quality, edge rules (window_end)
   W->>I: rpm.telemetry.v1 (edge_sent)
   I->>K: + thing, ingest_ts
-  K->>S: batch (poll 1 s)
+  K->>S: batch (long poll: returns on arrival)
   S->>S: NEWS2, rules (processed_at)
   S-->>A: clinical event (requires_alert)
   S-->>G: clinical event
@@ -110,7 +110,7 @@ The dominant hop is the stream engine's 1 s Kinesis poll.
 | | Local (development and evaluation) | AWS demo (`make cloud-up`) |
 |---|---|---|
 | Devices | Wear OS emulator or Galaxy Watch; 149-device simulator | Same simulator (in EKS); watch provisioned with an IoT certificate |
-| Ingest | Mosquitto (plain, plus mTLS on 8883), rule emulator, kinesis-mock | IoT Core, IoT rule, Kinesis, Firehose to S3 |
+| Ingest | Mosquitto (plain, plus mTLS on 8883), rule emulator, ElasticMQ, archiver to `data/lake` | IoT Core, IoT rule, two SQS queues, archiver to S3 |
 | Compute | docker compose | EKS 1.33 on Graviton (arm64) managed nodes (ADR 0006); ICU gateway as a pod or on a Greengrass core (t4g.small) |
 | Data | Postgres + pgvector, Redis, HAPI FHIR, ElasticMQ | RDS Postgres, ElastiCache, HAPI FHIR on EKS, SQS |
 | Identity | API-minted dev tokens (same verification path) | Cognito user pool, IoT X.509, EKS Pod Identity |
@@ -128,9 +128,9 @@ bucket.
 | Alert latency | Sensor → page p95 < 5 s | Deterministic rules on the stream; alert outbox; 0.25 s coalescing | Grafana; evaluation §2 |
 | Alert quality | < 1 alert per patient-day at home, with sensitivity kept | Activity context, personal NEWS2 baseline, persistence, one alert per patient | Replay: 0.66 per patient-day, 35/36 (evaluation §1) |
 | Availability of the safety net | Pages without the LLM | Rules path independent of agents; SQS retention | Chaos `agent-down` |
-| No data loss | Zero loss through network, broker or consumer outages | Edge outboxes, QoS 1, Kinesis checkpoint, dedupe | Chaos `broker-outage`, `stream-engine-kill` |
+| No data loss | Zero loss through network, broker or consumer outages | Edge outboxes, QoS 1, SQS redelivery with dead-letter queues, dedupe on `msg_id` | Chaos `broker-outage`, `stream-engine-kill`, `archiver-kill` |
 | Security and privacy | HIPAA- and GDPR-aligned | mTLS, KMS everywhere, Cognito + RBAC, NetworkPolicies, WORM audit | `security/` |
-| Scalability | 10k devices (AWS) | Kinesis shards, stateless consumers with Redis state, IoT Core | Load test (evaluation §4) |
+| Scalability | 10k devices (AWS) | SQS (no shard limit), parallel batched receives, one consumer with Redis state, IoT Core | Load test (evaluation §4) |
 | Cost | Demo ≤ about US$10/day, torn down after use | Graviton, single NAT, on-demand EKS, budget alarm | `security.tf` budget |
 
 ## 7. Key decisions
@@ -138,7 +138,7 @@ bucket.
 | ADR | Decision |
 |---|---|
 | [0001](adr/0001-deterministic-safety-net.md) | Rules page; the LLM never gates an alert |
-| [0002](adr/0002-event-bus-and-consumer.md) | Kinesis with a custom consumer; SQS for work queues |
+| [0002](adr/0002-event-bus-and-consumer.md) | *(superseded by 0014)* Kinesis with a custom consumer; SQS for work queues |
 | [0003](adr/0003-local-emulators.md) | Open-source local emulators instead of LocalStack |
 | [0004](adr/0004-news2-for-wearables.md) | NEWS2, including partial scoring for wearables |
 | [0005](adr/0005-device-identity-and-phi.md) | One thing per device; topic is authoritative; no PHI on the wire |

@@ -55,5 +55,5 @@ class TitanEmbedder:
         return out
 
 
-def make_embedder(provider: str, region: str = "us-east-1") -> Embedder:
+def make_embedder(provider: str, region: str = "ap-southeast-2") -> Embedder:
     return TitanEmbedder(region) if provider == "titan" else HashEmbedder()

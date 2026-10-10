@@ -18,12 +18,22 @@ locals {
     { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.data.arn },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.data.arn}/*" },
   ]
+  sqs_consume = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueUrl",
+  "sqs:GetQueueAttributes"]
   workloads = {
     "stream-engine" = [
-      { Effect = "Allow", Action = ["kinesis:GetRecords", "kinesis:GetShardIterator", "kinesis:DescribeStreamSummary",
-      "kinesis:ListShards"], Resource = aws_kinesis_stream.telemetry.arn },
+      { Effect = "Allow", Action = local.sqs_consume, Resource = aws_sqs_queue.q["rpm-telemetry"].arn },
+      # depth of the dead-letter queue is exported as a metric: anything there was not processed
+      { Effect = "Allow", Action = ["sqs:GetQueueUrl", "sqs:GetQueueAttributes"],
+      Resource = aws_sqs_queue.dlq["rpm-telemetry"].arn },
       { Effect = "Allow", Action = ["sqs:SendMessage", "sqs:GetQueueUrl"],
-      Resource = [for q in aws_sqs_queue.q : q.arn] },
+      Resource = [aws_sqs_queue.q["rpm-clinical-events"].arn, aws_sqs_queue.q["rpm-alert-intake"].arn] },
+      local.kms_use,
+    ]
+    "telemetry-archiver" = [
+      { Effect = "Allow", Action = local.sqs_consume, Resource = aws_sqs_queue.q["rpm-telemetry-archive"].arn },
+      # write-only on the raw telemetry prefix of the lake
+      { Effect = "Allow", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.lake.arn}/telemetry/*" },
       local.kms_use,
     ]
     "simulator" = concat(local.data_read, [local.kms_use])

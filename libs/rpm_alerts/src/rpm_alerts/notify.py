@@ -49,7 +49,7 @@ class EmailChannel:
     name = "email"
 
     def __init__(self, backend: str, sender: str, smtp_host: str = "localhost", smtp_port: int = 1025,
-                 region: str = "us-east-1"):
+                 region: str = "ap-southeast-2"):
         self.backend, self.sender = backend, sender
         self.smtp_host, self.smtp_port = smtp_host, smtp_port
         if backend == "ses":
@@ -85,7 +85,7 @@ class EmailChannel:
 class SmsChannel:
     name = "sms"
 
-    def __init__(self, backend: str, region: str = "us-east-1"):
+    def __init__(self, backend: str, region: str = "ap-southeast-2"):
         self.backend = backend
         if backend == "sns":
             import boto3

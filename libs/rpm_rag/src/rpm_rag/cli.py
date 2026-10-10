@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--database-url", default=os.environ.get("RPM_DATABASE_URL",
                                                              "postgresql://rpm:rpm@localhost:5432/rpm"))
     ap.add_argument("--embeddings", default=os.environ.get("RPM_EMBEDDINGS", "hash"), choices=["hash", "titan"])
-    ap.add_argument("--region", default=os.environ.get("RPM_AWS_REGION", "us-east-1"))
+    ap.add_argument("--region", default=os.environ.get("RPM_AWS_REGION", "ap-southeast-2"))
     ap.add_argument("--fhir-url", default=os.environ.get("RPM_FHIR_BASE_URL"))
     a = ap.parse_args(argv)
     setup_logging("rpm-rag", os.environ.get("RPM_LOG_LEVEL", "INFO"))

@@ -46,5 +46,5 @@ Run it twice before the day, with a dry run on the target environment (AWS or lo
 | "How do you know it is not just noise?" | Evaluation report §1 (replay with ground truth; PPV, burden, the sweep) |
 | "What if the LLM hallucinates?" | Guardrail red-team set 13/13; citation checker; the LLM can never page or lower severity (ADR 0001, 0007) |
 | "HIPAA?" | `docs/security/compliance-matrix.md`, threat model, audit export |
-| "Scale?" | Load test locally; AWS sizing in evaluation §4; Kinesis shards and stateless consumers |
+| "Scale?" | Load test locally; AWS sizing in evaluation §4; SQS ingest with batched parallel receives (ADR 0014) |
 | "Where do the data team's models go?" | ADR 0009: ONNX package contract, `validated` flag, FHIR RiskAssessment |

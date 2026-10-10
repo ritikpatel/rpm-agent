@@ -13,5 +13,7 @@ scrape_configs:
         labels: { service: alert-service }
       - targets: ["agent-service:9104"]
         labels: { service: agent-service }
+      - targets: ["telemetry-archiver:9105"]
+        labels: { service: telemetry-archiver }
       - targets: ["icu-gateway:9110"]
         labels: { service: icu-gateway }

@@ -36,7 +36,7 @@ class LLMResult:
 
 
 class ClaudeClient:
-    def __init__(self, provider: str, model: str = "claude-opus-5", region: str = "us-east-1",
+    def __init__(self, provider: str, model: str = "claude-opus-5", region: str = "ap-southeast-2",
                  bedrock_fallback_model: str = "claude-opus-4-8", timeout_s: float = 90):
         import anthropic
 
@@ -44,7 +44,9 @@ class ClaudeClient:
         self.provider = provider
         if provider == "bedrock":
             def prefixed(m: str) -> str:
-                return m if m.startswith("anthropic.") else f"anthropic.{m}"
+                # bare names get the provider prefix; full ids, including inference profiles such as
+                # "au.anthropic.claude-opus-5", pass through unchanged
+                return m if "anthropic." in m else f"anthropic.{m}"
 
             self.model = prefixed(model)
             self.client = anthropic.AnthropicBedrockMantle(

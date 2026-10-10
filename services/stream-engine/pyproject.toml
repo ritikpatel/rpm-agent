@@ -1,12 +1,13 @@
 [project]
 name = "stream-engine"
 version = "0.1.0"
-description = "Kinesis consumer: validate, dedupe, device->patient, NEWS2, deterministic rules, persist, emit clinical events"
+description = "SQS ingest consumer: validate, dedupe, device->patient, NEWS2, deterministic rules, persist, emit clinical events; plus the S3 telemetry archiver"
 requires-python = ">=3.12"
 dependencies = ["rpm-contracts", "rpm-features", "rpm-common"]
 
 [project.scripts]
 stream-engine = "stream_engine.main:main"
+rpm-telemetry-archiver = "stream_engine.archive:main"
 
 [tool.uv.sources]
 rpm-contracts = { workspace = true }

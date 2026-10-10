@@ -18,7 +18,7 @@ discharge on its own. For attack-oriented analysis see [threat-model.md](threat-
 | (a)(6) Security incident procedures | Runbook: alert storm, device compromise (revoke certificate), stream lag, LLM outage | `docs/runbook.md` |
 | (a)(7) Contingency plan | RDS automated backups; infrastructure as code (`cloud-up` rebuilds from scratch); durable edge outboxes; the deterministic safety net keeps alerting without the LLM (chaos-tested) | `data.tf`, `infra/scripts`, `eval/results/chaos.json` |
 | (a)(8) Evaluation | Evaluation report: replay (alarm burden, sensitivity), chaos, load, latency | `docs/evaluation-report.md` |
-| (b)(1) Business associate contracts | AWS BAA covers the HIPAA-eligible services used: IoT Core, Kinesis, S3, RDS, ElastiCache, SQS, SES, SNS, EKS, Cognito, Bedrock, KMS, CloudTrail | **Org:** accept the AWS BAA in AWS Artifact before real PHI |
+| (b)(1) Business associate contracts | The services used are HIPAA-eligible: IoT Core, SQS, S3, RDS, ElastiCache, SES, SNS, EKS, Cognito, Bedrock, KMS, CloudTrail. **The demo project cannot sign a BAA:** it is a new-AWS-experience project, where the agreement is not offered (its managed policy denies accepting it), so it must hold synthetic data only. | **Org:** before real PHI, deploy to a standard AWS account and accept the AWS BAA in AWS Artifact |
 
 ### Physical safeguards (§164.310)
 
@@ -33,7 +33,7 @@ discharge on its own. For attack-oriented analysis see [threat-model.md](threat-
 |---|---|---|
 | (a)(1) Access control: unique user identification | Cognito users; the API authenticates every request with a verified access token and records the username and subject | `auth.py` |
 | (a)(2)(iii) Automatic logoff | Access tokens last 60 minutes and refresh tokens 12 hours (one shift); the session lives in the tab (`sessionStorage`) and is cleared on sign-out or when the tab closes | `cognito.tf`, `auth.ts` |
-| (a)(2)(iv) Encryption and decryption | KMS for RDS, S3, Kinesis, SQS, ElastiCache, Secrets Manager, logs and EBS | `security.tf` and all data resources |
+| (a)(2)(iv) Encryption and decryption | KMS for RDS, S3, SQS, ElastiCache, Secrets Manager, logs and EBS | `security.tf` and all data resources |
 | (b) Audit controls | `audit_log` records every PHI read and action and is append-only through a trigger; hourly hash-chained export to S3 Object Lock as FHIR AuditEvent; CloudTrail with log-file validation | `0005_audit_hardening.sql`, `audit_export.py`, `audit.tf` |
 | (c)(1) Integrity | Object Lock (WORM) for audit; hash chain across export batches; the IoT policy pins each device to its topics; contract validation rejects malformed data | as above; `contracts/` |
 | (d) Person or entity authentication | Clinicians: Cognito with optional TOTP MFA (**Org:** set MFA to ON). Devices: an X.509 certificate per thing, with mutual TLS. | `cognito.tf`, `iot.tf` |
@@ -61,7 +61,7 @@ discharge on its own. For attack-oriented analysis see [threat-model.md](threat-
 | 30 | Records of processing | **Org** (a template is provided by the data-flow section of the threat model) | `threat-model.md` |
 | 33–34 | Breach notification | Runbook incident steps; CloudTrail and audit evidence to scope a breach | `docs/runbook.md` |
 | 35 | DPIA | Threat model and this matrix are inputs. **Org:** a formal DPIA before real patients. | – |
-| 44–49 | International transfers | Single region (us-east-1 in the demo). For UAE or EU patients, deploy to `me-central-1` or an EU region: the IaC is region-parameterised. | `variables.tf` |
+| 44–49 | International transfers | Single Region (`ap-southeast-2`, Sydney, in the demo: the project's assigned Region). For UAE or EU patients, deploy to `me-central-1` or an EU Region from a standard AWS account: the IaC is Region-parameterised. With Claude on Bedrock, the `au.` inference profile keeps inference in Australia; the `global.` profile does not. | `variables.tf`, `docs/runbook.md` |
 
 ## What is out of scope for software
 

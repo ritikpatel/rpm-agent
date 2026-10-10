@@ -35,8 +35,9 @@ libs/rpm_rag            protocol corpus, discharge summaries, embeddings, hybrid
 simulator/              150-patient device fleet: ICU replay (sent as HL7 to the ICU gateway), home wearables, scenarios
 edge/android            Wear OS watch app + phone gateway + shared Kotlin edge core; provision.sh (mTLS identity)
 edge/icu-gateway        ICU bedside gateway: HL7 v2 (MLLP) -> bedside NEWS2/alarms -> outbox -> AWS IoT (Greengrass)
-services/iot-bridge     LOCAL ONLY: emulates the IoT Core topic rule (MQTT -> Kinesis)
-services/stream-engine  Kinesis consumer: validate, dedupe, NEWS2, rules, persist, emit clinical events
+services/iot-bridge     LOCAL ONLY: emulates the IoT Core topic rule (MQTT -> SQS ingest + archive queues)
+services/stream-engine  SQS ingest consumer: validate, dedupe, NEWS2, rules, persist, emit clinical events;
+                        second entrypoint `rpm-telemetry-archiver`: raw telemetry -> gzip NDJSON in the S3 lake
 services/fhir-loader    cohort -> HAPI FHIR R4 (LOINC/ICD/SNOMED) + device registry seeding
 services/api            REST + WebSocket live feed, clinical workflow endpoints, ops live board
 services/model-serving  ONNX risk models + occlusion explanations + FHIR RiskAssessment
@@ -46,7 +47,7 @@ apps/clinician-console  React console: alert inbox, patient census, vitals, brie
 models/                 baseline training + model package contract     knowledge/  demo clinical protocols
 deploy/compose          local stack (+ observability: Prometheus, Grafana dashboards as code)
 deploy/helm/rpm         Kubernetes chart      deploy/docker   image build
-infra/terraform         AWS (VPC, EKS, RDS, ElastiCache, IoT Core, Greengrass core, Kinesis, Firehose, SQS, S3, KMS, ECR)
+infra/terraform         AWS (VPC, EKS, RDS, ElastiCache, IoT Core, SQS, S3, KMS, ECR, Cognito; optional Greengrass core)
 infra/scripts           cloud-up.sh / cloud-down.sh
 eval/                   evaluation harness: replay (alert quality), chaos, load, guardrails, agent audit
 docs/                   plan, HLD, ADRs, evaluation report, security (threat model, compliance), runbook, demo
@@ -94,7 +95,7 @@ make stats                                                # latency p50/p95, NEW
 
 ```bash
 brew install terraform awscli
-export AWS_PROFILE=<profile> AWS_REGION=us-east-1
+export AWS_PROFILE=rpm-capstone        # Region comes from the profile (ap-southeast-2); override with AWS_REGION
 cp infra/terraform/aws/terraform.tfvars.example my.tfvars   # set admin_cidrs, budget_email
 TFVARS=$PWD/my.tfvars make cloud-up    # ~25 min first time: infra, images, secrets, helm, FHIR load
 make cloud-board                       # port-forward the clinician console to http://localhost:3000
@@ -112,12 +113,18 @@ Options:
 - `enable_greengrass_core = true` in the tfvars runs the ICU gateway as a Greengrass v2 component on a t4g.small
   instead of a pod.
 
+The deployment uses only services on the Free plan of the new AWS experience and lives in one Region
+(`ap-southeast-2` for this project). What that plan rules out, and what the platform does instead, is in
+[docs/runbook.md](docs/runbook.md#aws-plan-limits-new-aws-experience-free-plan) and
+[ADR 0014](docs/adr/0014-ingest-on-sqs.md).
+
 ## How a reading flows
 
 1. The watch (or simulator) summarises a 30 s window and publishes `rpm.telemetry.v1` over MQTT (mTLS on AWS).
    ICU monitors send HL7 v2 to the bedside gateway, which windows the readings, raises bedside alarms, and publishes
    for its beds as its own thing.
-2. The IoT rule adds `thing` (taken from the topic) and `ingest_ts_ms`, then writes to Kinesis and archives to S3.
+2. The IoT rule adds `thing` (taken from the topic) and `ingest_ts_ms`, then writes the message to two SQS
+   queues: one feeds the stream engine, the other feeds the archiver, which batches raw telemetry into S3.
 3. The stream engine validates the message and de-duplicates it, then resolves device → patient server-side. It
    merges the latest vitals and scores NEWS2, then applies the rules.
 4. Events with `requires_alert` go to the alert queue immediately, and every event also goes to the agent queue.

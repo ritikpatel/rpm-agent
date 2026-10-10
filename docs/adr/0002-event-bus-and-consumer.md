@@ -1,6 +1,9 @@
 # ADR 0002 — IoT Core → Kinesis, with a lightweight checkpointed consumer
 
-**Status:** accepted · 2026-09-25
+**Status:** superseded by [ADR 0014](0014-ingest-on-sqs.md) · 2026-10-10 (accepted 2026-09-25)
+
+The AWS project that hosts the demo is on a plan that does not include Kinesis Data Streams or Amazon Data
+Firehose. The text below is kept as the record of the original decision.
 
 ## Context
 Device messages need durable, ordered-per-device buffering between AWS IoT Core and processing. Options: Kinesis

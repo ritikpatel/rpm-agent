@@ -8,6 +8,9 @@ module "eks" {
   endpoint_public_access                   = true
   endpoint_public_access_cidrs             = var.admin_cidrs
   enable_cluster_creator_admin_permissions = true
+  # Workloads use EKS Pod Identity (iam.tf), so no IAM OIDC provider is needed. Creating one is also denied by the
+  # managed policies of the new AWS experience (iam:*Provider*).
+  enable_irsa = false
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets

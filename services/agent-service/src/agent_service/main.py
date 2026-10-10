@@ -32,7 +32,7 @@ from .graph import AgentGraph, Deps, burst_lead, classify
 from .llm import make_client
 
 log = logging.getLogger("agent_service")
-BURST = timedelta(seconds=5)  # one Kinesis batch is persisted in one transaction; its events share a detected_at
+BURST = timedelta(seconds=5)  # one ingest batch is persisted in one transaction; its events share a detected_at
 RUNS = Counter("rpm_agent_runs_total", "Agent runs", ["trigger", "status"])
 RUN_SECONDS = Histogram("rpm_agent_run_seconds", "Agent run duration", ["trigger"],
                         buckets=(0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60, 120))

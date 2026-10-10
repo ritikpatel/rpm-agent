@@ -19,8 +19,10 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
   value: {{ .Values.aws.region | quote }}
 - name: AWS_REGION
   value: {{ .Values.aws.region | quote }}
-- name: RPM_KINESIS_STREAM
-  value: {{ .Values.config.kinesisStream | quote }}
+- name: RPM_SQS_TELEMETRY_QUEUE
+  value: {{ .Values.config.telemetryQueue | quote }}
+- name: RPM_SQS_ARCHIVE_QUEUE
+  value: {{ .Values.config.archiveQueue | quote }}
 - name: RPM_SQS_CLINICAL_EVENTS_QUEUE
   value: {{ .Values.config.clinicalQueue | quote }}
 - name: RPM_SQS_ALERT_INTAKE_QUEUE

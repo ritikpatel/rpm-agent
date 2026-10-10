@@ -25,4 +25,5 @@ mirrors them as Pydantic models and a test validates every file in `examples/` a
 SELECT *, timestamp() AS ingest_ts_ms, topic(4) AS thing, topic(5) AS kind
 FROM 'rpm/v1/dev/+/+' WHERE topic(5) = 'telemetry' OR topic(5) = 'events'
 ```
-Records go to Kinesis `rpm-telemetry` with partition key `thing` (preserves per-device ordering).
+Records go to the SQS queue `rpm-telemetry` (and to `rpm-telemetry-archive` for the S3 lake). SQS does not order
+messages: consumers order by `ts` and de-duplicate on `msg_id` (ADR 0014).

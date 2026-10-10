@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TF="$ROOT/infra/terraform/aws"
 out() { terraform -chdir="$TF" output -raw "$1"; }
-REGION="${AWS_REGION:-$(out region 2>/dev/null || echo us-east-1)}"
+REGION="${AWS_REGION:-$(out region 2>/dev/null || echo ap-southeast-2)}"
 BUCKET="$(out data_bucket)"
 THING="$(out icu_gateway_id)"
 VERSION="${GG_COMPONENT_VERSION:-0.3.$(date +%s)}"   # immutable component versions: bump every deploy

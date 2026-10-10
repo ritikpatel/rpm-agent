@@ -2,10 +2,11 @@
 # Destroy the AWS demo environment (keeps only the Terraform state bucket). AUTO_APPROVE=1 to skip the prompt.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REGION="${AWS_REGION:-us-east-1}"
+REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || true)}"; REGION="${REGION:-ap-southeast-2}"
 ENVIRONMENT="${RPM_ENV_NAME:-demo}"
 TF=(terraform -chdir="$ROOT/infra/terraform/aws")
 APPROVE=(); [[ "${AUTO_APPROVE:-0}" == "1" ]] && APPROVE=(-auto-approve)
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 
 "${TF[@]}" init -input=false -reconfigure -backend-config="bucket=rpm-tfstate-${ACCOUNT}" \

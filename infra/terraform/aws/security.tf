@@ -44,7 +44,7 @@ data "aws_iam_policy_document" "kms_cloudtrail" {
 }
 
 resource "aws_kms_key" "main" {
-  description             = "${local.name}: RDS, S3, Kinesis, SQS, Secrets Manager, ElastiCache, logs"
+  description             = "${local.name}: RDS, S3, SQS, Secrets Manager, ElastiCache, logs"
   enable_key_rotation     = true
   deletion_window_in_days = 7
   policy                  = data.aws_iam_policy_document.kms_cloudtrail.json

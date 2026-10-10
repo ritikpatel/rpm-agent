@@ -61,7 +61,7 @@ jobs:
         run: |
           ARGS="--set image.registry=x --set simulator.mqttHost=iot.example --set config.redisUrl=r \
                 --set config.mimicDir=s3://b/m --set auth.issuer=i --set auth.clientId=c --set auth.domain=d \
-                --set auditExport.bucket=b"
+                --set auditExport.bucket=b --set telemetryArchiver.bucket=b"
           helm lint deploy/helm/rpm $ARGS
           for mode in container greengrass off; do
             helm template rpm deploy/helm/rpm $ARGS --set icuGateway.mode=$mode \

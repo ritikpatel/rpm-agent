@@ -60,6 +60,10 @@ class FakeState:
             return True
         return False
 
+    def release_emit(self, slots):
+        for pid, etype in slots:
+            self.kv.pop(f"sup:{pid}:{etype}", None)
+
     def publish_live(self, msgs):
         self.live.extend(msgs)
 
@@ -127,6 +131,29 @@ def test_low_spo2_raises_alert_on_both_queues(env):
     assert len(sqs.clinical) == 1 and len(sqs.alert) == 1
     ev = sqs.alert[0]
     assert ev.trace["msg_id"] and ev.news2["total"] >= 3
+
+
+def test_failed_batch_does_not_swallow_its_alert_on_retry(env):
+    """The queue redelivers a batch whose write failed. The first attempt already took the suppression slot for
+    the alert; unless it is given back, the retry treats its own alert as a duplicate and drops it."""
+    proc, _, pg, sqs = env
+    rec = telemetry(metrics={"spo2": {"value": 87, "quality": 0.9}})
+    write, calls = pg.write, {"n": 0}
+
+    def flaky(*args):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("postgres restarted")
+        write(*args)
+
+    pg.write = flaky
+    with pytest.raises(ConnectionError):
+        proc.handle_batch([rec])
+    assert not pg.events and not sqs.alert
+    proc.handle_batch([rec])
+    assert [e.type for e in pg.events] == ["SPO2_LOW"] and len(sqs.alert) == 1 and len(pg.vitals) == 1
+    proc.handle_batch([telemetry(metrics={"spo2": {"value": 87, "quality": 0.9}})])
+    assert len(sqs.alert) == 1  # delivered once: suppression is back in force
 
 
 def test_duplicate_delivery_processed_once(env):
@@ -200,6 +227,17 @@ def test_sequence_gap_detected(env):
     proc.handle_batch([telemetry(end=NOW + timedelta(seconds=30), seq=20)])
     gap = [e for e in pg.events if e.type == "DATA_GAP"]
     assert gap and gap[0].evidence["missing"] == 9 and not gap[0].requires_alert
+
+
+def test_no_gap_event_while_draining_a_backlog(env):
+    """SQS hands a backlog out in rough order only: a jump in sequence numbers there is reordering, not loss."""
+    proc, _, pg, _ = env
+    proc.handle_batch([telemetry(seq=1, end=NOW - timedelta(minutes=5))])
+    waited = telemetry(seq=9, end=NOW - timedelta(minutes=2))  # ingested 2 min before the engine's clock
+    proc.handle_batch([waited])
+    assert len(pg.vitals) == 2 and not [e for e in pg.events if e.type == "DATA_GAP"]
+    proc.handle_batch([telemetry(seq=20, end=NOW)])  # live again: a real gap is reported
+    assert [e.type for e in pg.events] == ["DATA_GAP"]
 
 
 def test_icu_deterioration_scores_full_news2_high(env):

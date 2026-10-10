@@ -22,8 +22,8 @@ models:          ## train/export the baseline risk models into models/registry (
 
 up:              ## start infra + platform services (local stack); LLM: RPM_LLM_PROVIDER=offline|anthropic|bedrock
 	@test -d models/registry || $(MAKE) models
-	$(COMPOSE) up -d --build postgres redis mosquitto kinesis sqs fhir mailpit db-migrate iot-bridge stream-engine \
-	  model-serving alert-service agent-service api console
+	$(COMPOSE) up -d --build postgres redis mosquitto sqs fhir mailpit db-migrate iot-bridge stream-engine \
+	  telemetry-archiver model-serving alert-service agent-service api console
 	@echo "tip: agents run offline (rules + templates) unless RPM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY) or bedrock"
 	@echo "console: http://localhost:3000   live board: http://localhost:8000   email: http://localhost:8025   FHIR: http://localhost:8080/fhir"
 
@@ -73,7 +73,7 @@ reset:           ## stop everything and delete local data
 	$(COMPOSE) --profile sim --profile seed down -v
 
 # ------------------------------------------------------------------ AWS demo environment
-cloud-up:        ## create/update the AWS environment and deploy (AWS_PROFILE, AWS_REGION; AUTO_APPROVE=1)
+cloud-up:        ## create/update the AWS environment and deploy (AWS_PROFILE=rpm-capstone; AUTO_APPROVE=1)
 	infra/scripts/cloud-up.sh
 
 cloud-deploy:    ## redeploy images + helm only (infra unchanged)

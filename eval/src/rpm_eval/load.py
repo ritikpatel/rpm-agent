@@ -1,9 +1,9 @@
 """Load test against the running local stack: N extra home patients (clones of the cohort's physiology) are
-registered, streamed through the real path (MQTT -> rule emulator -> Kinesis -> stream engine -> Postgres), measured,
-and deactivated again.
+registered, streamed through the real path (MQTT -> rule emulator -> SQS -> stream engine -> Postgres), measured, and
+deactivated again.
 
-Local numbers characterise the pipeline code on a laptop with emulators (kinesis-mock is single-process); the AWS
-plan for 10k devices is in docs/evaluation-report.md.
+Local numbers characterise the pipeline code on a laptop with emulators (Mosquitto, ElasticMQ, one Postgres); the
+AWS plan for 10k devices is in docs/evaluation-report.md.
 """
 
 from __future__ import annotations
@@ -54,12 +54,13 @@ def deregister() -> None:
                   f"resolution = 'load test patient' WHERE patient_id LIKE '{PREFIX}%' AND status <> 'resolved'")
 
 
-def _lag_ms() -> float | None:
+def _lag_s() -> float | None:
+    """Consumer lag: how long the oldest message of the engine's last batch had waited on the ingest queue."""
     try:
         text = httpx.get("http://localhost:9101/metrics", timeout=3).text
     except httpx.HTTPError:
         return None
-    vals = [float(line.split()[-1]) for line in text.splitlines() if line.startswith("rpm_kinesis_millis_behind")]
+    vals = [float(line.split()[-1]) for line in text.splitlines() if line.startswith("rpm_ingest_queue_age_seconds")]
     return max(vals) if vals else None
 
 
@@ -77,7 +78,7 @@ def level(members: list[CohortMember], n: int, duration_s: int = 180, window_s: 
     worker.start()
     lags = []
     while worker.is_alive():
-        lag = _lag_ms()
+        lag = _lag_s()
         if lag is not None:
             lags.append(lag)
         time.sleep(5)
@@ -99,4 +100,4 @@ def level(members: list[CohortMember], n: int, duration_s: int = 180, window_s: 
             "windows_stored": row[0], "devices_seen": row[1],
             "delivered_ratio": round(row[0] / expected, 3) if expected else None,
             "e2e_p50_s": round(row[2] or 0, 2), "e2e_p95_s": round(row[3] or 0, 2), "e2e_p99_s": round(row[4] or 0, 2),
-            "max_consumer_lag_s": round(max(lags) / 1000, 1) if lags else None}
+            "max_consumer_lag_s": round(max(lags), 1) if lags else None}

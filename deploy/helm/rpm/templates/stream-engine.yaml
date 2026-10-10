@@ -6,7 +6,7 @@ metadata:
   labels: {{- include "rpm.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.streamEngine.replicas }}
-  strategy: { type: Recreate }   # avoid two consumers on the same shards during rollout
+  strategy: { type: Recreate }   # never two consumers at once: per-device state is read-modify-write
   selector: { matchLabels: { app: stream-engine } }
   template:
     metadata:
@@ -22,12 +22,53 @@ spec:
           command: ["stream-engine"]
           env:
             {{- include "rpm.env" . | nindent 12 }}
-            - name: RPM_START_POSITION
-              value: {{ .Values.streamEngine.startPosition | quote }}
+            - name: RPM_BATCH_LIMIT
+              value: {{ .Values.streamEngine.batchLimit | quote }}
+            - name: RPM_RECEIVE_PARALLELISM
+              value: {{ .Values.streamEngine.receiveParallelism | quote }}
             - name: RPM_RUN_MIGRATIONS
               value: "false"
           ports: [{ name: metrics, containerPort: 9100 }]
           livenessProbe: { httpGet: { path: /, port: metrics }, periodSeconds: 20, failureThreshold: 3 }
           securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           resources: {{- toYaml .Values.streamEngine.resources | nindent 12 }}
+{{- end }}
+{{- if .Values.telemetryArchiver.enabled }}
+---
+# Raw telemetry archive: second ingest queue -> gzip NDJSON in the S3 lake. Same image as the stream engine, but no
+# database or Redis access: it only needs its queue and write access to the lake prefix (iam.tf).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-archiver
+  labels: {{- include "rpm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: telemetry-archiver } }
+  template:
+    metadata:
+      labels: { app: telemetry-archiver, rpm.metrics: "true" }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "9100" }
+    spec:
+      serviceAccountName: telemetry-archiver
+      terminationGracePeriodSeconds: 45   # SIGTERM writes the buffered batch before exit
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: telemetry-archiver
+          image: {{ include "rpm.image" (list . "stream-engine") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["rpm-telemetry-archiver"]
+          env:
+            - { name: RPM_ENV, value: {{ .Values.config.env | quote }} }
+            - { name: RPM_LOG_LEVEL, value: {{ .Values.config.logLevel | quote }} }
+            - { name: RPM_AWS_REGION, value: {{ .Values.aws.region | quote }} }
+            - { name: AWS_REGION, value: {{ .Values.aws.region | quote }} }
+            - { name: RPM_SQS_ARCHIVE_QUEUE, value: {{ .Values.config.archiveQueue | quote }} }
+            - name: RPM_ARCHIVE_DEST
+              value: {{ printf "s3://%s/telemetry" (required "telemetryArchiver.bucket is required" .Values.telemetryArchiver.bucket) | quote }}
+            - { name: RPM_ARCHIVE_FLUSH_S, value: {{ .Values.telemetryArchiver.flushSeconds | quote }} }
+          ports: [{ name: metrics, containerPort: 9100 }]
+          livenessProbe: { httpGet: { path: /, port: metrics }, periodSeconds: 20, failureThreshold: 3 }
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources: {{- toYaml .Values.telemetryArchiver.resources | nindent 12 }}
 {{- end }}

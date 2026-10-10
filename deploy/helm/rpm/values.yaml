@@ -5,12 +5,13 @@ image:
   pullPolicy: IfNotPresent
 
 aws:
-  region: us-east-1
+  region: ap-southeast-2   # the project's selected Region; cloud-up.sh passes the real one
 
 config:
   env: aws
   logLevel: INFO
-  kinesisStream: rpm-telemetry
+  telemetryQueue: rpm-telemetry           # IoT rule -> stream-engine
+  archiveQueue: rpm-telemetry-archive     # IoT rule -> telemetry-archiver -> S3 lake
   clinicalQueue: rpm-clinical-events
   alertQueue: rpm-alert-intake
   redisUrl: ""            # rediss://<elasticache-primary>:6379/0
@@ -49,11 +50,20 @@ dbMigrate:
 
 streamEngine:
   enabled: true
-  replicas: 1             # one consumer per shard set (see docs/adr/0002)
-  startPosition: TRIM_HORIZON
+  replicas: 1             # exactly one consumer: per-device state is read-modify-write (docs/adr/0014)
+  batchLimit: 1000        # while catching up, half of each batch is held back for reordering
+  receiveParallelism: 4
   resources:
     requests: { cpu: 100m, memory: 192Mi }
     limits: { memory: 512Mi }
+
+telemetryArchiver:        # raw telemetry -> gzip NDJSON in the S3 lake (stream-engine image, second entrypoint)
+  enabled: true
+  bucket: ""              # terraform output lake_bucket
+  flushSeconds: 60        # keep well below the archive queue's visibility timeout (300 s)
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+    limits: { memory: 256Mi }
 
 api:
   enabled: true
@@ -86,7 +96,8 @@ alertService:
   escalationTimeoutScale: "1.0"   # 0.2 in demos: 5-minute tiers become 1 minute
   emailBackend: ses               # ses | log
   emailSender: ""                 # verified SES identity; empty -> log backend
-  smsBackend: log                 # sns | log (SMS needs an SNS origination setup outside the sandbox)
+  smsBackend: log                 # sns | log. SMS needs AWS End User Messaging: an origination identity, and the
+                                  # Paid plan in the new AWS experience (the Free plan denies it)
   consoleUrl: "http://localhost:3000"
   careTeam: |
     nurse:     {name: On-call RPM nurse,   email: nurse@example.com,     phone: "+10000000001"}

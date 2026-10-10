@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> None:
             # retained, so the gateway gets its beds' SpO2 scale on every (re)connect, even before this job reruns
             cfg = gateway_config(a.database_url, a.icu_gateway)
             DeviceCommander(mode=os.environ.get("RPM_DEVICE_COMMAND_MODE", "mqtt"),
-                            region=os.environ.get("RPM_AWS_REGION", "us-east-1"),
+                            region=os.environ.get("RPM_AWS_REGION", "ap-southeast-2"),
                             iot_endpoint=os.environ.get("RPM_IOT_ENDPOINT") or None,
                             mqtt_host=os.environ.get("RPM_MQTT_HOST", "localhost"),
                             mqtt_port=int(os.environ.get("RPM_MQTT_PORT", "1883"))).publish_raw(

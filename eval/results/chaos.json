@@ -1,48 +1,54 @@
 {
- "at": "2026-09-25T13:48:02.471274+00:00",
+ "at": "2026-10-10T06:32:33.195336+00:00",
  "results": [
   {
    "name": "stream-engine-kill",
    "passed": true,
    "checks": {
-    "windows": 263,
+    "windows": 293,
     "duplicates": 0,
     "devices": 149,
     "data_gap_events": 0,
+    "late_windows": 0,
+    "stored": 293,
+    "archived": 293,
+    "archive_duplicates": 0,
+    "emitted_not_stored": 0,
+    "stored_not_archived": 0,
     "outage_s": 30,
     "caught_up": true,
-    "p95_latency_after_recovery_s": 0.7
+    "p95_latency_after_recovery_s": 0.06
    },
    "notes": [
-    "windows published during the outage were processed from the Kinesis checkpoint on restart"
+    "windows published during the outage waited on the SQS ingest queue and were processed on restart; the batch in flight at the kill was redelivered after the visibility timeout (those windows count as late_windows: stored, not applied to live state)",
+    "emitted_not_stored compares the engine's store with the archiver's independent copy"
    ]
   },
   {
    "name": "broker-outage",
    "passed": true,
    "checks": {
-    "windows": 479,
+    "windows": 437,
     "duplicates": 0,
     "devices": 149,
     "data_gap_events": 0,
+    "late_windows": 0,
     "outage_s": 60,
-    "completeness_vs_pre_fault_rate": 1.268,
-    "buffered_windows": 2
+    "completeness_vs_pre_fault_rate": 0.99,
+    "buffered_windows": 1
    },
-   "notes": [
-    "run 1 FAILED (25% of outage-period windows, 24 sequence gaps): the local IoT-rule emulator had a clean MQTT session on a non-persistent broker, so messages published before it resubscribed were dropped. Fixed by broker persistence + a persistent session for the emulator (as an IoT rule is always subscribed). Re-run: every device, zero gaps. The completeness ratio >1 reflects a pre-fault baseline window that included the broker restart; gaps and device coverage are the criteria."
-   ]
+   "notes": []
   },
   {
    "name": "agent-down",
-   "passed": true,
+   "passed": false,
    "checks": {
-    "patient": "p-90000000",
+    "patient": "p-90000013",
     "paged_without_agent": true,
-    "sos_to_first_page_s": 0.63,
+    "sos_to_first_page_s": 0.57,
     "severity": "critical",
     "tier": 3,
-    "brief_after_agent_restart": true
+    "brief_after_agent_restart": false
    },
    "notes": [
     "the SOS was paged by the rules path while the agent service was stopped; the brief followed once it restarted and drained its queue (SQS retains the events)"
@@ -52,28 +58,37 @@
    "name": "alert-service-kill",
    "passed": true,
    "checks": {
-    "patient": "p-90000149",
+    "patient": "p-90000148",
     "tier_before": 3,
     "tier_after": 3,
     "reminders_sent": 1,
-    "down_for_s": 129.2,
-    "timer_fired_s_after_due": 11.4,
+    "down_for_s": 128.6,
+    "timer_fired_s_after_due": 11.5,
     "timer_page_sent": true
    },
    "notes": [
     "the escalation timer came due while the service was down; it fired from Postgres on restart and paged"
    ]
+  },
+  {
+   "name": "archiver-kill",
+   "passed": true,
+   "checks": {
+    "stored": 348,
+    "archived": 348,
+    "archive_duplicates": 0,
+    "emitted_not_stored": 0,
+    "stored_not_archived": 0,
+    "outage_s": 40,
+    "realtime_p95_during_outage_s": 0.06
+   },
+   "notes": [
+    "messages are deleted from the archive queue only after their object is written, so the buffer lost in the kill was redelivered and archived after the visibility timeout",
+    "archive_duplicates > 0 is expected (at-least-once); readers de-duplicate on msg_id",
+    "the real-time path has its own queue: its latency is unaffected by the archive outage"
+   ]
   }
  ],
  "passed": 4,
- "total": 4,
- "history": [
-  {
-   "run": 1,
-   "at": "2026-09-25T13:44:41.868131+00:00",
-   "passed": 3,
-   "total": 4,
-   "file": "chaos-run1-before-fix.json"
-  }
- ]
+ "total": 5
 }

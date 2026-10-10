@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 
 class DeviceCommander:
-    def __init__(self, *, mode: str, region: str = "us-east-1", iot_endpoint: str | None = None,
+    def __init__(self, *, mode: str, region: str = "ap-southeast-2", iot_endpoint: str | None = None,
                  mqtt_host: str = "localhost", mqtt_port: int = 1883):
         self.mode = mode  # "mqtt" (local broker) | "iot" (AWS IoT data plane) | "disabled"
         self._lock = threading.Lock()

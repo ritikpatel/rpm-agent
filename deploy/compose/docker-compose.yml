@@ -1,5 +1,5 @@
 # Local stack: mirrors the AWS architecture with open-source stand-ins
-#   IoT Core -> Mosquitto + iot-bridge (rule emulator) | Kinesis -> kinesis-mock | SQS -> ElasticMQ
+#   IoT Core -> Mosquitto + iot-bridge (rule emulator) | SQS -> ElasticMQ | S3 lake -> data/lake
 #   RDS -> Postgres+pgvector | ElastiCache -> Redis | FHIR -> HAPI FHIR (same image as on EKS)
 name: rpm
 
@@ -8,8 +8,7 @@ x-env: &env
   RPM_LOG_LEVEL: ${RPM_LOG_LEVEL:-INFO}
   RPM_DATABASE_URL: postgresql://rpm:rpm@postgres:5432/rpm
   RPM_REDIS_URL: redis://redis:6379/0
-  RPM_AWS_REGION: us-east-1
-  RPM_KINESIS_ENDPOINT: http://kinesis:4568
+  RPM_AWS_REGION: ap-southeast-2
   RPM_SQS_ENDPOINT: http://sqs:9324
   RPM_FHIR_BASE_URL: http://fhir:8080/fhir
   AWS_ACCESS_KEY_ID: local
@@ -44,15 +43,6 @@ services:
               "../../.secrets/dev-pki/mosquitto:/mosquitto/config/conf.d:ro", "mqttdata:/mosquitto/data"]
     ports: ["${RPM_MQTT_PORT:-1883}:1883", "${RPM_MQTTS_PORT:-8883}:8883"]
     mem_limit: 128m
-
-  kinesis:
-    image: ghcr.io/etspaceman/kinesis-mock:0.6.2
-    environment:
-      INITIALIZE_STREAMS: rpm-telemetry:2
-      AWS_REGION: us-east-1
-      LOG_LEVEL: WARN
-    ports: ["${RPM_KINESIS_PORT:-4568}:4568"]
-    mem_limit: 512m
 
   sqs:
     image: softwaremill/elasticmq-native:1.7.1
@@ -97,7 +87,7 @@ services:
     command: ["iot-bridge"]
     environment: { <<: *env, RPM_MQTT_HOST: mosquitto, RPM_METRICS_PORT: "9102" }
     ports: ["9102:9102"]
-    depends_on: [mosquitto, kinesis]
+    depends_on: [mosquitto, sqs]
     restart: unless-stopped
     mem_limit: 128m
 
@@ -105,15 +95,30 @@ services:
     build: { <<: *build, args: { PACKAGE: stream-engine } }
     image: rpm/stream-engine:dev
     command: ["stream-engine"]
-    environment: { <<: *env, RPM_METRICS_PORT: "9101", RPM_START_POSITION: TRIM_HORIZON }
+    environment: { <<: *env, RPM_METRICS_PORT: "9101" }
     ports: ["9101:9101"]
     depends_on:
       db-migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
-      kinesis: { condition: service_started }
       sqs: { condition: service_started }
     restart: unless-stopped
     mem_limit: 256m
+
+  telemetry-archiver:  # raw archive: second ingest queue -> gzip NDJSON under data/lake (the S3 lake on AWS)
+    image: rpm/stream-engine:dev
+    command: ["rpm-telemetry-archiver"]
+    environment:
+      <<: *env
+      RPM_METRICS_PORT: "9105"
+      RPM_ARCHIVE_DEST: /home/app/data/lake/telemetry
+      RPM_ARCHIVE_FLUSH_S: "${RPM_ARCHIVE_FLUSH_S:-30}"
+    volumes: ["../../data/lake:/home/app/data/lake"]
+    ports: ["9105:9105"]
+    depends_on:
+      stream-engine: { condition: service_started }   # shares its image
+      sqs: { condition: service_started }
+    restart: unless-stopped
+    mem_limit: 128m
 
   api:
     build: { <<: *build, args: { PACKAGE: rpm-api } }

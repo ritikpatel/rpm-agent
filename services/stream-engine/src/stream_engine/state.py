@@ -1,4 +1,4 @@
-"""Hot per-device / per-patient state in Redis (shared by all stream-engine replicas)."""
+"""Hot per-device / per-patient state in Redis (survives stream-engine restarts)."""
 
 from __future__ import annotations
 
@@ -77,6 +77,11 @@ class RedisState:
         if ttl_s <= 0:
             return True
         return bool(self._should_emit(keys=[f"rpm:suppress:{patient_id}:{event_type}"], args=[severity_rank, ttl_s]))
+
+    def release_emit(self, slots: Iterable[tuple[str, str]]) -> None:
+        keys = [f"rpm:suppress:{pid}:{etype}" for pid, etype in slots]
+        if keys:
+            self.r.delete(*keys)
 
     # ---- live fan-out (api WebSocket)
     def publish_live(self, messages: list[dict]) -> None:

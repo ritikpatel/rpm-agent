@@ -2,9 +2,9 @@
 
     SELECT *, timestamp() AS ingest_ts_ms, topic(4) AS thing, topic(5) AS kind
     FROM 'rpm/v1/dev/+/+' WHERE topic(5) = 'telemetry' OR topic(5) = 'events'
-    -> Kinesis rpm-telemetry, partition key = thing
+    -> SQS rpm-telemetry (real-time path) and SQS rpm-telemetry-archive (S3 lake)
 
-On AWS this service is not deployed; the rule is created by Terraform (infra/terraform/modules/iot).
+On AWS this service is not deployed; the rule is created by Terraform (infra/terraform/aws/iot.tf).
 """
 
 from __future__ import annotations
@@ -23,9 +23,10 @@ from prometheus_client import Counter, start_http_server
 from rpm_common.aws import client
 from rpm_common.logging import setup_logging
 from rpm_common.settings import BaseServiceSettings
+from rpm_common.sqs import SQS_BATCH
 
 log = logging.getLogger("iot_bridge")
-FORWARDED = Counter("rpm_bridge_forwarded_total", "Messages forwarded to Kinesis", ["kind"])
+FORWARDED = Counter("rpm_bridge_forwarded_total", "Messages forwarded to the ingest queue", ["kind"])
 DROPPED = Counter("rpm_bridge_dropped_total", "Messages dropped", ["reason"])
 
 
@@ -35,7 +36,7 @@ class BridgeSettings(BaseServiceSettings):
     mqtt_port: int = 1883
 
 
-def enrich(topic: str, payload: bytes, now_ms: int) -> tuple[str, dict] | None:
+def enrich(topic: str, payload: bytes, now_ms: int) -> dict | None:
     parts = topic.split("/")
     if len(parts) != 5 or parts[:3] != ["rpm", "v1", "dev"] or parts[4] not in ("telemetry", "events"):
         return None
@@ -43,16 +44,37 @@ def enrich(topic: str, payload: bytes, now_ms: int) -> tuple[str, dict] | None:
     if not isinstance(doc, dict):
         raise ValueError("payload is not a JSON object")
     doc.update({"ingest_ts_ms": now_ms, "thing": parts[3], "kind": parts[4]})
-    return parts[3], doc
+    return doc
+
+
+def send_all(sqs, url: str, bodies: list[str], attempts: int = 5) -> int:
+    """Send every body to one queue (10 per call), retrying failures; returns how many could not be sent."""
+    lost = 0
+    for i in range(0, len(bodies), SQS_BATCH):
+        entries = [{"Id": str(n), "MessageBody": b} for n, b in enumerate(bodies[i:i + SQS_BATCH])]
+        for attempt in range(attempts):
+            try:
+                failed = {f["Id"] for f in sqs.send_message_batch(QueueUrl=url, Entries=entries).get("Failed", [])}
+            except (BotoCoreError, ClientError) as exc:
+                # an exception here used to kill the forward thread silently, leaving the queue to fill for ever
+                log.warning("sqs send failed; retrying", extra={"error": str(exc)[:200], "attempt": attempt})
+                time.sleep(min(5.0, 0.5 * 2 ** attempt))
+                continue
+            entries = [e for e in entries if e["Id"] in failed]
+            if not entries:
+                break
+            time.sleep(0.2 * (attempt + 1))
+        lost += len(entries)
+    return lost
 
 
 def main() -> None:
     cfg = BridgeSettings()
     setup_logging(cfg.service_name, cfg.log_level)
     start_http_server(cfg.metrics_port)
-    kinesis = client("kinesis", cfg.aws_region, cfg.kinesis_endpoint)
-    # ~2 KB per record: 20k keeps the bridge inside its memory limit while Kinesis is slow or down
-    q: queue.Queue[tuple[str, dict]] = queue.Queue(maxsize=20_000)
+    sqs = client("sqs", cfg.aws_region, cfg.sqs_endpoint)
+    # ~2 KB per record: 20k keeps the bridge inside its memory limit while SQS is slow or down
+    q: queue.Queue[dict] = queue.Queue(maxsize=20_000)
     stop = threading.Event()
 
     def on_connect(c, _ud, _flags, reason, _props):
@@ -61,17 +83,28 @@ def main() -> None:
 
     def on_message(_c, _ud, msg):
         try:
-            item = enrich(msg.topic, msg.payload, int(time.time() * 1000))
+            doc = enrich(msg.topic, msg.payload, int(time.time() * 1000))
         except (ValueError, UnicodeDecodeError):
             DROPPED.labels("invalid_json").inc()
             return
-        if item:
+        if doc:
             try:
-                q.put_nowait(item)  # never block paho's network thread: that would stall MQTT for every device
+                q.put_nowait(doc)  # never block paho's network thread: that would stall MQTT for every device
             except queue.Full:
                 DROPPED.labels("backpressure").inc()
 
+    def queue_urls() -> dict[str, str]:
+        names = {"ingest": cfg.sqs_telemetry_queue, "archive": cfg.sqs_archive_queue}
+        while not stop.is_set():
+            try:
+                return {k: sqs.get_queue_url(QueueName=n)["QueueUrl"] for k, n in names.items() if n}
+            except (BotoCoreError, ClientError) as exc:
+                log.warning("waiting for sqs", extra={"error": str(exc)[:200]})
+                stop.wait(2)
+        return {}
+
     def forward() -> None:
+        urls = queue_urls()
         while not stop.is_set():
             try:
                 first = q.get(timeout=0.5)
@@ -83,23 +116,14 @@ def main() -> None:
                     batch.append(q.get_nowait())
                 except queue.Empty:
                     break
-            records = [{"Data": json.dumps(d).encode(), "PartitionKey": key} for key, d in batch]
-            for attempt in range(5):
-                try:
-                    resp = kinesis.put_records(StreamName=cfg.kinesis_stream, Records=records)
-                except (BotoCoreError, ClientError) as exc:
-                    # an exception here used to kill this thread silently, leaving the queue to fill for ever
-                    log.warning("kinesis put failed; retrying", extra={"error": str(exc)[:200], "attempt": attempt})
-                    time.sleep(min(5.0, 0.5 * 2 ** attempt))
-                    continue
-                if not resp.get("FailedRecordCount"):
-                    break
-                records = [r for r, res in zip(records, resp["Records"], strict=True) if "ErrorCode" in res]
-                time.sleep(0.2 * (attempt + 1))
-            else:
-                DROPPED.labels("kinesis_error").inc(len(records))
-                log.error("records dropped after retries", extra={"count": len(records)})
-            for _, d in batch:
+            bodies = [json.dumps(d) for d in batch]
+            lost = send_all(sqs, urls["ingest"], bodies)   # like the rule: one action per destination
+            if lost:
+                DROPPED.labels("sqs_error").inc(lost)
+                log.error("records dropped after retries", extra={"count": lost})
+            if "archive" in urls:
+                DROPPED.labels("archive_error").inc(send_all(sqs, urls["archive"], bodies))
+            for d in batch:
                 FORWARDED.labels(d["kind"]).inc()
 
     # Persistent session (fixed id, clean_session=False, QoS 1 subscriptions): while this emulator is disconnected
@@ -114,7 +138,7 @@ def main() -> None:
     worker.start()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
-    log.info("iot rule emulator running", extra={"stream": cfg.kinesis_stream, "broker": cfg.mqtt_host})
+    log.info("iot rule emulator running", extra={"queue": cfg.sqs_telemetry_queue, "broker": cfg.mqtt_host})
     stop.wait()
     client_.loop_stop()
 

@@ -2,7 +2,7 @@
 
 A day of the 149-device cohort runs in minutes with deterministic ground truth (which patient deteriorates, when,
 and how), so alarm burden, sensitivity, time-to-detect and PPV can be measured and rule changes compared on
-identical data. Infrastructure (MQTT, Kinesis, Redis, Postgres, SQS) is replaced by in-memory equivalents with the
+identical data. Infrastructure (MQTT, SQS, Redis, Postgres) is replaced by in-memory equivalents with the
 same semantics; the clinical logic under test is the production code, unmodified.
 
 Alert model: one active alert per patient (as rpm_alerts.AlertStore). A simulated clinician resolves each alert
@@ -105,6 +105,10 @@ class MemoryState:
             return True
         return False
 
+    def release_emit(self, slots):
+        for pid, etype in slots:
+            self.kv.pop(f"sup:{pid}:{etype}", None)
+
     def publish_live(self, _msgs):
         pass
 
@@ -132,7 +136,7 @@ class EventSink:
 
 
 class CaptureUplink:
-    """ICU gateway uplink: turns its publishes into Kinesis-like records stamped with the gateway thing."""
+    """ICU gateway uplink: turns its publishes into ingest records stamped with the gateway thing."""
 
     def __init__(self, clock: VirtualClock, records: list):
         self.clock, self.records = clock, records

@@ -1,16 +1,3 @@
-# ---------------------------------------------------------------- Kinesis: device telemetry + events
-resource "aws_kinesis_stream" "telemetry" {
-  name             = "rpm-telemetry"
-  shard_count      = var.kinesis_shards
-  retention_period = 24
-  encryption_type  = "KMS"
-  kms_key_id       = aws_kms_key.main.arn
-
-  stream_mode_details {
-    stream_mode = "PROVISIONED"
-  }
-}
-
 # ---------------------------------------------------------------- S3: dataset bucket + raw telemetry lake
 resource "aws_s3_bucket" "data" {
   bucket        = "${local.name}-data-${local.account_id}"
@@ -76,61 +63,21 @@ resource "aws_s3_bucket_lifecycle_configuration" "lake" {
   }
 }
 
-# ---------------------------------------------------------------- Firehose: raw archive for retraining & evaluation
-data "aws_iam_policy_document" "firehose_trust" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["firehose.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "firehose" {
-  name               = "${local.name}-firehose"
-  assume_role_policy = data.aws_iam_policy_document.firehose_trust.json
-}
-
-resource "aws_iam_role_policy" "firehose" {
-  role = aws_iam_role.firehose.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      { Effect = "Allow", Action = ["s3:PutObject", "s3:AbortMultipartUpload", "s3:GetBucketLocation", "s3:ListBucket"],
-      Resource = [aws_s3_bucket.lake.arn, "${aws_s3_bucket.lake.arn}/*"] },
-      { Effect = "Allow", Action = ["kms:GenerateDataKey", "kms:Decrypt"], Resource = aws_kms_key.main.arn },
-    ]
-  })
-}
-
-resource "aws_kinesis_firehose_delivery_stream" "lake" {
-  name        = "rpm-telemetry-archive"
-  destination = "extended_s3"
-
-  server_side_encryption {
-    enabled  = true
-    key_type = "CUSTOMER_MANAGED_CMK"
-    key_arn  = aws_kms_key.main.arn
-  }
-
-  extended_s3_configuration {
-    role_arn            = aws_iam_role.firehose.arn
-    bucket_arn          = aws_s3_bucket.lake.arn
-    prefix              = "telemetry/dt=!{timestamp:yyyy-MM-dd}/"
-    error_output_prefix = "errors/!{firehose:error-output-type}/dt=!{timestamp:yyyy-MM-dd}/"
-    buffering_size      = 5
-    buffering_interval  = 60
-    compression_format  = "GZIP"
-    kms_key_arn         = aws_kms_key.main.arn
-  }
-}
-
-# ---------------------------------------------------------------- SQS: agent work queue + alert intake (with DLQs)
+# ---------------------------------------------------------------- SQS: device ingest fan-out, agent work queue,
+# alert intake (each with a dead-letter queue)
+#
+# The IoT rule writes every device message to two queues, so the real-time path and the raw archive fail
+# independently (docs/adr/0014):
+#   rpm-telemetry          -> stream-engine (NEWS2, rules, alerts)
+#   rpm-telemetry-archive  -> telemetry-archiver -> gzip NDJSON in the S3 lake
+# Standard queues: the IoT rule's SQS action does not support FIFO queues, and the stream engine orders by event
+# time and de-duplicates on msg_id.
 locals {
   queues = {
-    "rpm-clinical-events" = { visibility = 120 }
-    "rpm-alert-intake"    = { visibility = 30 }
+    "rpm-telemetry"         = { visibility = 60, max_receive = 10 }
+    "rpm-telemetry-archive" = { visibility = 300, max_receive = 10 } # > archiver flush interval (60 s) + PUT
+    "rpm-clinical-events"   = { visibility = 120, max_receive = 5 }
+    "rpm-alert-intake"      = { visibility = 30, max_receive = 5 }
   }
 }
 
@@ -146,10 +93,10 @@ resource "aws_sqs_queue" "q" {
   name                       = each.key
   visibility_timeout_seconds = each.value.visibility
   receive_wait_time_seconds  = 20
-  message_retention_seconds  = 345600
+  message_retention_seconds  = 345600 # 4 days of buffering if a consumer is down
   kms_master_key_id          = aws_kms_key.main.arn
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.dlq[each.key].arn
-    maxReceiveCount     = 5
+    maxReceiveCount     = each.value.max_receive
   })
 }

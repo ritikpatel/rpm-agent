@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Bring the AWS demo environment up (idempotent; safe to re-run to redeploy).
-#   AWS_PROFILE=... AWS_REGION=us-east-1 infra/scripts/cloud-up.sh
+#   AWS_PROFILE=rpm-capstone infra/scripts/cloud-up.sh        (Region: AWS_REGION, else the profile's, else ap-southeast-2)
 # Env: AUTO_APPROVE=1 (skip terraform prompt), SKIP_INFRA=1, SKIP_BUILD=1, IMAGE_TAG=..., TFVARS=path/to/file.tfvars,
 #      OBSERVABILITY=1 (kube-prometheus-stack + latency dashboard), ICU_GATEWAY_MODE=container|off
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-REGION="${AWS_REGION:-us-east-1}"
+REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || true)}"; REGION="${REGION:-ap-southeast-2}"
 ENVIRONMENT="${RPM_ENV_NAME:-demo}"
 TAG="${IMAGE_TAG:-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M)}"
 SECRETS_DIR="$ROOT/.secrets"          # git-ignored; device certs for the watch app and simulator
@@ -18,8 +18,13 @@ need() { command -v "$1" >/dev/null || { echo "missing required tool: $1"; exit 
 for t in aws terraform kubectl helm docker; do need "$t"; done
 docker info >/dev/null 2>&1 || { echo "Docker is not running"; exit 1; }
 
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"   # every aws / terraform call below uses this Region
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 STATE_BUCKET="rpm-tfstate-${ACCOUNT}"
+# New AWS experience: show the plan and remaining credits before creating billable resources (no-op elsewhere)
+PLAN="$(aws freetier get-account-plan-state --query '[accountPlanType,accountPlanRemainingCredits.amount]' \
+  --output text 2>/dev/null || true)"
+[[ -n "$PLAN" ]] && echo "AWS plan / remaining credits (USD): ${PLAN}"
 step "account ${ACCOUNT} | region ${REGION} | env ${ENVIRONMENT} | image tag ${TAG}"
 
 if [[ "${SKIP_INFRA:-0}" != "1" ]]; then
@@ -31,7 +36,7 @@ if [[ "${SKIP_INFRA:-0}" != "1" ]]; then
     terraform -chdir="$ROOT/infra/terraform/bootstrap" apply -input=false -auto-approve -var "region=${REGION}"
   fi
 
-  step "2/7 platform infrastructure (VPC, EKS, RDS, ElastiCache, IoT Core, Kinesis, SQS, S3, KMS) ~20 min first time"
+  step "2/7 platform infrastructure (VPC, EKS, RDS, ElastiCache, IoT Core, SQS, S3, KMS) ~20 min first time"
   "${TF[@]}" init -input=false -reconfigure \
     -backend-config="bucket=${STATE_BUCKET}" -backend-config="key=rpm/${ENVIRONMENT}.tfstate" \
     -backend-config="region=${REGION}" -backend-config="use_lockfile=true" -backend-config="encrypt=true" >/dev/null
@@ -129,6 +134,7 @@ helm upgrade --install rpm "$ROOT/deploy/helm/rpm" -n "$NS" --wait --timeout 25m
   --set agentService.llmProvider="${LLM_PROVIDER:-bedrock}" \
   --set auth.issuer="$(out cognito_issuer)" --set auth.clientId="$(out cognito_client_id)" \
   --set auth.domain="$(out cognito_domain)" --set auditExport.bucket="$(out audit_bucket)" \
+  --set telemetryArchiver.bucket="$(out lake_bucket)" \
   "${ICU_ARGS[@]}" "${OBS_ARGS[@]}" ${HELM_EXTRA_ARGS:-}
 if [[ -n "$GG_IP" ]]; then
   step "ICU gateway component -> Greengrass core ${GW} (${GG_IP})"
