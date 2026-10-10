@@ -5,7 +5,10 @@ monitors, and at home after discharge through a wrist wearable. Readings stream 
 page the care team within a second, three risk models score each patient, and four AI agents add a cited clinical
 summary and an escalation recommendation. Everything is exchanged with the hospital record over FHIR.
 
-> All data is synthetic (MIMIC-IV-shaped). The controls are designed as if it were real patient data.
+> **Every patient comes from the team's model-training data and from nowhere else**: 63 real MIMIC-IV-demo
+> patients and 200 synthetic ones. The platform invents no patients and no clinical values; see
+> [Where the patients come from](docs/HLD.md#2-where-the-patients-come-from). The controls are designed as if it
+> were live patient data.
 
 ![Architecture](docs/architecture-simple.png)
 
@@ -27,14 +30,15 @@ trace one reading from a device to a clinician.
 
 ## Quick start (local)
 
-You need Docker Desktop (4 GB is enough), [uv](https://docs.astral.sh/uv/), and the dataset folder
-`synthetic_mimic_150patients/` in the repo root (it is not in git).
+You need Docker Desktop (4 GB is enough), [uv](https://docs.astral.sh/uv/), and the team's training data in a
+folder named `Training Data/` in the repo root: `rpm_training_sample.csv` and `synthetic_wearable_stream_72h.csv`.
+The folder is git-ignored and must never be committed.
 
 ```bash
 make setup          # Python workspace
 make models         # fit the three placeholder models
 make up             # start the stack (add LLM=bedrock to use the Claude agents; see below)
-make seed           # 24 patients: registry, FHIR record, guideline index
+make seed           # 30 of the training patients: registry, FHIR record, guideline index
 make sim            # simulated ICU monitors and wearables
 make e2e            # automated end-to-end check (about 4 minutes)
 ```
@@ -42,15 +46,21 @@ make e2e            # automated end-to-end check (about 4 minutes)
 Then open the console at <http://localhost:3000> and sign in as **Demo lead**. Alert e-mails appear at
 <http://localhost:8025>, the FHIR server at <http://localhost:8080>.
 
-By default the agents run offline (deterministic rules and a templated summary), which needs no credentials. To use
-the real agents on Amazon Bedrock, sign in with `aws login --profile rpm-capstone` and start with
-`make up LLM=bedrock`.
+By default the agents run offline (deterministic rules and a templated summary) and alert e-mail stays in the
+local inbox; neither needs credentials. After `aws login --profile rpm-capstone`:
+
+- `make up LLM=bedrock` uses the real agents on Amazon Bedrock;
+- `make up LLM=bedrock MAIL=ses` also sends alert e-mail to the care team's own mailboxes (see the
+  [runbook](docs/runbook.md)).
+
+By default 30 patients are monitored (6 shown in ICU, 24 at home). `RPM_COHORT_HOME=0 make seed sim` monitors all
+263.
 
 Useful while it runs:
 
 ```bash
-make scenario P=p-90000132 S=sepsis RAMP=60     # make a patient deteriorate
-make send P=p-90000019 ARGS="--hr 134 --spo2 86"  # send one reading right now
+make scenario P=RPM-10001725 S=sepsis RAMP=60     # make a patient deteriorate
+make send P=SYN-000160 ARGS="--hr 134 --spo2 86"  # send one reading right now
 make cohort                                     # who is monitored
 make stats                                      # latency and counts
 make logs                                       # follow the services
@@ -66,11 +76,12 @@ services/care-api           alerts and escalation, notifications, sign-in and ro
                             the tools the agents use
 services/agent-service      four agents on Amazon Bedrock (LangGraph); holds no patient data
 apps/console                clinician console (React)
-libs/rpm_core               shared code: message contracts, NEWS2, alert rules, database, guideline index
+libs/rpm_core               shared code: message contracts, NEWS2, alert rules, database, guideline index, and the
+                            reader for the training data (the cohort)
 simulator                   simulated ICU monitors and wearables; also the one-shot "send" command
 edge/android                Wear OS watch app (and an optional phone companion)
 models/plugins              the three models, each a self-contained plug-in; models/CONTRACT.md is the hand-over spec
-tools/seed                  loads the cohort into FHIR, the registry and the guideline index
+tools/seed                  loads the training patients into FHIR, the registry and the guideline index
 tools/eval                  evaluation: alert quality by replay, latency, agent audit
 tools/iot-rule-emulator     local stand-in for the AWS IoT topic rule
 contracts                   JSON Schemas for every device message

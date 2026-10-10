@@ -14,7 +14,7 @@ import bisect
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 from .training import VITALS, PatientRecord, TrainingData
@@ -146,7 +146,23 @@ def build_cohort(data: TrainingData, anchor: datetime, icu: int = 6, home: int =
     else:
         at_home = usable[0] + usable[1]
     members = [_member(p, "icu", anchor, seed) for p in admitted] + [_member(p, "home", anchor, seed) for p in at_home]
-    return sorted(members, key=lambda m: m.patient_id)
+    return _distinct_names(sorted(members, key=lambda m: m.patient_id), seed)
+
+
+def _distinct_names(members: list[CohortMember], seed: str) -> list[CohortMember]:
+    """Names are invented (the data has none), so two patients must never share one on the worklist."""
+    seen: set[str] = set()
+    out = []
+    for m in members:
+        name, i = m.display_name, 0
+        while name in seen:
+            i += 1
+            given = name.split(" ")[0]
+            name = f"{given} {_LAST[(int(_h(seed, 'ln:' + m.patient_id) * 20) + i) % 20]}" if i < 20 else \
+                f"{m.display_name} {i}"
+        seen.add(name)
+        out.append(m if name == m.display_name else replace(m, display_name=name))
+    return out
 
 
 def profile_for_models(m: CohortMember) -> Mapping:

@@ -1,6 +1,6 @@
 # Security and compliance
 
-The platform handles synthetic data only. The Free-plan AWS project cannot accept a HIPAA Business Associate
+The platform handles the team's training data only: de-identified MIMIC-IV-demo patients and synthetic ones. The Free-plan AWS project cannot accept a HIPAA Business Associate
 Addendum, so this document describes controls **aligned with** HIPAA and GDPR, not a compliant deployment.
 
 ## Controls

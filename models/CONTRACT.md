@@ -80,6 +80,15 @@ say so: adding a field to the context is a small change on the platform side.
 - `libraries`: the versions the model was fitted with. A pickled model only loads reliably with the same library
   versions, so the risk service image is pinned to these. Exporting to ONNX avoids the problem.
 
+## The patients it runs on
+
+The platform monitors the patients in the team's training data (`Training Data/`) and no others, so a model is
+scored on the same people it was trained on. That is right for a demonstration and wrong as evidence: report your
+model's accuracy from a held-out split in `metrics`, not from how it looks in the console.
+
+The label columns (`deterioration_next_*`, `trajectory_type`, `readmit_*`, `event_severity_fraction`) are not in
+`ctx` and are not anywhere the platform can read at run time.
+
 ## The three models
 
 | Model | Owner | Runs on | For |

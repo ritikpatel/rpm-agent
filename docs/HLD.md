@@ -8,8 +8,8 @@ Cloud Box Technologies · ISB AMPBA capstone. This describes the system as built
 Patients are monitored in two settings, and a patient is in exactly one of them at a time:
 
 - **In the ICU:** a bedside monitor reports every vital sign every few seconds.
-- **At home after discharge:** a wrist wearable (a Galaxy Watch, or a simulated one) reports heart rate, SpO2 and
-  activity every 30 seconds.
+- **At home after discharge:** a wrist wearable (a Galaxy Watch, or a simulated one) reports heart rate every 30
+  seconds and SpO2, respiratory rate, temperature and blood pressure every few minutes.
 
 Readings stream to the platform, where deterministic clinical rules decide within a second whether the care team
 must be paged. Three risk models score each patient. When an alert opens, four AI agents assess the situation, act
@@ -24,13 +24,45 @@ Three rules shape the design:
 3. **Agents reach patient data only through the Care API.** Every read and action is checked and audited under the
    agent's own name; the agent service has no database access.
 
-## 2. Architecture
+## 2. Where the patients come from
+
+Every patient is one the team's models were trained on. The two files in `Training Data/` are the only source:
+
+| File | What it holds |
+|---|---|
+| `rpm_training_sample.csv` | 263 patients, five snapshots each (1, 3, 6, 12, 24 hours after discharge). 63 are real MIMIC-IV-demo patients (`RPM-…`) with their admission, diagnosis, labs and discharge vital signs. 200 are synthetic (`SYN-…`) with demographics and vital signs. |
+| `synthetic_wearable_stream_72h.csv` | For the 200 synthetic patients, a wearable reading every 15 minutes for 72 hours after discharge: heart rate, respiratory rate, SpO2, systolic blood pressure, temperature. |
+
+How the platform uses them:
+
+- **Patients at home** are placed 2 to 24 hours into their own post-discharge course, and the simulated wearable
+  reports their own values from there on, interpolated between the data points with a little sensor noise. A
+  patient who deteriorates in the data deteriorates in the demonstration, at the same point in their course.
+- **Patients in the ICU.** Every patient in the data has already been discharged, so a few of the real MIMIC
+  patients (six by default) are shown as still admitted, "before hour 0" of their data. A simulated bedside monitor
+  reports the vital signs charted at their discharge. When they are discharged, their own post-discharge data
+  starts playing. Synthetic patients are never shown in ICU: the data holds no admission for them.
+- **The hospital record (FHIR)** holds, for MIMIC patients, the admission, ICU stay, primary diagnosis, and the
+  labs and vital signs at discharge; for synthetic patients only a Patient and a finished Encounter, because the
+  data has nothing more.
+- **By default 30 patients are monitored** (6 ICU, 24 home) to keep a demonstration readable and inexpensive;
+  `RPM_COHORT_HOME=0` monitors all 263. No setting adds a patient that is not in the data.
+
+What is not from the data: display names (the data has none; they are generated) and the sensor noise. A
+demonstration scenario (for example "sepsis") adds offsets on top of a real patient's own values; it never creates
+a patient.
+
+The data's ground-truth columns (`trajectory_type`, `deterioration_*`, `event_severity_fraction`, `readmit_*`) are
+used only to train the placeholder models and to score the evaluation. They are never written to the hospital
+record or the guideline index, so no model or agent sees the answer at run time; a test enforces this.
+
+## 3. Architecture
 
 ![Architecture](architecture-simple.png)
 
 Source: [architecture-simple.mmd](architecture-simple.mmd).
 
-## 3. How one reading flows
+## 4. How one reading flows
 
 | Step | What happens |
 |---|---|
@@ -49,7 +81,7 @@ A discharge is step ①–③ with a different event: the hospital finishes the 
 patient to home monitoring, the ICU monitor stops being that patient's device, the wearable takes over, and the
 readmission model runs. Nothing measured in the ICU is carried into home scoring.
 
-## 4. Components
+## 5. Components
 
 | Component | Responsibility | Code |
 |---|---|---|
@@ -75,13 +107,13 @@ Each agent may make a few tool calls and must then submit a structured result. I
 Lite is tried; if that fails too, the run degrades to deterministic rules and a templated summary, labelled as such.
 The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 
-## 5. Deliverables in the brief
+## 6. Deliverables in the brief
 
 | Deliverable | Where it lives | Coverage |
 |---|---|---|
 | Real-time patient monitoring | IoT Core → SQS → stream processor → console | Full |
 | Agentic AI clinical monitoring engine | Agent service, four agents | Full |
-| Early warning and alert system | Alert rules, Care API escalation, console and e-mail | Full; no SMS (blocked on the Free plan) |
+| Early warning and alert system | Alert rules, Care API escalation, console and e-mail to the care team's own mailboxes | Full; no SMS (blocked on the Free plan) |
 | Predictive risk modelling | Risk service with three model plug-ins | Three models; placeholders until the team's models arrive |
 | FHIR-based integration | HAPI FHIR, subscriptions in, write-back out | Full |
 | RAG-powered clinical summarisation | Summary agent, pgvector, Titan embeddings, citation check | Full |
@@ -91,7 +123,7 @@ The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 | Evaluation and validation | `tools/eval`, `make e2e` | Alert quality and latency measured; clinical impact simulated only |
 | Security and compliance | Cognito, TLS, encryption at rest, audit trail | Aligned by design; synthetic data only |
 
-## 6. Deployment
+## 7. Deployment
 
 | | Local (`make up`) | AWS |
 |---|---|---|
@@ -101,9 +133,9 @@ The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 | Data | PostgreSQL with pgvector, HAPI FHIR | The same containers, on the instance's encrypted disk |
 | Models | Bedrock with your sign-in, or offline | Bedrock through the instance role |
 | Sign-in | Dev tokens minted by the Care API (same checks) | Cognito user pool |
-| E-mail | Mailpit | Amazon SES |
+| E-mail | Local inbox, or Amazon SES to real mailboxes (`MAIL=ses`) | Amazon SES |
 
-## 7. Decisions and their trade-offs
+## 8. Decisions and their trade-offs
 
 | Decision | Why | Cost |
 |---|---|---|
