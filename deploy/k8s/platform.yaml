@@ -1,0 +1,244 @@
+# The four services, the console and the simulated devices. One image (rpm/platform) serves every Python service;
+# each container picks its entry point, exactly as in deploy/compose/docker-compose.yml.
+#
+# Labels used by network-policies.yaml:
+#   rpm/db: client     may connect to PostgreSQL          rpm/fhir: client   may connect to the FHIR server
+#   rpm/risk: client   may call the risk service          rpm/aws: none      may not read the instance's AWS credentials
+# The agent service carries none of the first three: it reaches data only through care-api.
+apiVersion: v1
+kind: Service
+metadata: {name: care-api}
+spec:
+  selector: {app: care-api}
+  ports: [{port: 8000}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: risk-service}
+spec:
+  selector: {app: risk-service}
+  ports: [{port: 8001}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: console}
+spec:
+  selector: {app: console}
+  ports: [{port: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: care-api, labels: {app: care-api}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # one alert engine and one escalation clock at a time
+  selector: {matchLabels: {app: care-api}}
+  template:
+    metadata: {labels: {app: care-api, rpm/db: client, rpm/fhir: client, rpm/risk: client}}
+    spec:
+      imagePullSecrets: [{name: ecr}]
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: care-api
+          image: rpm/platform
+          command: [care-api]
+          envFrom:
+            - configMapRef: {name: rpm-config}
+            - secretRef: {name: rpm-secrets}
+          env:
+            - {name: FORWARDED_ALLOW_IPS, value: "*"}   # behind CloudFront, the ingress and the console's proxy
+          ports: [{containerPort: 8000}]
+          startupProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 4
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {memory: 512Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: care-team, mountPath: /config, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: care-team
+          secret: {secretName: care-team}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: stream-processor, labels: {app: stream-processor}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # keeps per-patient state in memory: one consumer
+  selector: {matchLabels: {app: stream-processor}}
+  template:
+    metadata: {labels: {app: stream-processor, rpm/db: client, rpm/risk: client}}
+    spec:
+      imagePullSecrets: [{name: ecr}]
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: stream-processor
+          image: rpm/platform
+          command: [stream-processor]
+          envFrom:
+            - configMapRef: {name: rpm-config}
+            - secretRef: {name: rpm-secrets}
+          env:
+            - {name: RPM_RUN_MIGRATIONS, value: "false"}
+          ports: [{containerPort: 9100, name: metrics}]
+          livenessProbe:
+            tcpSocket: {port: 9100}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 384Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: risk-service, labels: {app: risk-service}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: risk-service}}
+  template:
+    metadata: {labels: {app: risk-service, rpm/db: client}}
+    spec:
+      imagePullSecrets: [{name: ecr}]
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: risk-service
+          image: rpm/platform
+          command: [risk-service]     # model plug-ins are fetched from S3 (RPM_MODELS_URI) at start
+          envFrom:
+            - configMapRef: {name: rpm-config}
+            - secretRef: {name: rpm-secrets}
+          ports: [{containerPort: 8001}]
+          startupProbe:
+            httpGet: {path: /healthz, port: 8001}
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8001}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {memory: 512Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: agent-service, labels: {app: agent-service}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: agent-service}}
+  template:
+    metadata: {labels: {app: agent-service}}
+    spec:
+      imagePullSecrets: [{name: ecr}]
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: agent-service
+          image: rpm/platform
+          command: [agent-service]
+          envFrom:
+            - configMapRef: {name: rpm-config}
+            - secretRef: {name: rpm-secrets}
+          ports: [{containerPort: 9100, name: metrics}]
+          livenessProbe:
+            tcpSocket: {port: 9100}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {memory: 512Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: console, labels: {app: console}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: console}}
+  template:
+    metadata: {labels: {app: console, rpm/aws: none}}
+    spec:
+      imagePullSecrets: [{name: ecr}]
+      containers:
+        - name: console
+          image: rpm/console
+          env:
+            - {name: API_UPSTREAM, value: "care-api:8000"}
+            - name: AUTH_ORIGIN       # the Cognito sign-in page, allowed by the content security policy
+              valueFrom: {configMapKeyRef: {name: rpm-config, key: AUTH_ORIGIN}}
+          ports: [{containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /, port: 8080}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext: {allowPrivilegeEscalation: false}
+---
+# The simulated devices: ICU monitors for admitted patients, wearables at home. They connect to AWS IoT Core over
+# mutual TLS like any device, so the whole ingestion path is exercised. `make cloud-sim-pause` stops them.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: simulator, labels: {app: simulator}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # one MQTT client id: a second copy would take over the first one's connection
+  selector: {matchLabels: {app: simulator}}
+  template:
+    metadata: {labels: {app: simulator}}
+    spec:
+      imagePullSecrets: [{name: ecr}]
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: simulator
+          image: rpm/platform
+          command: [rpm-sim, run]
+          envFrom:
+            - configMapRef: {name: rpm-config}
+            - secretRef: {name: rpm-secrets}
+          env:
+            - name: RPM_MQTT_HOST
+              valueFrom: {configMapKeyRef: {name: rpm-config, key: RPM_IOT_ENDPOINT}}
+            - {name: RPM_MQTT_PORT, value: "8883"}
+            - {name: RPM_MQTT_TLS_CERT, value: /certs/cert.pem}
+            - {name: RPM_MQTT_TLS_KEY, value: /certs/key.pem}
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {memory: 256Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: certs, mountPath: /certs, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: certs
+          secret: {secretName: sim-fleet, defaultMode: 0440}
+        - name: tmp
+          emptyDir: {}

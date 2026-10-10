@@ -121,6 +121,27 @@ Use `RPM-10001725` (a real MIMIC patient shown as admitted).
    `RPM_COHORT_HOME=0 make seed sim` monitors all 263.
 5. **A real watch** in place of a simulated wearable: [watch-setup.md](watch-setup.md).
 
+## Part E: the same test on AWS
+
+```bash
+aws login --profile rpm-capstone
+make cloud-status          # prints the console address (https://….cloudfront.net)
+make cloud-e2e             # Part A against AWS, signed in as a throw-away account
+```
+
+Then repeat Parts B to D in the browser at the console address. What differs:
+
+| Local | On AWS |
+|---|---|
+| Sign in with the **Demo lead** button | Sign in with your own account (`make cloud-user U=… E=… G="physician presenter admin"`; the temporary password arrives by e-mail) |
+| `make send …`, `make scenario …` | `make sim-cloud ARGS="send --target SYN-000160 --event SOS"`, `make sim-cloud ARGS="scenario --target RPM-10001725 --type sepsis --ramp-s 60"` (or the console's demo controls) |
+| FHIR links at `localhost:8080` | `make cloud-fhir Q='Flag?patient=RPM-10001725'` (the FHIR server is not public) |
+| E-mail link opens `localhost` | E-mail link opens the public console |
+| Escalation every minute (local inbox) | Escalation every 5 minutes |
+| `make logs`, `make ps` | `make cloud-logs S=care-api`, `make cloud-status` |
+
+When you have finished: `make cloud-stop` (or `make cloud-sim-pause` to keep the console up without new alerts).
+
 ## If something does not happen
 
 | Symptom | Check |

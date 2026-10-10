@@ -1,0 +1,478 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Remote patient monitoring platform: device ingestion (IoT Core to SQS), one EC2 instance running k3s for the
+  containers, sign-in (Cognito), storage (S3, ECR) and an HTTPS front door (CloudFront). Created and updated by
+  `make cloud-up`; the containers themselves are deployed by `make cloud-deploy`.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: m7i-flex.large
+    Description: The Free plan only launches free-tier-eligible types; this is the only one with enough memory (8 GB).
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Description: Amazon Linux 2023 image matching the instance type's architecture. Fixed at creation so an update never replaces the instance.
+  CloudFrontPrefixListId:
+    Type: String
+    Description: The Region's managed prefix list com.amazonaws.global.cloudfront.origin-facing.
+  OriginSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    Description: Header value CloudFront adds to every request; the ingress refuses requests without it.
+  K3sVersion:
+    Type: String
+    Default: v1.36.5+k3s1
+  BudgetEmail:
+    Type: String
+    Default: ''
+    Description: Receives a warning at 50% and 90% of the monthly budget. Empty = no budget.
+  BudgetLimitUsd:
+    Type: Number
+    Default: 40
+
+Conditions:
+  HasBudget: !Not [!Equals [!Ref BudgetEmail, '']]
+
+Resources:
+  # ------------------------------------------------------------------ network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/24          # clear of k3s's pod (10.42/16) and service (10.43/16) ranges
+      EnableDnsSupport: true
+      EnableDnsHostnames: true         # gives the Elastic IP a public DNS name, which CloudFront needs as origin
+      Tags: [{Key: Name, Value: rpm}]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{Key: Name, Value: rpm}]
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: {VpcId: !Ref Vpc, InternetGatewayId: !Ref InternetGateway}
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.0.0/26
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true        # outbound access during first boot, before the Elastic IP is attached
+      Tags: [{Key: Name, Value: rpm-public}]
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: rpm-public}]
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: {RouteTableId: !Ref RouteTable, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref InternetGateway}
+  SubnetRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref Subnet, RouteTableId: !Ref RouteTable}
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RPM node - web traffic from CloudFront only; no SSH (administration is through Systems Manager)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, SourcePrefixListId: !Ref CloudFrontPrefixListId,
+           Description: HTTP from CloudFront edge locations}
+      Tags: [{Key: Name, Value: rpm-node}]
+
+  # ------------------------------------------------------------------ the node
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: rpm-node
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - {Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: sts:AssumeRole}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore   # Run Command and Session Manager instead of SSH
+      Policies:
+        - PolicyName: rpm-platform
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: PullImages
+                Effect: Allow
+                Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, ecr:BatchCheckLayerAvailability]
+                Resource: [!GetAtt PlatformRepository.Arn, !GetAtt ConsoleRepository.Arn]
+              - {Sid: EcrLogin, Effect: Allow, Action: ecr:GetAuthorizationToken, Resource: '*'}
+              - Sid: Queues
+                Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:SendMessage, sqs:GetQueueUrl,
+                         sqs:GetQueueAttributes, sqs:ChangeMessageVisibility]
+                Resource: [!GetAtt EventsQueue.Arn, !GetAtt EventsDlq.Arn, !GetAtt AgentQueue.Arn, !GetAtt AgentDlq.Arn]
+              - Sid: ReadArtifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket]
+                Resource: [!GetAtt ArtifactsBucket.Arn, !Sub '${ArtifactsBucket.Arn}/*']
+              - Sid: WriteAuditNeverDelete
+                Effect: Allow
+                Action: [s3:PutObject, s3:ListBucket]
+                Resource: [!GetAtt AuditBucket.Arn, !Sub '${AuditBucket.Arn}/app-audit/*']
+              - Sid: Models
+                Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - arn:aws:bedrock:*::foundation-model/anthropic.claude-*
+                  - arn:aws:bedrock:*::foundation-model/amazon.nova-*
+                  - arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0
+                  - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/au.anthropic.claude-*
+              - Sid: AlertEmail
+                Effect: Allow
+                Action: ses:SendEmail
+                Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+              - Sid: DeviceCommands
+                Effect: Allow
+                Action: iot:Publish
+                Resource:
+                  - !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/*/cmd
+                  - !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/sim/control
+              - Sid: DeploySecrets
+                Effect: Allow
+                Action: [ssm:GetParameter, ssm:GetParameters]
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/rpm/*
+              - Sid: DecryptDeploySecrets
+                Effect: Allow
+                Action: kms:Decrypt
+                Resource: '*'
+                Condition: {StringEquals: {'kms:ViaService': !Sub 'ssm.${AWS::Region}.amazonaws.com'}}
+  NodeProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: {Roles: [!Ref NodeRole]}
+  Node:
+    Type: AWS::EC2::Instance
+    DependsOn: [DefaultRoute, SubnetRoutes]
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref NodeProfile
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref NodeSecurityGroup]
+      MetadataOptions:
+        HttpTokens: required            # IMDSv2 only
+        HttpPutResponseHopLimit: 2      # one extra hop so containers can use the instance role
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: {VolumeSize: 30, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true}
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # First boot only: install k3s (single-node Kubernetes). Everything else arrives with `make cloud-deploy`.
+          exec >> /var/log/rpm-bootstrap.log 2>&1
+          set -x
+          until curl -sfL https://get.k3s.io -o /root/k3s-install.sh; do sleep 5; done
+          export INSTALL_K3S_VERSION='${K3sVersion}' INSTALL_K3S_SKIP_SELINUX_RPM=true
+          until sh /root/k3s-install.sh server --node-name rpm --write-kubeconfig-mode 600 --secrets-encryption \
+              '--kubelet-arg=system-reserved=memory=384Mi' '--kubelet-arg=eviction-hard=memory.available<200Mi'; do
+            sleep 10
+          done
+          mkdir -p /opt/rpm
+      Tags: [{Key: Name, Value: rpm-node}]
+  NodeAddress:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags: [{Key: Name, Value: rpm-node}]
+  NodeAddressAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties: {AllocationId: !GetAtt NodeAddress.AllocationId, InstanceId: !Ref Node}
+
+  # ------------------------------------------------------------------ queues
+  EventsDlq:
+    Type: AWS::SQS::Queue
+    Properties: {QueueName: rpm-patient-events-dlq, MessageRetentionPeriod: 1209600, SqsManagedSseEnabled: true}
+  EventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: rpm-patient-events    # the unified stream: device telemetry and events, and EHR events
+      VisibilityTimeout: 30
+      ReceiveMessageWaitTimeSeconds: 10
+      MessageRetentionPeriod: 86400    # a day-old reading is history, not a live signal
+      SqsManagedSseEnabled: true
+      RedrivePolicy: {deadLetterTargetArn: !GetAtt EventsDlq.Arn, maxReceiveCount: 10}
+  AgentDlq:
+    Type: AWS::SQS::Queue
+    Properties: {QueueName: rpm-agent-tasks-dlq, MessageRetentionPeriod: 1209600, SqsManagedSseEnabled: true}
+  AgentQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: rpm-agent-tasks       # work for the agents, queued by care-api
+      VisibilityTimeout: 180
+      ReceiveMessageWaitTimeSeconds: 20
+      MessageRetentionPeriod: 86400
+      SqsManagedSseEnabled: true
+      RedrivePolicy: {deadLetterTargetArn: !GetAtt AgentDlq.Arn, maxReceiveCount: 3}
+
+  # ------------------------------------------------------------------ device ingestion
+  IotRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: rpm-iot-rule
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: iot.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition: {StringEquals: {'aws:SourceAccount': !Ref 'AWS::AccountId'}}
+      Policies:
+        - PolicyName: send-to-queues
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - {Effect: Allow, Action: sqs:SendMessage, Resource: [!GetAtt EventsQueue.Arn, !GetAtt EventsDlq.Arn]}
+  IngestRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: rpm_patient_events
+      TopicRulePayload:
+        Description: Device telemetry and events onto the unified stream, stamped with the device identity and arrival time
+        AwsIotSqlVersion: '2016-03-23'
+        Sql: >-
+          SELECT *, timestamp() AS ingest_ts_ms, topic(4) AS thing, topic(5) AS kind FROM 'rpm/v1/dev/+/+'
+          WHERE topic(5) = 'telemetry' OR topic(5) = 'events'
+        RuleDisabled: false
+        Actions:
+          - Sqs: {QueueUrl: !Ref EventsQueue, RoleArn: !GetAtt IotRuleRole.Arn, UseBase64: false}
+        ErrorAction:
+          Sqs: {QueueUrl: !Ref EventsDlq, RoleArn: !GetAtt IotRuleRole.Arn, UseBase64: false}
+  DevicePolicy:   # a real watch: its certificate is attached to a thing, and it may only use that thing's topics
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: rpm-device
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/${!iot:Connection.Thing.ThingName}'
+          - Effect: Allow
+            Action: iot:Publish
+            Resource:
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/${!iot:Connection.Thing.ThingName}/telemetry'
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/${!iot:Connection.Thing.ThingName}/events'
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/rpm/v1/dev/${!iot:Connection.Thing.ThingName}/cmd'
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/rpm/v1/dev/${!iot:Connection.Thing.ThingName}/config'
+          - Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/${!iot:Connection.Thing.ThingName}/cmd'
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/${!iot:Connection.Thing.ThingName}/config'
+  SimulatorPolicy:   # the simulated fleet: one certificate for every sim-* device, and the simulator's control topic
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: rpm-simulator
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/sim-*'
+          - Effect: Allow
+            Action: iot:Publish
+            Resource:
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/sim-*/telemetry'
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/sim-*/events'
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/sim/control'
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource:
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/rpm/v1/dev/+/cmd'
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/rpm/v1/sim/control'
+          - Effect: Allow
+            Action: iot:Receive
+            Resource:
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/dev/sim-*/cmd'
+              - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/rpm/v1/sim/control'
+
+  # ------------------------------------------------------------------ storage
+  ArtifactsBucket:   # release bundles, model plug-ins, protocols and the training data the cohort is built from
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub rpm-artifacts-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: [{ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}}]
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      LifecycleConfiguration:
+        Rules: [{Id: old-releases, Status: Enabled, Prefix: releases/, ExpirationInDays: 30}]
+  AuditBucket:       # hash-chained audit exports; versioned, and the platform's role cannot delete from it
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub rpm-audit-${AWS::AccountId}
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: [{ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}}]
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+  ArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt ArtifactsBucket.Arn, !Sub '${ArtifactsBucket.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+  AuditBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AuditBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt AuditBucket.Arn, !Sub '${AuditBucket.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+  PlatformRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: rpm/platform
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      EmptyOnDelete: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"keep the last 3 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":3},"action":{"type":"expire"}}]}'
+  ConsoleRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: rpm/console
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      EmptyOnDelete: true
+      LifecyclePolicy:
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"keep the last 3 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":3},"action":{"type":"expire"}}]}'
+
+  # ------------------------------------------------------------------ HTTPS front door
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: RPM clinician console
+        HttpVersion: http2
+        PriceClass: PriceClass_All
+        Origins:
+          - Id: node
+            # CloudFront needs a DNS name, not an address: the Elastic IP's public name stays the same across stop/start
+            DomainName: !Sub
+              - 'ec2-${Dashed}.${AWS::Region}.compute.amazonaws.com'
+              - Dashed: !Join ['-', !Split ['.', !GetAtt NodeAddress.PublicIp]]
+            CustomOriginConfig:
+              {OriginProtocolPolicy: http-only, HTTPPort: 80, OriginReadTimeout: 60, OriginKeepaliveTimeout: 60}
+            OriginCustomHeaders:
+              - {HeaderName: X-Origin-Verify, HeaderValue: !Ref OriginSecret}
+        DefaultCacheBehavior:
+          TargetOriginId: node
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # managed: CachingDisabled (patient data is never cached)
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # managed: AllViewer (needed for the WebSocket)
+
+  # ------------------------------------------------------------------ sign-in
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: rpm-care-team
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true   # no self sign-up: accounts are created with `make cloud-user`
+        InviteMessageTemplate:
+          EmailSubject: Your RPM console account
+          EmailMessage: !Sub >-
+            An account has been created for you on the remote patient monitoring console.
+            User name: {username}  Temporary password: {####}
+            Sign in at https://${Distribution.DomainName} and choose a new password.
+      AutoVerifiedAttributes: [email]
+      Schema:
+        - {Name: email, AttributeDataType: String, Required: true, Mutable: true}
+      Policies:
+        PasswordPolicy:
+          {MinimumLength: 12, RequireLowercase: true, RequireUppercase: true, RequireNumbers: true,
+           RequireSymbols: false, TemporaryPasswordValidityDays: 7}
+      AccountRecoverySetting:
+        RecoveryMechanisms: [{Name: verified_email, Priority: 1}]
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub rpm-${AWS::AccountId}
+      ManagedLoginVersion: 1
+  ConsoleClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: rpm-console
+      GenerateSecret: false              # a browser application: authorization code with PKCE, no secret
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs: [!Sub 'https://${Distribution.DomainName}/callback']
+      LogoutURLs: [!Sub 'https://${Distribution.DomainName}']
+      # ADMIN_USER_PASSWORD is for `make cloud-e2e`: it needs AWS credentials, so it is not usable from the internet
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH, ALLOW_ADMIN_USER_PASSWORD_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 12
+      TokenValidityUnits: {AccessToken: minutes, IdToken: minutes, RefreshToken: hours}
+  PhysicianGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: {UserPoolId: !Ref UserPool, GroupName: physician, Description: Reads patients and acts on alerts}
+  NurseGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: {UserPoolId: !Ref UserPool, GroupName: nurse, Description: Reads patients and acts on alerts}
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: {UserPoolId: !Ref UserPool, GroupName: admin, Description: Reads patients and the audit trail}
+  PresenterGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: {UserPoolId: !Ref UserPool, GroupName: presenter, Description: Demonstration controls}
+
+  # ------------------------------------------------------------------ cost guard
+  Budget:
+    Type: AWS::Budgets::Budget
+    Condition: HasBudget
+    Properties:
+      Budget:
+        BudgetName: rpm-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: !Ref BudgetLimitUsd, Unit: USD}
+        CostTypes: {IncludeCredit: false, IncludeRefund: false}   # count usage even while credits pay for it
+      NotificationsWithSubscribers:
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 50, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 90, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+
+Outputs:
+  ConsoleUrl: {Value: !Sub 'https://${Distribution.DomainName}'}
+  DistributionId: {Value: !Ref Distribution}
+  InstanceId: {Value: !Ref Node}
+  UserPoolId: {Value: !Ref UserPool}
+  ClientId: {Value: !Ref ConsoleClient}
+  OidcIssuer: {Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'}
+  AuthDomain: {Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'}
+  ArtifactsBucket: {Value: !Ref ArtifactsBucket}
+  AuditBucket: {Value: !Ref AuditBucket}
+  PlatformRepository: {Value: !GetAtt PlatformRepository.RepositoryUri}
+  ConsoleRepository: {Value: !GetAtt ConsoleRepository.RepositoryUri}

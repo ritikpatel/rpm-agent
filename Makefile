@@ -12,8 +12,12 @@ MAIL ?= local
 SIM := uv run rpm-sim
 
 .DEFAULT_GOAL := help
+CLOUD := AWS_PROFILE=$(AWS_PROFILE) DATA="$(DATA)" infra/scripts/cloud.sh
+
 .PHONY: help setup test lint models model-check build up seed sim sim-stop scenario clear scenarios cohort \
-        discharge send stats logs ps down reset e2e mail-status
+        discharge send stats logs ps down reset e2e mail-status cloud-up cloud-deploy cloud-seed cloud-status \
+        cloud-logs cloud-fhir cloud-stop cloud-start cloud-down cloud-user cloud-device cloud-e2e sim-cloud \
+        cloud-sim-pause cloud-sim-resume
 
 help:            ## list targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -106,3 +110,52 @@ down: $(ENV_FILES) ## stop everything (keeps the data)
 
 reset: $(ENV_FILES) ## stop everything and delete this stack's local data
 	$(COMPOSE) --profile sim --profile seed down --remove-orphans --volumes
+
+# ------------------------------------------------------------------ AWS (see docs/runbook.md)
+# Sign in first: aws login --profile $(AWS_PROFILE). Everything runs in the project's selected Region, ap-southeast-2.
+cloud-up:        ## create or update the AWS resources (CloudFormation stack `rpm`), then deploy and load the cohort
+	$(CLOUD) up
+	$(CLOUD) deploy
+	$(CLOUD) seed
+
+cloud-deploy:    ## build, push and roll out the containers (SKIP_BUILD=1 = settings only)
+	SKIP_BUILD=$(SKIP_BUILD) $(CLOUD) deploy
+
+cloud-seed:      ## load the cohort on AWS: registry, FHIR record, guideline index, FHIR subscriptions
+	$(CLOUD) seed
+
+cloud-status:    ## console address, instance state, containers and memory
+	@$(CLOUD) status
+
+cloud-logs:      ## a service's log: make cloud-logs S=care-api [N=100]
+	@$(CLOUD) logs $(S) $(N)
+
+cloud-fhir:      ## query the hospital record on AWS: make cloud-fhir Q='Flag?patient=RPM-10001725'
+	@$(CLOUD) fhir '$(Q)'
+
+cloud-stop:      ## stop the instance between demonstrations (keeps all data; stops the compute charge)
+	$(CLOUD) stop
+
+cloud-start:     ## start the instance again
+	$(CLOUD) start
+
+cloud-user:      ## create a console account: make cloud-user U=ritik.patel E=you@example.org G="physician presenter admin"
+	$(CLOUD) user $(U) $(E) "$(or $(G),physician)"
+
+cloud-device:    ## create a real device's certificate in AWS IoT Core: make cloud-device D=gw-demo-01
+	$(CLOUD) device $(D)
+
+sim-cloud:       ## the simulator CLI from this machine against AWS: make sim-cloud ARGS="send --target SYN-000160 --event SOS"
+	@$(CLOUD) sim $(ARGS)
+
+cloud-sim-pause: ## stop the simulated devices on AWS (no new readings, alerts, e-mail or agent runs)
+	$(CLOUD) sim-pause
+
+cloud-sim-resume: ## start the simulated devices on AWS again
+	$(CLOUD) sim-resume
+
+cloud-e2e:       ## end-to-end check of the AWS deployment
+	$(CLOUD) e2e $(ARGS)
+
+cloud-down:      ## delete the AWS deployment and its data: make cloud-down CONFIRM=rpm
+	CONFIRM=$(CONFIRM) $(CLOUD) down

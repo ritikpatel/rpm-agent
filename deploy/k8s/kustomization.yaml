@@ -1,0 +1,31 @@
+# The platform on Kubernetes (k3s on the AWS instance). Applied on the instance by infra/scripts/node-apply.sh;
+# `make cloud-deploy` adds the files that are not in git before it is applied:
+#   config.env                          settings taken from the CloudFormation stack's outputs
+#   secrets.env, care-team.yaml,        fetched on the instance from Parameter Store, deleted after the apply
+#   sim-cert.pem, sim-key.pem
+#   an `images:` block                  the image names and tag in Amazon ECR
+# Generated ConfigMaps and Secrets get a content hash in their name, so a changed setting restarts what uses it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rpm
+resources:
+  - postgres.yaml
+  - fhir.yaml
+  - platform.yaml
+  - jobs.yaml
+  - ingress.yaml
+  - network-policies.yaml
+labels:
+  - pairs: {app.kubernetes.io/part-of: rpm}
+configMapGenerator:
+  - name: rpm-config
+    envs: [config.env]
+  - name: postgres-init
+    files: [01-databases.sql]
+secretGenerator:
+  - name: rpm-secrets
+    envs: [secrets.env]
+  - name: care-team
+    files: [care-team.yaml]
+  - name: sim-fleet
+    files: [cert.pem=sim-cert.pem, key.pem=sim-key.pem]

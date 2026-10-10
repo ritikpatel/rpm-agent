@@ -100,4 +100,92 @@ uv run rpm-eval models --out docs/eval/models.json              # what each mode
 
 ## AWS
 
-The AWS deployment (one CloudFormation stack, k3s on one EC2 instance) is added to this runbook when it is created.
+Everything runs in the project's selected Region, `ap-southeast-2`, from one CloudFormation stack named `rpm`
+(`infra/cloudformation/rpm.yaml`). The containers run on k3s (single-node Kubernetes) on one EC2 instance.
+
+| Task | Command |
+|---|---|
+| Sign in (lasts 12 hours) | `aws login --profile rpm-capstone` |
+| Create or update everything | `make cloud-up` (stack, images, containers, cohort) |
+| Roll out a code change | `make cloud-deploy` |
+| Change a setting only | `SKIP_BUILD=1 make cloud-deploy` |
+| Reload the cohort | `make cloud-seed` |
+| Console address, containers, memory | `make cloud-status` |
+| A service's log | `make cloud-logs S=care-api` (also `stream-processor`, `risk-service`, `agent-service`, `simulator`, `fhir`) |
+| Create a console account | `make cloud-user U=first.last E=<e-mail> G="physician presenter admin"` |
+| Automated end-to-end check | `make cloud-e2e` |
+| Query the hospital record | `make cloud-fhir Q='Flag?patient=RPM-10001725'` |
+| Pause / resume the simulated devices | `make cloud-sim-pause` / `make cloud-sim-resume` |
+| Send a reading from your Mac | `make sim-cloud ARGS="send --target SYN-000160 --hr 150 --spo2 84"` |
+| Stop / start the instance | `make cloud-stop` / `make cloud-start` |
+| Delete everything | `make cloud-down CONFIRM=rpm` |
+
+### What `make cloud-up` creates
+
+| Resource | Purpose |
+|---|---|
+| EC2 `m7i-flex.large` (2 vCPU, 8 GB), 30 GB encrypted disk, Elastic IP, its own small VPC | Runs k3s and every container. No SSH port: administration is through Systems Manager |
+| IoT Core rule `rpm_patient_events`, policies `rpm-device` and `rpm-simulator` | Devices publish over mutual TLS; the rule stamps each message and puts it on the queue |
+| SQS `rpm-patient-events`, `rpm-agent-tasks`, and a dead-letter queue for each | The unified stream, and work for the agents |
+| S3 `rpm-artifacts-<account>` | Release bundles, model plug-ins, protocols and the training data the cohort is built from |
+| S3 `rpm-audit-<account>` (versioned) | Hourly hash-chained audit exports; the platform's role can write but not delete |
+| ECR `rpm/platform`, `rpm/console` | The two images |
+| Cognito user pool `rpm-care-team`, groups `physician`, `nurse`, `admin`, `presenter` | Sign-in and roles |
+| CloudFront distribution | HTTPS for the console |
+| Budget `rpm-monthly` (US$40) | E-mails the sender address at 50% and 90% |
+| Parameter Store `/rpm/*` (encrypted) | Service token, database password, CloudFront header, care-team contacts, the simulated fleet's key |
+
+The instance type is the largest the Free plan allows with enough memory; `t4g.medium` and other types that are
+not free-tier eligible are refused at launch.
+
+### How a deployment works
+
+1. `make cloud-deploy` builds both images for the instance's architecture (x86) and pushes them to ECR, tagged
+   with the git commit and the time.
+2. It uploads the training data, model plug-ins and protocols to the artifacts bucket, and the care team's
+   contacts to Parameter Store.
+3. It bundles `deploy/k8s` with the settings read from the stack's outputs, uploads the bundle, and asks the
+   instance (Systems Manager Run Command) to run `infra/scripts/node-apply.sh`.
+4. On the instance that script fetches the secrets with the instance's own role, refreshes the ECR pull secret,
+   runs `kubectl apply -k` and waits until every workload is ready.
+
+Containers call AWS (SQS, Bedrock, SES, S3, IoT) with the instance role; there are no access keys anywhere.
+
+### Sign-in
+
+There is no self sign-up. `make cloud-user` creates an account and Cognito e-mails a temporary password; the
+person chooses their own at first sign-in. Groups decide what they can do: `physician` and `nurse` read and act,
+`admin` reads and sees the audit trail, `presenter` has the demo controls. A demo lead is in
+`physician presenter admin`.
+
+### Cost
+
+| While | About |
+|---|---|
+| The instance is running | US$2.90 a day for compute, plus US$0.25 a day for disk and address |
+| The instance is stopped (`make cloud-stop`) | US$0.25 a day |
+| Each alert the agents work on | US$0.13 in Bedrock calls (estimate) |
+
+With the cohort of 30 the patients' own data raises around 15 to 20 alerts a day, each with e-mail to the paged
+tier. **Stop the instance, or at least pause the simulated devices, when nobody is watching.** IoT Core, SQS, S3,
+Cognito, CloudFront and SES stay within their free allowances at this scale.
+
+### Differences from the local stack
+
+- Sign-in is Cognito, not the role buttons.
+- The FHIR server is not reachable from the internet (it has no sign-in of its own): use `make cloud-fhir`.
+- Guideline search uses Amazon Titan embeddings; the agents always use Bedrock.
+- Escalation timers run at their real length (5 minutes a tier), with one reminder.
+- Interactive API docs are off.
+
+### Common problems on AWS
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Any `make cloud-*` says the sign-in has expired | 12-hour sign-in | `aws login --profile rpm-capstone` |
+| Console shows "403" or does not load after `cloud-start` | Containers still starting | Wait three minutes; `make cloud-status` |
+| Sign-in page says the redirect is not allowed | Opened by IP or another address | Use the address `make cloud-status` prints |
+| Patients listed but none streaming | Simulated devices paused or not restarted | `make cloud-sim-resume`; `make cloud-logs S=simulator` |
+| No agent summary | Bedrock refused the call | `make cloud-logs S=agent-service` |
+| A pod is `ImagePullBackOff` | ECR pull secret expired after a long stop | `SKIP_BUILD=1 make cloud-deploy` |
+| `cloud-up` fails with "not eligible for Free Tier" | Instance type not allowed on the Free plan | Keep the default `m7i-flex.large` |

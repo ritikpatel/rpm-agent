@@ -1,0 +1,66 @@
+# Who may connect to whom inside the cluster. Nothing accepts a connection unless a rule here allows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny-ingress}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: console-from-ingress}
+spec:
+  podSelector: {matchLabels: {app: console}}
+  ingress:
+    - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}}]
+      ports: [{port: 8080}]
+---
+# care-api is the one service everything else talks to (console, stream processor, agents, FHIR hook, simulator).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: care-api-from-platform}
+spec:
+  podSelector: {matchLabels: {app: care-api}}
+  ingress:
+    - from: [{podSelector: {}}]
+      ports: [{port: 8000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: risk-service-from-clients}
+spec:
+  podSelector: {matchLabels: {app: risk-service}}
+  ingress:
+    - from: [{podSelector: {matchLabels: {rpm/risk: client}}}]
+      ports: [{port: 8001}]
+---
+# The database: care-api, the stream processor, the risk service, the FHIR server and the seed and audit jobs.
+# The agent service and the simulator are not on the list.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: postgres-from-clients}
+spec:
+  podSelector: {matchLabels: {app: postgres}}
+  ingress:
+    - from: [{podSelector: {matchLabels: {rpm/db: client}}}]
+      ports: [{port: 5432}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fhir-from-clients}
+spec:
+  podSelector: {matchLabels: {app: fhir}}
+  ingress:
+    - from: [{podSelector: {matchLabels: {rpm/fhir: client}}}]
+      ports: [{port: 8080}]
+---
+# Third-party images (PostgreSQL, HAPI FHIR, nginx) have no business with AWS: keep them away from the instance
+# metadata service, which is where the instance role's credentials come from.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: no-instance-credentials}
+spec:
+  podSelector: {matchLabels: {rpm/aws: none}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ipBlock: {cidr: 0.0.0.0/0, except: [169.254.169.254/32]}}]

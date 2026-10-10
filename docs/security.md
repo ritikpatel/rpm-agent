@@ -17,7 +17,11 @@ Addendum, so this document describes controls **aligned with** HIPAA and GDPR, n
 | Audit | Every read of patient data and every action is logged with the actor (clinician, service or agent by name); the table refuses UPDATE, DELETE and TRUNCATE; hourly export as hash-chained FHIR AuditEvent files | `audit_log`, `care_api/audit_export.py` |
 | Minimum necessary | Alert e-mails carry initials, the last four characters of the id and a console link; no vitals or diagnoses; one message per recipient, so nobody sees who else is on call | `care_api/alerts/notify.py` |
 | Encryption in transit | MQTT over TLS with client certificates; HTTPS to the console; TLS to AWS services | IoT Core, CloudFront |
-| Encryption at rest | Encrypted instance disk, S3 and SQS | CloudFormation template |
+| Encryption at rest | Encrypted instance disk, S3 and SQS; Kubernetes secrets encrypted in k3s | CloudFormation template |
+| Network exposure | One open port (80), from CloudFront's addresses only, and only with the header our distribution adds; no SSH (administration through Systems Manager); the FHIR server and the internal endpoints are not routed from outside | `infra/cloudformation/rpm.yaml`, `deploy/k8s/ingress.yaml` |
+| Inside the cluster | Network policies: only named clients reach PostgreSQL, FHIR and the risk service; the agent service reaches none of them; third-party images cannot read the instance's AWS credentials | `deploy/k8s/network-policies.yaml` |
+| AWS credentials | No access keys: containers use the instance role (least-privilege policy, IMDSv2 only) | `infra/cloudformation/rpm.yaml` |
+| Secrets | Generated at deployment, held encrypted in Parameter Store, never in git, the images or the template | `infra/scripts/cloud.sh` |
 | Browser | `Cache-Control: no-store` on API responses; strict Content-Security-Policy; the WebSocket token travels as a subprotocol, not in the URL | console nginx config, `care_api/main.py` |
 | Model safety | Unvalidated models are labelled, cannot page and start no agent work or patient contact | stream processor, Care API engine |
 
@@ -39,6 +43,10 @@ Addendum, so this document describes controls **aligned with** HIPAA and GDPR, n
 
 - **CloudFront to the instance is plain HTTP.** HTTPS ends at CloudFront; the hop to the instance is restricted to
   CloudFront's address range but is not encrypted. A domain with a certificate on the instance removes this.
+- **One instance role for every container.** The Free plan does not allow the identity provider that per-pod
+  roles need, so the platform's containers share the instance role. Third-party images are kept away from it.
+- **Audit bucket is versioned, not locked.** The platform's role cannot delete from it, but an administrator can.
+  S3 Object Lock in compliance mode would prevent that, and would also prevent deleting the demo.
 - **One shared service token** rather than one identity per service. Kubernetes network policies limit who can
   reach the internal endpoints.
 - **Prompts sent to Amazon Bedrock contain clinical data** (pseudonymous patient id, vitals, record excerpts).

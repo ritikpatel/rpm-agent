@@ -67,6 +67,22 @@ make logs                                       # follow the services
 make down                                       # stop (make reset also deletes the data)
 ```
 
+## On AWS
+
+One CloudFormation stack in `ap-southeast-2`: IoT Core, SQS, one EC2 instance running k3s, Cognito, S3, ECR and
+CloudFront. After `aws login --profile rpm-capstone`:
+
+```bash
+make cloud-up                                              # stack, images, containers, cohort (about 20 minutes the first time)
+make cloud-user U=first.last E=<e-mail> G="physician presenter admin"   # a console account; the password arrives by e-mail
+make cloud-status                                          # the console address and what is running
+make cloud-e2e                                             # the same end-to-end check, against AWS
+make sim-cloud ARGS="send --target SYN-000160 --event SOS" # a device event from your Mac
+make cloud-stop                                            # stop the instance between demonstrations
+```
+
+The [runbook](docs/runbook.md) lists what is created, what it costs and how to delete it.
+
 ## Repository layout
 
 ```
@@ -84,6 +100,9 @@ models/plugins              the three models, each a self-contained plug-in; mod
 tools/seed                  loads the training patients into FHIR, the registry and the guideline index
 tools/eval                  evaluation: alert quality by replay, latency, agent audit
 tools/iot-rule-emulator     local stand-in for the AWS IoT topic rule
+deploy/k8s                  Kubernetes manifests for the AWS instance (k3s)
+infra/cloudformation        the AWS resources, one stack
+infra/scripts               cloud.sh (make cloud-*), node-apply.sh (runs on the instance)
 contracts                   JSON Schemas for every device message
 knowledge/protocols         the clinical protocols the summaries cite (demo content)
 deploy/compose              the local stack

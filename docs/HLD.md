@@ -129,8 +129,8 @@ The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 |---|---|---|
 | Devices | Simulator; Wear OS emulator or watch | Simulator in the cluster and from a laptop; Galaxy Watch |
 | Ingest | Mosquitto, rule emulator, ElasticMQ | IoT Core, IoT rule, SQS |
-| Compute | docker compose | k3s (Kubernetes) on one EC2 instance |
-| Data | PostgreSQL with pgvector, HAPI FHIR | The same containers, on the instance's encrypted disk |
+| Compute | docker compose | k3s (Kubernetes) on one EC2 instance, behind CloudFront |
+| Data | PostgreSQL with pgvector, HAPI FHIR | The same containers, on the instance's encrypted disk; FHIR reachable only inside the cluster |
 | Models | Bedrock with your sign-in, or offline | Bedrock through the instance role |
 | Sign-in | Dev tokens minted by the Care API (same checks) | Cognito user pool |
 | E-mail | Local inbox, or Amazon SES to real mailboxes (`MAIL=ses`) | Amazon SES |
@@ -145,5 +145,5 @@ The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 | Fixed chain of four agents | Easy to explain, test and bound in cost | Less flexible than a free-form planner |
 | Models as plug-ins with their own feature code | The data team ships a folder; training and serving share one feature file | Feature code runs inside the risk service, so it is trusted code |
 | One PostgreSQL for everything | One thing to run and back up | Services share a database, which strict microservice design avoids |
-| k3s on one instance | Real Kubernetes at about US$1 a day | No tolerance of node failure |
+| k3s on one instance | Real Kubernetes at about US$3 a day while running (`m7i-flex.large`, the largest type the Free plan allows with enough memory) | No tolerance of node failure |
 | One image for all Python services | One build, one pull | Each container carries code it does not use |

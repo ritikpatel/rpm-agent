@@ -1,5 +1,6 @@
 # Clinician console: static React build served by nginx, which also proxies /api and /ws to care-api.
-FROM node:22-alpine AS build
+# The build stage runs on the build machine's own architecture: its output is static files.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY apps/console/package.json apps/console/package-lock.json ./
 RUN npm ci --no-audit --no-fund
