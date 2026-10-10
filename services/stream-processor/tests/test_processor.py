@@ -231,3 +231,48 @@ def test_invalid_record_skipped_not_fatal(env):
     bad["metrics"] = {"heart_rate": {"mean": "fast"}}
     proc.handle_batch([bad, telemetry()])
     assert len(pg.vitals) == 1
+
+
+def ehr(kind, pid, at=NOW, **data):
+    return {"schema": "rpm.ehr_event.v1", "msg_id": f"Encounter/e-{pid}/{kind}", "type": kind, "patient_id": pid,
+            "occurred_at": at.isoformat(), "data": data, "thing": "fhir", "kind": "ehr",
+            "ingest_ts_ms": int(at.timestamp() * 1000)}
+
+
+ICU_VITALS = {"heart_rate": {"mean": 96}, "spo2": {"value": 95}, "resp_rate": {"value": 18}, "sbp": {"value": 118},
+              "temp": {"value": 37.0}, "gcs": {"value": 12}}
+
+
+def test_icu_data_is_refused_for_a_patient_at_home_and_wearable_data_for_one_in_icu(env):
+    proc, _, pg, _ = env
+    proc.handle_batch([telemetry(device="sim-1", context="icu", metrics=ICU_VITALS),          # p-1 is at home
+                       telemetry(device="sim-icu-2", context="home")])                        # p-2 is in ICU
+    assert not pg.vitals and not pg.status
+
+
+def test_discharge_updates_the_record_asks_for_scores_and_carries_nothing_over(env):
+    proc, st, pg, emitter = env
+    scored = []
+    proc.request_scores = lambda pid, trigger: scored.append((pid, trigger))
+    proc.handle_batch([telemetry(device="sim-icu-2", context="icu", metrics=ICU_VITALS)])
+    assert st.get_latest("p-2")["gcs"]["v"] == 12
+    later = NOW + timedelta(seconds=40)
+    # the discharge and one more ICU window arrive together: the window after the discharge must not count
+    proc.handle_batch([ehr("discharge", "p-2", NOW + timedelta(seconds=20), disposition="Home"),
+                       telemetry(device="sim-icu-2", context="icu", end=later, metrics=ICU_VITALS)])
+    assert [e["type"] for e in pg.ehr] == ["discharge"]
+    assert [e.type for e in emitter.clinical if e.patient_id == "p-2"] == ["DISCHARGED"]
+    assert ("p-2", "discharge") in scored
+    assert st.get_latest("p-2") == {} and st.get_rule_state("p-2") is None      # ICU values are not carried home
+    assert len([v for v in pg.vitals if v["patient_id"] == "p-2"]) == 1          # only the window before discharge
+
+
+def test_lab_result_is_recorded_and_triggers_scoring(env):
+    proc, _, pg, emitter = env
+    scored = []
+    proc.request_scores = lambda pid, trigger: scored.append((pid, trigger))
+    lab = {**ehr("lab", "p-1", name="Lactate", value=4.2, unit="mmol/L", flag="H"), "msg_id": "Observation/o1/1"}
+    proc.handle_batch([lab, lab])                                              # redelivered: handled once
+    assert len(pg.ehr) == 1 and pg.ehr[0]["data"]["value"] == 4.2
+    assert [e.type for e in emitter.clinical] == ["LAB_RESULT"] and not emitter.alert
+    assert scored == [("p-1", "lab")]

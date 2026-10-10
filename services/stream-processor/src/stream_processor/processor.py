@@ -77,6 +77,7 @@ class Batch:
     claimed: list[tuple[str, str]] = field(default_factory=list)  # suppression slots taken by this batch
     ehr: list[dict] = field(default_factory=list)                 # admissions, discharges and lab results
     score: dict[str, str] = field(default_factory=dict)           # patient -> risk scoring trigger
+    moved: dict[str, str] = field(default_factory=dict)           # patient -> care setting changed in this batch
 
 
 def _flatten(m: Metrics) -> dict[str, tuple[float | str, float | None]]:
@@ -152,6 +153,11 @@ class Processor:
             # already "emitted" and swallow them (a duplicate event is safe; a dropped alert is not).
             self.state.release_emit(b.claimed)
             raise
+        for patient_id in b.moved:
+            # The registry and the working state were read while the batch was in flight, before the new care
+            # setting was committed. Drop them again now that it is, so nothing from the old setting survives.
+            self.state.forget(patient_id)
+            self.registry.invalidate(patient_id)
         self.state.mark_seen(b.processed)
         self.state.publish_live(b.live)
         for patient_id, trigger in b.score.items():
@@ -176,6 +182,9 @@ class Processor:
         # be carried into home monitoring, and the ICU monitor stops being this patient's device.
         self.state.forget(ev.patient_id)
         self.registry.invalidate(ev.patient_id)
+        b.moved[ev.patient_id] = ref.context
+        b.vitals[:] = [v for v in b.vitals if v["patient_id"] != ev.patient_id or v["context"] == ref.context]
+        b.status.pop(ev.patient_id, None)
         if ev.type == "discharge":
             self._emit(b, ref, None, Finding("DISCHARGED", "info", "ehr.discharge",
                                              "Discharged from hospital; home monitoring started", False, ev.data),
@@ -192,7 +201,7 @@ class Processor:
             M.RECORDS.labels("telemetry", "unassigned_device").inc()
             return
         pid, ctx = ref.patient_id, ref.context
-        if t.context != ctx:
+        if t.context != b.moved.get(pid, ctx) or t.context != ctx:
             # ICU monitors report only for admitted patients, wearables only for patients at home
             M.RECORDS.labels("telemetry", "wrong_setting").inc()
             return

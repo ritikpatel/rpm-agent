@@ -2,10 +2,12 @@ import { useState } from "react";
 import { signInDev, signInOidc, type AuthConfig } from "../auth";
 
 const DEV_ROLES: { role: string; username: string; label: string; note: string }[] = [
+  { role: "physician+presenter+admin", username: "demo.lead", label: "Demo lead",
+    note: "Everything: clinical actions, demo controls and the audit trail" },
   { role: "nurse", username: "nurse.jane", label: "RPM nurse", note: "Reads patients, acknowledges and acts" },
   { role: "physician", username: "dr.khan", label: "Physician", note: "Same clinical rights; tier-2 escalation" },
-  { role: "admin", username: "ops.admin", label: "Admin / presenter", note: "Reads and runs demo scenarios; no clinical actions" },
-  { role: "presenter", username: "presenter", label: "Presenter only", note: "Demo scenarios only; no patient data" },
+  { role: "admin", username: "ops.admin", label: "Admin / presenter", note: "Reads, demo controls, audit trail; no clinical actions" },
+  { role: "presenter", username: "presenter", label: "Presenter only", note: "Demo controls only; no patient data" },
 ];
 
 export default function SignIn({ config, error }: { config: AuthConfig; error?: string }) {

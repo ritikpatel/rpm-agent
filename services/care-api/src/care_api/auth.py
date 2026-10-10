@@ -82,11 +82,13 @@ class DevIssuer:
         self.kid = uuid.uuid4().hex[:16]
 
     def mint(self, username: str, role: str, ttl_s: int = 8 * 3600) -> str:
-        if role not in ROLES:
+        """role: one role, or several joined with "+" (a Cognito user can be in several groups too)."""
+        roles = role.split("+")
+        if any(r not in ROLES for r in roles):
             raise AuthError(f"unknown role {role}")
         now = int(time.time())
         claims = {"iss": self.issuer, "sub": f"dev-{username}", "username": username, "client_id": self.client_id,
-                  "token_use": "access", "cognito:groups": [role], "iat": now, "exp": now + ttl_s,
+                  "token_use": "access", "cognito:groups": roles, "iat": now, "exp": now + ttl_s,
                   "jti": uuid.uuid4().hex}
         return jwt.encode(claims, self._key, algorithm="RS256", headers={"kid": self.kid})
 

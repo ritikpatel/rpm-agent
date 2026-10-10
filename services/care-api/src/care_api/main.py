@@ -39,7 +39,7 @@ log = logging.getLogger("care_api")
 settings = CareSettings()
 state: dict = {}
 LOCAL = settings.env == "local"
-ROLE_CHOICES = ["nurse", "physician", "presenter", "admin"]
+ROLE_CHOICES = ["nurse", "physician", "presenter", "admin", "physician+presenter+admin"]
 
 
 def configure_auth(cfg: CareSettings) -> None:
@@ -163,7 +163,7 @@ def auth_config() -> dict:
 
 class DevLoginIn(BaseModel):
     username: str = Field(pattern=r"^[a-z][a-z0-9._-]{2,40}$")
-    role: str = Field(pattern="^(nurse|physician|presenter|admin)$")
+    role: str = Field(pattern=r"^(nurse|physician|presenter|admin)(\+(nurse|physician|presenter|admin)){0,3}$")
 
 
 @app.post("/api/auth/dev/token")
