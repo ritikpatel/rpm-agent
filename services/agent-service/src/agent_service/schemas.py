@@ -66,3 +66,40 @@ BRIEF_SCHEMA = _obj({
     "citations": {"type": "array", "items": _obj({"ref": _STR, "supports": _STR})},
     "uncertainties": {"type": "array", "items": _STR},
 })
+
+
+# ---------------------------------------------------------------------- per-agent outputs
+class MonitoringOut(BaseModel):
+    signal_quality: Literal["reliable", "possible_artifact", "insufficient_data"]
+    clinical_picture: str
+    key_findings: list[Finding] = Field(default_factory=list)
+
+
+class RiskOut(BaseModel):
+    concern_level: Literal["low", "medium", "high", "critical"]
+    confidence: Literal["low", "medium", "high"]
+    risk_summary: str
+    model_evidence_note: str
+    key_findings: list[Finding] = Field(default_factory=list)
+
+
+class EscalationOut(BaseModel):
+    recommended_actions: list[RecommendedAction] = Field(default_factory=list)
+    rationale: str
+
+
+_FINDINGS = {"type": "array", "items": _obj({"finding": _STR, "evidence": _STR})}
+MONITORING_SCHEMA = _obj({
+    "signal_quality": {"type": "string", "enum": ["reliable", "possible_artifact", "insufficient_data"]},
+    "clinical_picture": _STR, "key_findings": _FINDINGS,
+})
+RISK_SCHEMA = _obj({
+    "concern_level": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "risk_summary": _STR, "model_evidence_note": _STR, "key_findings": _FINDINGS,
+})
+ESCALATION_SCHEMA = _obj({
+    "recommended_actions": {"type": "array", "items": _obj({"action": {"type": "string", "enum": ACTIONS},
+                                                            "reason": _STR})},
+    "rationale": _STR,
+})

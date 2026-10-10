@@ -7,7 +7,7 @@ from .policy import checkin_topic
 
 
 def _latest(ctx: dict) -> dict:
-    return {k: v.get("v") for k, v in ((ctx["status"] or {}).get("latest") or {}).items() if isinstance(v, dict)}
+    return dict((ctx["status"] or {}).get("latest") or {})
 
 
 def _trend_line(ctx: dict) -> tuple[str, list[dict]]:

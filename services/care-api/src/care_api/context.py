@@ -12,7 +12,7 @@ from psycopg_pool import ConnectionPool
 
 log = logging.getLogger(__name__)
 
-SECTIONS = ("vitals", "events", "risk", "record")
+SECTIONS = ("profile", "vitals", "events", "risk", "record")
 
 
 class PatientContext:
@@ -127,4 +127,6 @@ class PatientContext:
     def section(self, patient_id: str, name: str, fresh: bool = False) -> dict:
         if name == "risk":
             return self.risk(patient_id, fresh)
+        if name == "profile":
+            return {"profile": self.profile(patient_id)}
         return getattr(self, name)(patient_id)

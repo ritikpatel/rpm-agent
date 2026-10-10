@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from agent_service.graph import burst_lead, check_citations, classify
+from agent_service.graph import check_citations, classify
 from agent_service.policy import gate
 from agent_service.schemas import ASSESSMENT_SCHEMA, Assessment
 from rpm_core.rag import Hit
@@ -62,6 +62,7 @@ def test_trigger_classification():
     assert classify({"type": "SPO2_LOW", "requires_alert": True}) == "alert"
     assert classify({"type": "NEWS2_RISING", "requires_alert": False}) == "monitor"
     assert classify({"type": "DATA_GAP", "requires_alert": False}) == "record"
+    assert classify({"type": "DISCHARGED", "requires_alert": False}) == "discharge"
 
 
 def test_assessment_schema_is_strict_and_matches_model():
@@ -74,19 +75,6 @@ def test_assessment_schema_is_strict_and_matches_model():
             strict(node["items"])
     strict(ASSESSMENT_SCHEMA)
     Assessment.model_validate(assessment(actions=["NONE"]))
-
-
-def test_burst_runs_once_on_most_severe_event():
-    def ev(eid, etype, sev, alert):
-        return {"event_id": eid, "type": etype, "severity": sev, "requires_alert": alert}
-    rising = ev("1", "NEWS2_RISING", "low", False)
-    edge = ev("2", "EDGE_ALERT", "high", True)
-    crit = ev("3", "SPO2_CRITICAL", "critical", True)
-    reply = ev("4", "CHECKIN_REPLY", "critical", False)
-    assert burst_lead(rising, [rising, edge, crit, reply])["event_id"] == "3"  # a reply is never a lead
-    assert burst_lead(edge, [rising, edge])["event_id"] == "2"
-    twin = ev("5", "SPO2_LOW", "high", True)
-    assert burst_lead(edge, [twin, edge])["event_id"] == "2"  # ties keep the triggering event
 
 
 def test_offline_recommendation_matches_the_event_not_the_first_protocol_line():

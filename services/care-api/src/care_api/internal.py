@@ -63,8 +63,8 @@ def read_section(patient_id: str, section: str, caller: Caller, fresh: bool = Fa
         raise HTTPException(404, "unknown section")
     if STATE["ctx"].profile(patient_id) is None:
         raise HTTPException(404, "patient not found")
-    audit(caller, "read", {"vitals": "Observation", "events": "Flag", "risk": "RiskAssessment",
-                           "record": "Patient"}[section], None, patient_id, {"section": section})
+    audit(caller, "read", {"vitals": "Observation", "events": "Flag", "risk": "RiskAssessment", "record": "Patient",
+                           "profile": "Patient"}[section], None, patient_id, {"section": section})
     return STATE["ctx"].section(patient_id, section, fresh)
 
 

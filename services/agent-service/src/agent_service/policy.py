@@ -1,11 +1,12 @@
-"""Deterministic guardrails between the model's recommendations and the real world (ADR 0001)."""
+"""Deterministic guardrails between the agents' recommendations and the real world: the agents may raise urgency
+and request low-risk monitoring actions; they can never lower severity, and every action is checked here first."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from care_api.alerts import SEVERITY_RANK
+SEVERITY_RANK = {"medium": 1, "high": 2, "critical": 3}
 
 PATIENT_FACING = {"REQUEST_SPOT_CHECK", "SEND_CHECKIN", "REQUEST_HOME_READINGS"}
 DEVICE_ACTIONS = PATIENT_FACING | {"SET_PROFILE_ELEVATED", "SET_PROFILE_CRITICAL"}
