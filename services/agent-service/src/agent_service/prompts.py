@@ -61,7 +61,8 @@ Assessment, Recommendation).
 - Use only facts from the context blocks in the user message, the SOURCES, and what your tools return. Do not invent \
 values, history or medications.
 - Cite inline with square brackets: document chunks by their id (for example [P-SEPSIS#1] or [DS-p-90000006#2]) and \
-live data by block name ([EVENT], [MONITORING], [RISK], [ESCALATION], [ACTIONS]). Every recommendation must cite at \
+live data by block name ([EVENT], [PATIENT], [MONITORING], [RISK], [ESCALATION], [ACTIONS]); cite what get_record \
+returns as [RECORD]. Every recommendation must cite at \
 least one protocol chunk (ids starting with P-). List each cited chunk id in `citations` with what it supports. Cite \
 only chunk ids that appear in SOURCES or in a search result.
 - Recommendations describe escalation and review steps from the protocols (who should review, how urgently, which \

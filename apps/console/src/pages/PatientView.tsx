@@ -1,8 +1,10 @@
-// Patient view: the active alert with the agent's cited SBAR brief, escalation timeline and notifications; live
-// vitals small multiples; risk models (flagged when unvalidated); record summary; clinician + presenter actions.
+// Patient view: the active alert with the agents' cited SBAR summary, escalation timeline and notifications; live
+// vitals; the three risk models (flagged when unvalidated); labs; messages with the patient; record summary;
+// clinician actions and demonstration controls (scenario, discharge / admit, lab result).
 import { Fragment, useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { api, type AlertDetail, type Chunk, type EventRow, type LiveMessage, type RiskRow, type VitalRow } from "../api";
+import { api, type AgentRun, type AlertDetail, type Brief, type Chunk, type EventRow, type LabRow, type LiveMessage,
+         type MessageRow, type RiskRow, type VitalRow } from "../api";
 import VitalsPanels from "../components/VitalsPanels";
 import { ago, Badge, bandStatus, fmt, hhmm, News2Badge, severityStatus } from "../components/ui";
 
@@ -48,26 +50,34 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [scenario, setScenario] = useState("sepsis");
-  const [ramp, setRamp] = useState(90);
+  const [ramp, setRamp] = useState(60);
+  const [labs, setLabs] = useState<LabRow[]>([]);
+  const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [text, setText] = useState("");
+  const [watch, setWatch] = useState("");
+  const [lab, setLab] = useState({ name: "Lactate", value: "4.2", unit: "mmol/L", flag: "H" });
 
   const loadAlert = useCallback(async () => {
     const active = (await api.alerts("active")).find((a) => a.patient_id === id);
     setAlert(active ? await api.alert(active.alert_id) : null);
   }, [id]);
   const loadSide = useCallback(async () => {
-    const [pp, rk, ev] = await Promise.all([api.patient(id), api.risk(id), api.events(30, id)]);
-    setP(pp); setRisk(rk); setEvents(ev);
+    const [pp, rk, ev, lb, ms, rn] = await Promise.all([api.patient(id), api.risk(id), api.events(30, id),
+      api.labs(id), api.messages(id), api.agentRuns(id)]);
+    setP(pp); setRisk(rk); setEvents(ev); setLabs(lb); setMessages(ms); setRuns(rn);
   }, [id]);
+  const loadVitals = useCallback(() => {
+    setLoadingVitals(true);
+    api.vitals(id, minutes).then((v) => setVitals(v.reverse())).finally(() => setLoadingVitals(false));
+  }, [id, minutes]);
 
   useEffect(() => {
     setEvidence(null);
     void loadAlert(); void loadSide();
     api.summary(id).then(setSummary).catch(() => setSummary(null));
   }, [id, loadAlert, loadSide]);
-  useEffect(() => {
-    setLoadingVitals(true);
-    api.vitals(id, minutes).then((v) => setVitals(v.reverse())).finally(() => setLoadingVitals(false));
-  }, [id, minutes]);
+  useEffect(() => { loadVitals(); }, [loadVitals]);
 
   useEffect(() => {  // live updates for this patient
     if (!live) return;
@@ -77,23 +87,32 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
         late: false } as VitalRow]);
       setP((pp) => pp && { ...pp, news2: live.news2?.total ?? pp.news2, news2_band: live.news2?.band ?? pp.news2_band,
                                news2_partial: live.news2?.partial ?? pp.news2_partial, last_seen: live.ts });
-    } else if ((live.type === "alert" && live.alert.patient_id === id)
+    } else if ((live.type === "alert" && live.alert?.patient_id === id)
       || (live.type === "agent_run" && live.patient_id === id)
       || (live.type === "alert_changed" && (live.alert_id === alert?.alert_id || !alert))) {
       void loadAlert(); void loadSide();
+    } else if ((live.type === "message" || live.type === "risk") && live.patient_id === id) {
+      void loadSide();
     } else if (live.type === "event" && live.event.patient_id === id) {
       setEvents((e) => [live.event, ...e].slice(0, 30));
+      if (["DISCHARGED", "ADMITTED", "LAB_RESULT"].includes(live.event.type)) {
+        // the care setting (and with it the device) just changed: reload after the registry has caught up
+        window.setTimeout(() => { void loadSide(); loadVitals(); }, 1500);
+      }
     }
   }, [live]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const act = async (fn: () => Promise<unknown>, done: string) => {
     setMsg(null);
-    try { await fn(); setMsg(done); await loadAlert(); } catch (e) { setMsg(`Failed: ${(e as Error).message}`); }
+    try { await fn(); setMsg(done); await loadAlert(); await loadSide(); }
+    catch (e) { setMsg(`Failed: ${(e as Error).message}`); }
   };
   const cite = async (ref: string) => { try { setEvidence(await api.chunk(ref)); } catch { setEvidence(null); } };
 
   if (!p) return <div className="page">Loading…</div>;
   const brief = alert?.brief;
+  const lastRun = runs.find((r) => r.brief) ?? null;   // newest agent summary, shown when no alert is open
+  const home = p.care_setting === "home";
   const nextEsc = alert?.next_escalation_at ? Math.max(0, (new Date(alert.next_escalation_at).getTime() - now) / 1000) : null;
 
   return (
@@ -122,7 +141,20 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
                   <span className="tag">escalates in {Math.ceil(nextEsc)}s</span>}
               </div>}
             </header>
-            {!alert && <div className="empty">No active alert for this patient.</div>}
+            {!alert && <div className="body">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <span className="muted">No active alert for this patient.</span>
+                {canAct && <button className="btn" onClick={() => act(() => api.agentReview(id),
+                  "Agent review requested; the summary appears here when it is ready")}>Ask the agents for a review</button>}
+              </div>
+              {msg && <div className="muted small" style={{ marginTop: 6 }}>{msg}</div>}
+              {lastRun?.brief && <>
+                <h3 style={{ marginTop: 14 }}>Latest agent summary <span className="muted small">
+                  · {lastRun.trigger.replace("_", " ")} · {ago(lastRun.started_at, now)}</span></h3>
+                <BriefView brief={lastRun.brief} cite={cite} />
+                {evidence && <Evidence chunk={evidence} onClose={() => setEvidence(null)} />}
+              </>}
+            </div>}
             {alert && <div className="body">
               <div style={{ fontWeight: 600 }}>{alert.title}</div>
               <div className="muted small">opened {ago(alert.opened_at, now)} · {alert.event_count} event(s):
@@ -142,27 +174,11 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
                 {msg && <span className="muted small">{msg}</span>}
               </div>}
 
-              <h3 style={{ marginTop: 16 }}>Agent brief (SBAR)</h3>
-              {!brief && <div className="muted">Agent brief pending…</div>}
+              <h3 style={{ marginTop: 16 }}>Agent summary (SBAR)</h3>
+              {!brief && <div className="muted">The agents are working on it…</div>}
               {brief && <>
-                <div className="row small" style={{ marginTop: 4 }}>
-                  <span className="tag">{brief.generated_by ?? "agent"}</span>
-                  {brief.citation_check && <Badge status={brief.citation_check === "passed" ? "good"
-                    : brief.citation_check === "template" ? "neutral" : "warning"}>citations {brief.citation_check}</Badge>}
-                </div>
-                <div style={{ fontWeight: 600, marginTop: 8 }}>{brief.headline}</div>
-                <dl className="sbar">
-                  {(["situation", "background", "assessment", "recommendation"] as const).map((k) => (
-                    <Fragment key={k}><dt>{k}</dt><dd>{withCitations(brief[k], cite)}</dd></Fragment>
-                  ))}
-                </dl>
-                {brief.uncertainties.length > 0 && <div className="small" style={{ marginTop: 8 }}>
-                  <span className="muted">Uncertainty: </span>{brief.uncertainties.join(" ")}</div>}
-                {evidence && <div className="evidence" role="region" aria-label="Cited source">
-                  <div className="row" style={{ justifyContent: "space-between" }}>
-                    <b>{evidence.chunk_id} · {evidence.title} — {evidence.heading}</b>
-                    <button className="btn" onClick={() => setEvidence(null)} aria-label="Close source">Close</button>
-                  </div>{evidence.text}</div>}
+                <BriefView brief={brief} cite={cite} />
+                {evidence && <Evidence chunk={evidence} onClose={() => setEvidence(null)} />}
               </>}
 
               {alert.agent_assessment && <>
@@ -232,47 +248,119 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
           {canAct && <section className="card" aria-labelledby="actions-h">
             <header><h2 id="actions-h">Actions</h2><span className="muted small">sent to the patient's device</span></header>
             <div className="body row">
-              <button className="btn" disabled={p.care_setting !== "home"}
+              <button className="btn" disabled={!home} title={home ? undefined : "ICU monitors have no patient screen"}
                       onClick={() => act(() => api.command(id, { cmd: "SPOT_CHECK" }), "SpO₂ spot check requested")}>
                 Request SpO₂ reading</button>
-              <button className="btn" disabled={p.care_setting !== "home"}
+              <button className="btn" disabled={!home} title={home ? undefined : "ICU monitors have no patient screen"}
                       onClick={() => act(() => api.command(id, { cmd: "CHECKIN", topic: "breathless" }), "Check-in sent")}>
                 Ask: short of breath?</button>
               <button className="btn" onClick={() => act(() => api.command(id, { cmd: "SET_PROFILE", profile: "elevated" }),
                 "Sampling raised")}>Raise sampling</button>
+              {alert && msg && <span className="muted small">{msg}</span>}
+            </div>
+          </section>}
+
+          {home && <section className="card" aria-labelledby="msg-h">
+            <header><h2 id="msg-h">Messages with the patient</h2><span className="muted small">shown on the watch</span></header>
+            <div className="body">
+              {canAct && <form className="row" onSubmit={(e) => { e.preventDefault();
+                if (text.trim()) void act(() => api.sendMessage(id, text.trim()).then(() => setText("")), "Message sent"); }}>
+                <input type="text" maxLength={200} value={text} onChange={(e) => setText(e.target.value)}
+                       placeholder="Short message to the patient" aria-label="Message" style={{ flex: 1, minWidth: 180 }} />
+                <button className="btn primary" disabled={!text.trim()}>Send</button>
+              </form>}
+              {messages.length === 0 && <div className="muted small" style={{ marginTop: 6 }}>No messages yet.</div>}
+              <ul className="timeline" style={{ marginTop: 8 }}>
+                {messages.slice(0, 8).map((m, i) => (
+                  <li key={i}><span className="muted small">{hhmm(m.at)}</span>
+                    <div><div>{m.direction === "from_patient" ? "Patient: " : ""}{m.text}</div>
+                      <div className="actor">{m.kind} · {m.sender}</div></div></li>))}
+              </ul>
             </div>
           </section>}
 
           <section className="card" aria-labelledby="risk-h">
             <header><h2 id="risk-h">Risk models</h2><span className="muted small">decision support only</span></header>
             <div className="body">
-              {risk.length === 0 && <div className="muted">Not scored yet (scored when the agent runs).</div>}
+              {risk.length === 0 && <div className="muted">Not scored yet (scores follow the first readings).</div>}
               {risk.map((r) => (
                 <div key={r.model} style={{ marginBottom: 10 }}>
                   <div className="row" style={{ justifyContent: "space-between" }}>
-                    <b>{r.model.replace(/_/g, " ")}</b>
+                    <b title={r.outcome ?? undefined}>{r.title ?? r.model.replace(/_/g, " ")}</b>
                     <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band}</Badge>
                   </div>
-                  <div className="muted small">v{r.model_version} · {ago(r.computed_at, now)}{" "}
+                  <div className="muted small">{r.outcome}</div>
+                  <div className="muted small">v{r.version} · {ago(r.computed_at, now)}{" "}
                     {r.validated ? <span className="tag">validated</span>
-                      : <span className="tag" title={`Cross-validated metrics: ${JSON.stringify(r.metrics)}`}>
-                          unvalidated baseline — weak evidence</span>}</div>
+                      : <span className="tag" title={`Owner: ${r.owner ?? "?"}. Metrics: ${JSON.stringify(r.metrics)}`}>
+                          placeholder, not validated: weak evidence</span>}</div>
                   <div className="small">{r.top_factors.slice(0, 3).map((f) =>
                     `${f.feature.replace(/_/g, " ")} ${f.contribution > 0 ? "↑" : "↓"}`).join(" · ")}</div>
                 </div>))}
             </div>
           </section>
 
-          {demo && <section className="card demo" aria-labelledby="demo-h">
-            <header><h2 id="demo-h">Presenter controls</h2><span className="muted small">simulated patient only</span></header>
+          <section className="card" aria-labelledby="labs-h">
+            <header><h2 id="labs-h">Lab results</h2><span className="muted small">from the hospital record (FHIR)</span></header>
+            <div className="scroll" style={{ maxHeight: 200 }}>
+              {labs.length === 0 && <div className="empty">No lab results received since monitoring started.</div>}
+              {labs.length > 0 && <table className="small"><thead><tr><th>Time</th><th>Test</th>
+                <th className="num">Value</th><th>Flag</th></tr></thead>
+                <tbody>{labs.slice(0, 12).map((l, i) => (
+                  <tr key={i}><td>{hhmm(l.ts)}</td><td>{l.name}</td>
+                    <td className="num">{fmt(l.value, 1)} {l.unit ?? ""}</td><td>{l.flag ?? ""}</td></tr>))}</tbody></table>}
+            </div>
+          </section>
+
+          {canAct && home && <section className="card" aria-labelledby="dev-h">
+            <header><h2 id="dev-h">Watch</h2><span className="muted small">currently {p.device_id ?? "none"}</span></header>
             <div className="body row">
-              <select value={scenario} onChange={(e) => setScenario(e.target.value)} aria-label="Scenario">
-                {SCENARIOS.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
-              </select>
-              <label className="small muted">ramp (s) <input type="number" min={5} max={900} value={ramp}
-                style={{ width: 70 }} onChange={(e) => setRamp(Number(e.target.value))} /></label>
-              <button className="btn" onClick={() => act(() => api.scenario({ patient_id: id, scenario, ramp_s: ramp }),
-                `Injected ${scenario}`)}>Inject</button>
+              <input type="text" value={watch} onChange={(e) => setWatch(e.target.value.trim())}
+                     placeholder="Device id, e.g. gw-demo-01" aria-label="Watch device id" style={{ minWidth: 180 }} />
+              <button className="btn" disabled={!/^[A-Za-z0-9_-]{3,64}$/.test(watch)}
+                      onClick={() => act(() => api.assignDevice(id, watch), `Watch ${watch} assigned`)}>
+                Assign watch</button>
+            </div>
+          </section>}
+
+          {demo && <section className="card demo" aria-labelledby="demo-h">
+            <header><h2 id="demo-h">Demo controls</h2><span className="muted small">simulated patient · hospital record</span></header>
+            <div className="body stack" style={{ gap: 10 }}>
+              <div className="row">
+                <select value={scenario} onChange={(e) => setScenario(e.target.value)} aria-label="Scenario">
+                  {SCENARIOS.map((sc) => <option key={sc} value={sc}>{sc.replace(/_/g, " ")}</option>)}
+                </select>
+                <label className="small muted">ramp (s) <input type="number" min={5} max={900} value={ramp}
+                  style={{ width: 70 }} onChange={(e) => setRamp(Number(e.target.value))} /></label>
+                <button className="btn" onClick={() => act(() => api.scenario({ patient_id: id, scenario, ramp_s: ramp }),
+                  `Started ${scenario.replace(/_/g, " ")}`)}>Start scenario</button>
+                <button className="btn" onClick={() => act(() => api.clearScenario(id), "Scenario ended")}>End</button>
+              </div>
+              <div className="row">
+                {home
+                  ? <button className="btn" onClick={() => act(() => api.admit(id), "Admitted to ICU in the hospital record")}>
+                      Admit to ICU</button>
+                  : <button className="btn" onClick={() => act(() => api.discharge(id),
+                      "Discharged in the hospital record; the ICU monitor stops and a wearable starts")}>
+                      Discharge home</button>}
+                <span className="muted small">writes a FHIR Encounter; the platform reacts to the record</span>
+              </div>
+              <div className="row">
+                <input type="text" value={lab.name} aria-label="Lab test" style={{ width: 100 }}
+                       onChange={(e) => setLab({ ...lab, name: e.target.value })} />
+                <input type="number" value={lab.value} aria-label="Lab value" style={{ width: 70 }}
+                       onChange={(e) => setLab({ ...lab, value: e.target.value })} />
+                <input type="text" value={lab.unit} aria-label="Lab unit" style={{ width: 70 }}
+                       onChange={(e) => setLab({ ...lab, unit: e.target.value })} />
+                <select value={lab.flag} aria-label="Lab flag" onChange={(e) => setLab({ ...lab, flag: e.target.value })}>
+                  {["H", "HH", "L", "LL", "N"].map((f) => <option key={f}>{f}</option>)}
+                </select>
+                <button className="btn" disabled={!lab.name || lab.value === ""}
+                        onClick={() => act(() => api.lab({ patient_id: id, name: lab.name, value: Number(lab.value),
+                          unit: lab.unit || undefined, flag: lab.flag }), "Lab result filed in the hospital record")}>
+                  File lab result</button>
+              </div>
+              {msg && <span className="muted small">{msg}</span>}
             </div>
           </section>}
 
@@ -296,5 +384,36 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
         </div>
       </div>
     </div>
+  );
+}
+
+
+function BriefView({ brief, cite }: { brief: Brief; cite: (ref: string) => void }) {
+  return (
+    <>
+      <div className="row small" style={{ marginTop: 4 }}>
+        <span className="tag">{brief.generated_by ?? "agent"}</span>
+        {brief.citation_check && <Badge status={brief.citation_check === "passed" ? "good"
+          : brief.citation_check === "template" ? "neutral" : "warning"}>citations {brief.citation_check}</Badge>}
+      </div>
+      <div style={{ fontWeight: 600, marginTop: 8 }}>{brief.headline}</div>
+      <dl className="sbar">
+        {(["situation", "background", "assessment", "recommendation"] as const).map((k) => (
+          <Fragment key={k}><dt>{k}</dt><dd>{withCitations(brief[k], cite)}</dd></Fragment>
+        ))}
+      </dl>
+      {brief.uncertainties.length > 0 && <div className="small" style={{ marginTop: 8 }}>
+        <span className="muted">Uncertainty: </span>{brief.uncertainties.join(" ")}</div>}
+    </>
+  );
+}
+
+function Evidence({ chunk, onClose }: { chunk: Chunk; onClose: () => void }) {
+  return (
+    <div className="evidence" role="region" aria-label="Cited source">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <b>{chunk.chunk_id} · {chunk.title} — {chunk.heading}</b>
+        <button className="btn" onClick={onClose} aria-label="Close source">Close</button>
+      </div>{chunk.text}</div>
   );
 }

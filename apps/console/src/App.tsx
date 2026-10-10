@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, connectLive, type AlertRow, type LiveMessage, type PatientRow, type Stats } from "./api";
 import { completeSignIn, loadConfig, onAuthChange, signedIn, signOut, type AuthConfig, type Me } from "./auth";
 import SignIn from "./components/SignIn";
+import Audit from "./pages/Audit";
 import PatientView, { SCENARIOS } from "./pages/PatientView";
 import Worklist from "./pages/Worklist";
 
@@ -59,7 +60,7 @@ function PresenterOnly({ me }: { me: Me }) {
         <UserMenu me={me} /></header>
       <div className="page" style={{ maxWidth: 640 }}>
         <section className="card demo">
-          <header><h2>Presenter controls</h2><span className="muted small">no access to patient data</span></header>
+          <header><h2>Demo controls</h2><span className="muted small">no access to patient data</span></header>
           <div className="body row">
             <input value={pid} onChange={(e) => setPid(e.target.value.trim())} placeholder="p-90000012"
                    aria-label="Patient id" />
@@ -67,9 +68,9 @@ function PresenterOnly({ me }: { me: Me }) {
               {SCENARIOS.map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
             </select>
             <button className="btn" disabled={!/^p-\d+$/.test(pid)} onClick={() => {
-              api.scenario({ patient_id: pid, scenario, ramp_s: 90 }).then(() => setMsg(`Injected ${scenario}`),
+              api.scenario({ patient_id: pid, scenario, ramp_s: 60 }).then(() => setMsg(`Started ${scenario}`),
                 (e) => setMsg(String(e)));
-            }}>Inject</button>
+            }}>Start scenario</button>
             {msg && <span className="muted small">{msg}</span>}
           </div>
         </section>
@@ -105,11 +106,13 @@ function Console({ me }: { me: Me }) {
   }, []);
 
   useEffect(() => {
-    api.patients().then(setPatients).catch(() => {});
+    const census = () => api.patients().then(setPatients).catch(() => {});
+    void census();
     api.alerts().then(setAlerts).catch(() => {});
     const refresh = () => api.stats().then(setStats).catch(() => {});
     void refresh();
     const s = window.setInterval(refresh, 5000);
+    const c = window.setInterval(census, 20000);  // picks up admissions, discharges and new risk scores
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     const stop = connectLive((m) => {
       setLive(m);
@@ -126,9 +129,11 @@ function Console({ me }: { me: Me }) {
         window.setTimeout(() => setFlashed((f) => { const n = new Set(f); n.delete(m.patient_id); return n; }), 900);
       } else if (m.type === "alert" || m.type === "alert_changed" || m.type === "agent_run") {
         loadAlerts();
+      } else if (m.type === "event" && (m.event.type === "DISCHARGED" || m.event.type === "ADMITTED")) {
+        window.setTimeout(census, 1500);
       }
     }, setUp);
-    return () => { stop(); window.clearInterval(s); window.clearInterval(t); };
+    return () => { stop(); window.clearInterval(s); window.clearInterval(t); window.clearInterval(c); };
   }, [loadAlerts]);
 
   const patientMatch = route.match(/^#\/patients\/([\w-]+)/);
@@ -140,14 +145,17 @@ function Console({ me }: { me: Me }) {
         </div>
         <span className="muted small">Synthetic data · decision support, not a diagnosis</span>
         <div className="spacer" />
+        {me.can.audit && <a href="#/audit" className="small">Audit trail</a>}
         <UserMenu me={me} />
         <div className="seg" role="group" aria-label="Theme">
           {(["system", "light", "dark"] as const).map((t) =>
             <button key={t} aria-pressed={theme === t} onClick={() => setTheme(t)}>{t}</button>)}
         </div>
       </header>
-      {patientMatch
-        ? <PatientView id={patientMatch[1]} now={now} live={live} demo={me.can.demo} canAct={me.can.act} />
+      {route.startsWith("#/audit") && me.can.audit ? <Audit />
+        : patientMatch
+        ? <PatientView id={patientMatch[1]} now={now} live={live} demo={me.can.demo && me.demo_controls !== false}
+                       canAct={me.can.act} />
         : <Worklist patients={patients} alerts={alerts} stats={stats} trends={trends} flashed={flashed} now={now}
                     onChange={loadAlerts} canAct={me.can.act} />}
     </>

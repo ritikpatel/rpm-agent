@@ -1,6 +1,6 @@
 import { accessToken, sessionRejected, type Me } from "./auth";
 
-// Typed client for the RPM API + the live WebSocket feed.
+// Typed client for care-api and its live WebSocket feed.
 
 export type Latest = Record<string, { v: number | string; ts: string }>;
 
@@ -8,7 +8,7 @@ export interface PatientRow {
   patient_id: string; display_name: string; sex: string; age: number; primary_condition: string;
   care_setting: "home" | "icu"; discharge_at: string | null; device_id: string | null; last_seen: string | null;
   news2: number | null; news2_band: string | null; news2_partial: boolean | null; latest: Latest | null;
-  alerts_24h: number;
+  alerts_24h: number; risk: Record<string, { probability: number; band: string }> | null;
 }
 
 export interface VitalRow {
@@ -51,9 +51,23 @@ export interface Assessment {
 }
 
 export interface RiskRow {
-  model: string; model_version: string; probability: number; band: string; computed_at: string;
+  model: string; version: string; title: string | null; outcome: string | null; owner: string | null;
+  probability: number; band: string; computed_at: string;
   top_factors: { feature: string; value: number; contribution: number }[]; validated: boolean | null;
-  metrics: Record<string, number> | null;
+  metrics: Record<string, number | string> | null;
+}
+
+export interface MessageRow { at: string; direction: "to_patient" | "from_patient"; kind: string; text: string; sender: string }
+export interface LabRow { ts: string; code: string; name: string; value: number | null; unit: string | null; flag: string | null }
+export interface AgentRun {
+  run_id: string; alert_id: string | null; trigger: string; status: string; provider: string | null;
+  model: string | null; started_at: string; finished_at: string | null; assessment: Assessment | null;
+  actions: { action: string; reason: string; status: string }[]; brief: Brief | null;
+  input_tokens: number | null; output_tokens: number | null; error: string | null;
+}
+export interface AuditRow {
+  id: number; at: string; actor: string; actor_role: string | null; action: string; resource_type: string;
+  resource_id: string | null; patient_id: string | null; outcome: string;
 }
 
 export interface EventRow {
@@ -62,8 +76,9 @@ export interface EventRow {
 }
 
 export interface Stats {
-  patients: number; streaming: number; band_high: number; band_medium: number; band_low_medium: number;
-  windows_5m: number; e2e_p50_s: number | null; e2e_p95_s: number | null; events_1h: Record<string, number>;
+  patients: number; icu: number; home: number; streaming: number; band_high: number; band_medium: number;
+  band_low_medium: number; windows_5m: number; e2e_p50_s: number | null; e2e_p95_s: number | null;
+  pages_1h: number; page_p95_s: number | null; events_1h: Record<string, number>;
 }
 
 export interface Chunk { chunk_id: string; title: string; heading: string; text: string; kind: string }
@@ -101,15 +116,29 @@ export const api = {
   command: (id: string, body: { cmd: string; topic?: string; profile?: string }) =>
     post<{ cmd_id: string }>(`/api/patients/${id}/commands`, body),
   scenario: (body: { patient_id: string; scenario: string; ramp_s?: number }) => post("/api/demo/scenario", body),
+  clearScenario: (patient_id: string) => post("/api/demo/clear", { patient_id, scenario: "clear" }),
+  discharge: (patient_id: string) => post("/api/demo/discharge", { patient_id }),
+  admit: (patient_id: string) => post("/api/demo/admit", { patient_id }),
+  lab: (body: { patient_id: string; name: string; value: number; unit?: string; flag?: string }) =>
+    post("/api/demo/lab", body),
+  labs: (id: string) => call<LabRow[]>(`/api/patients/${id}/labs`),
+  messages: (id: string) => call<MessageRow[]>(`/api/patients/${id}/messages`),
+  sendMessage: (id: string, text: string) => post(`/api/patients/${id}/messages`, { text }),
+  agentRuns: (id: string) => call<AgentRun[]>(`/api/patients/${id}/agent-runs?limit=10`),
+  agentReview: (id: string) => post<{ queued: boolean }>(`/api/patients/${id}/agent-review`, {}),
+  assignDevice: (id: string, device_id: string) => post(`/api/patients/${id}/device`, { device_id }),
+  audit: (limit = 200) => call<AuditRow[]>(`/api/audit?limit=${limit}`),
 };
 
 export type LiveMessage =
   | { type: "vitals"; patient_id: string; device_id: string; ts: string; vitals: Record<string, number>;
       news2: { total: number; band: string; partial: boolean } | null; late: boolean; buffered: boolean }
   | { type: "event"; event: EventRow }
-  | { type: "alert"; alert: AlertRow }
+  | { type: "alert"; alert: AlertRow | null }
   | { type: "alert_changed"; alert_id: string }
-  | { type: "agent_run"; run_id: string; patient_id: string; alert_id: string | null; status: string };
+  | { type: "agent_run"; run_id: string; patient_id: string; alert_id: string | null; status: string }
+  | { type: "message"; patient_id: string }
+  | { type: "risk"; patient_id: string; scores: { model: string; probability: number; band: string }[] };
 
 export function connectLive(onMessage: (m: LiveMessage) => void, onStatus: (up: boolean) => void): () => void {
   let ws: WebSocket | null = null;

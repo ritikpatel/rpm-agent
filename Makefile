@@ -74,7 +74,7 @@ stats:           ## pipeline numbers (patients streaming, latency, events)
 	curl -s localhost:8000/api/stats -H "authorization: Bearer $$TOKEN" | python3 -m json.tool
 
 e2e:             ## end-to-end check of the running local stack
-	uv run python tools/e2e/local_e2e.py
+	python3 scripts/e2e.py $(ARGS)
 
 logs:            ## follow the platform logs
 	$(COMPOSE) logs -f --tail 50 care-api stream-processor risk-service agent-service

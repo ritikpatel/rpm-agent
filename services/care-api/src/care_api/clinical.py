@@ -124,7 +124,7 @@ def risk(patient_id: str, request: Request, user: Reader) -> list[dict]:
 @router.get("/patients/{patient_id}/agent-runs")
 def agent_runs(patient_id: str, user: Reader, limit: Annotated[int, Query(ge=1, le=50)] = 10) -> list[dict]:
     return _rows("SELECT run_id, alert_id, trigger, status, provider, model, started_at, finished_at, assessment, "
-                 "actions, input_tokens, output_tokens, error FROM agent_runs WHERE patient_id=%s "
+                 "actions, brief, input_tokens, output_tokens, error FROM agent_runs WHERE patient_id=%s "
                  "ORDER BY started_at DESC LIMIT %s", (patient_id, limit))
 
 

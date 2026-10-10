@@ -109,7 +109,7 @@ def test_api_rejects_before_touching_data(dev):
     assert c.post("/api/alerts/a-1/ack", json={}, headers=admin).status_code == 403
     assert c.post("/api/patients/p-1/commands", json={"cmd": "CHECKIN"}, headers=presenter).status_code == 403
     me = c.get("/api/auth/me", headers=admin).json()
-    assert me["role"] == "admin" and me["can"] == {"read": True, "act": False, "demo": True}
+    assert me["role"] == "admin" and me["can"] == {"read": True, "act": False, "demo": True, "audit": True}
 
 
 def test_dev_login_and_config(dev, monkeypatch):

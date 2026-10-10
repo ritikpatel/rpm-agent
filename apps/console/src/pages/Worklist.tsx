@@ -1,9 +1,21 @@
 // Worklist: stat tiles, the alert inbox (what needs a human now) and the patient census (everyone, risk-sorted).
 import { useMemo, useState } from "react";
 import { api, type AlertRow, type PatientRow, type Stats } from "../api";
-import { ago, Badge, fmt, News2Badge, severityStatus, Sparkline } from "../components/ui";
+import { ago, Badge, bandStatus, fmt, News2Badge, severityStatus, Sparkline } from "../components/ui";
 
 const TIER = ["", "RPM nurse", "Physician", "Rapid response"];
+const BAND_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 };
+
+/** The most concerning risk model for a patient, as a compact badge. */
+function topRisk(p: PatientRow) {
+  const entries = Object.entries(p.risk ?? {});
+  if (entries.length === 0) return <span className="muted small">–</span>;
+  const [model, r] = entries.sort((a, b) => (BAND_RANK[b[1].band] ?? 0) - (BAND_RANK[a[1].band] ?? 0)
+    || b[1].probability - a[1].probability)[0];
+  return <Badge status={bandStatus(r.band)} title={entries.map(([m, x]) =>
+    `${m.replace(/_/g, " ")}: ${(x.probability * 100).toFixed(0)}% (${x.band})`).join("\n")}>
+    {model.split("_")[0]} {(r.probability * 100).toFixed(0)}%</Badge>;
+}
 
 export default function Worklist({ patients, alerts, stats, trends, flashed, now, onChange, canAct }: {
   patients: PatientRow[]; alerts: AlertRow[]; stats: Stats | null; trends: Record<string, number[]>;
@@ -34,15 +46,16 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
       <div className="tiles">
         <div className="card tile"><div className="label">Patients monitored</div>
           <div className="value">{stats?.patients ?? "–"}</div>
-          <div className="sub">{stats?.streaming ?? "–"} streaming now</div></div>
+          <div className="sub">{stats?.icu ?? "–"} in ICU · {stats?.home ?? "–"} at home · {stats?.streaming ?? "–"} streaming</div></div>
         <div className="card tile"><div className="label">Active alerts</div>
           <div className="value">{alerts.length}</div>
           <div className="sub">{unacked.length} awaiting acknowledgement</div></div>
         <div className="card tile"><div className="label">Critical alerts</div>
           <div className="value">{alerts.filter((a) => a.severity === "critical").length}</div>
           <div className="sub">{alerts.filter((a) => a.severity === "high").length} high</div></div>
-        <div className="card tile"><div className="label">Rule events, last hour</div>
-          <div className="value">{alertsHour}</div><div className="sub">deduplicated into alerts</div></div>
+        <div className="card tile"><div className="label">Sensor → page, p95</div>
+          <div className="value">{stats?.page_p95_s != null ? `${stats.page_p95_s.toFixed(2)} s` : "–"}</div>
+          <div className="sub">{stats?.pages_1h ?? 0} pages · {alertsHour} rule events, last hour</div></div>
         <div className="card tile"><div className="label">Sensor → scored, p95</div>
           <div className="value">{stats?.e2e_p95_s != null ? `${stats.e2e_p95_s.toFixed(2)} s` : "–"}</div>
           <div className="sub">p50 {stats?.e2e_p50_s != null ? `${stats.e2e_p50_s.toFixed(2)} s` : "–"}, last 5 min</div></div>
@@ -94,8 +107,8 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
             sorted by NEWS2</span></header>
           <div className="scroll">
             <table>
-              <thead><tr><th>Patient</th><th>Status</th><th>HR trend</th><th className="num">HR</th>
-                <th className="num">SpO₂</th><th>Last seen</th></tr></thead>
+              <thead><tr><th>Patient</th><th>Status</th><th title="Highest band among the risk models">Risk</th>
+                <th>HR trend</th><th className="num">HR</th><th className="num">SpO₂</th><th>Last seen</th></tr></thead>
               <tbody>
                 {rows.map((p) => {
                   const L = p.latest ?? {};
@@ -106,6 +119,7 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
                       <td><div>{p.display_name}</div><div className="muted small">{p.patient_id} · {p.age}{p.sex} ·
                         {" "}{p.primary_condition} · {p.care_setting === "icu" ? "ICU" : "home"}</div></td>
                       <td><News2Badge score={p.news2} band={p.news2_band} partial={p.news2_partial} /></td>
+                      <td>{topRisk(p)}</td>
                       <td><Sparkline values={trends[p.patient_id] ?? []} label={`${p.display_name} heart rate`} /></td>
                       <td className="num">{fmt(L.heart_rate?.v)}</td>
                       <td className="num">{fmt(L.spo2?.v)}</td>

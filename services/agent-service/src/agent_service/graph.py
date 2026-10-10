@@ -48,8 +48,10 @@ from .schemas import (
 )
 
 log = logging.getLogger(__name__)
-DATA_BLOCKS = {"EVENT", "MONITORING", "RISK", "ESCALATION", "ACTIONS", "CURRENT", "TREND_6H", "RECENT_WINDOWS",
-               "EVENTS_24H", "ACTIVE_ALERT", "RISK_MODELS", "RECORD", "AGENT_ASSESSMENT", "RECENT_AGENT_ACTIONS"}
+# Things a summary may cite that are not document chunks: the context blocks it is given and what its tools return.
+DATA_BLOCKS = {"EVENT", "PATIENT", "MONITORING", "RISK", "ESCALATION", "ACTIONS", "RECORD", "CURRENT", "TREND_6H",
+               "RECENT_WINDOWS", "EVENTS_24H", "ACTIVE_ALERT", "RISK_MODELS", "AGENT_ASSESSMENT",
+               "RECENT_AGENT_ACTIONS", "get_record", "get_vitals", "get_events", "get_risk"}
 _REF = re.compile(r"\[([A-Za-z0-9_\-]+(?:#\d+)?)\]")
 # Clinical vocabulary per event type, so retrieval finds the right protocol even for terse device events.
 EVENT_HINTS = {
