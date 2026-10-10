@@ -7,9 +7,11 @@ platform never sees), and scenarios injected at known times into patients whose 
 Infrastructure (MQTT, SQS, Postgres, care-api) is replaced by in-memory equivalents with the same semantics;
 the clinical logic under test is the production code, unmodified.
 
-Alert model: one active alert per patient (as care-api's AlertStore). A simulated clinician resolves each alert
-`resolve_after_s` after it opened; alert-worthy events while it is open attach, and only a severity increase
-re-pages. This is what turns raw rule findings into the alert and page counts a care team would experience.
+Alert model: one active alert per patient (as care-api's AlertStore). Alert-worthy events while it is open attach,
+and only a severity increase re-pages. A simulated clinician resolves an alert once the patient has produced no
+alert-worthy event for `resolve_after_s`: an alert is not closed while the patient is still unwell, so one long
+deterioration counts as one alert. This is what turns raw rule findings into the alert and page counts a care team
+would experience.
 """
 
 from __future__ import annotations
@@ -127,6 +129,21 @@ def schedule(members: list[CohortMember], hours: float, seed: str, per_type_home
     return cases
 
 
+def dataset_truth(members: list[CohortMember], start: datetime, hours: float) -> dict[str, str]:
+    """What each home patient's own data says about the replayed hours, from the severity the data carries:
+    `deteriorated` (severity reaches EPISODE_SEVERITY), `mild` (above zero but below it), `stable` (zero throughout).
+    MIMIC patients have no severity column, so they are `unlabelled`."""
+    out = {}
+    for m in members:
+        if m.care_setting != "home" or not m.discharge_at:
+            continue
+        offset_h = (start.replace(tzinfo=None) - m.discharge_at).total_seconds() / 3600
+        sev = [v["severity"] for h, v in m.points if "severity" in v and offset_h <= h <= offset_h + hours]
+        out[m.patient_id] = "unlabelled" if not sev else "deteriorated" if max(sev) >= EPISODE_SEVERITY else \
+            "mild" if max(sev) > 0 else "stable"
+    return out
+
+
 def dataset_episodes(members: list[CohortMember], start: datetime, hours: float, min_s: float = 1800) -> list[Case]:
     """Deteriorations that are in the training data itself: stretches of a patient's wearable stream where the
     data's severity fraction is at or above EPISODE_SEVERITY, placed on the replay clock. Only episodes that begin
@@ -158,6 +175,7 @@ class Alert:
     severity: str
     first_type: str
     types: set[str] = field(default_factory=set)
+    last_s: float = 0.0     # time of the latest alert-worthy event attached to it
 
 
 class ClinicianModel:
@@ -171,17 +189,18 @@ class ClinicianModel:
         if not ev.requires_alert:
             return
         a = self.active.get(ev.patient_id)
-        if a and t - a.opened_s >= self.resolve_after_s:
-            a = self.active.pop(ev.patient_id)
+        if a and t - a.last_s >= self.resolve_after_s:   # quiet for long enough: the clinician has resolved it
+            self.active.pop(ev.patient_id)
             a = None
         sev = ev.severity if ev.severity in SEVERITY_RANK else "medium"
         if a is None:
-            a = Alert(ev.patient_id, ev.context or "home", t, sev, ev.type, {ev.type})
+            a = Alert(ev.patient_id, ev.context or "home", t, sev, ev.type, {ev.type}, t)
             self.active[ev.patient_id] = a
             self.alerts.append(a)
             self.pages.append((t, ev.patient_id, "opened"))
         else:
             a.types.add(ev.type)
+            a.last_s = t
             if SEVERITY_RANK[sev] > SEVERITY_RANK[a.severity]:
                 a.severity = sev
                 self.pages.append((t, ev.patient_id, "severity_raised"))
@@ -198,6 +217,7 @@ class ReplayResult:
     pages: list[tuple[float, str, str]]
     windows: int
     start: datetime
+    truth: dict[str, str] = field(default_factory=dict)   # home patient -> what their own data says (see below)
 
 
 def apply_overrides(overrides: dict[str, str]) -> dict:
@@ -281,7 +301,8 @@ def _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, pro
             next_report += 3600
     return ReplayResult(hours, {"home": sum(m.care_setting == "home" for m in members),
                                 "icu": sum(m.care_setting == "icu" for m in members)},
-                        cases, sink.events, clinician.alerts, clinician.pages, sink.windows, start)
+                        cases, sink.events, clinician.alerts, clinician.pages, sink.windows, start,
+                        dataset_truth(members, start, hours))
 
 
 # ---------------------------------------------------------------------- metrics
@@ -317,6 +338,7 @@ def metrics(r: ReplayResult) -> dict:
         return round(n / max(1, patients) / (r.hours / 24), 3)
 
     case_pids = {c.patient_id for c in r.cases}
+    injected_pids = {c.patient_id for c in r.cases if c.scenario != DATASET_EPISODE}
     burden = {}
     for ctx in ("home", "icu"):
         ctx_alerts = [a for a in r.alerts if a.context == ctx]
@@ -345,6 +367,14 @@ def metrics(r: ReplayResult) -> dict:
         return {"n": len(rows), "detected": sum(x["detected"] for x in rows), "paged": sum(x["paged"] for x in rows),
                 "median_time_to_detect_s": tt[len(tt) // 2] if tt else None}
 
+    # Patient-level agreement with the training data's own labels (home patients)
+    by_truth: dict[str, dict] = {}
+    for label in ("deteriorated", "mild", "stable", "unlabelled"):
+        pids = [p for p, t in r.truth.items() if t == label and p not in injected_pids]
+        n_alerts = sum(len(alerts_by_patient[p]) for p in pids)
+        by_truth[label] = {"patients": len(pids), "patients_alerted": sum(1 for p in pids if alerts_by_patient[p]),
+                           "alerts": n_alerts, "alerts_per_patient_day": per_day(n_alerts, len(pids))}
+
     detected = [x for x in case_rows if x["scenario"] not in NEGATIVE_SCENARIOS]
     negatives = [x for x in case_rows if x["scenario"] in NEGATIVE_SCENARIOS]
     return {"hours": r.hours, "patients": r.patients, "windows_scored": r.windows,
@@ -352,6 +382,6 @@ def metrics(r: ReplayResult) -> dict:
                             "negative_scenarios_alerting": sum(x["detected"] for x in negatives)},
             "missed": [x for x in detected if not x["detected"]],
             "alert_worthy_events": sum(1 for e in r.events if e.requires_alert),
-            "burden": burden,
+            "burden": burden, "against_training_data_labels": by_truth,
             "scenarios": {f"{ctx}/{s}": summarise(rows) for (ctx, s), rows in sorted(by_type.items())},
             "cases": case_rows}

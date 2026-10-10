@@ -110,6 +110,8 @@ class AlertEngine:
                 self._record_reply(ev)
             elif ev.type == "RISK_HIGH" and not (ev.evidence or {}).get("validated"):
                 trigger = None  # an unvalidated model is shown, but it starts no agent work and no patient contact
+            if trigger == "monitor" and self.store.active_for_patient(ev.patient_id):
+                trigger = None  # the patient already has an alert with the agents' work on it
             if trigger is None:
                 continue
             key = (ev.patient_id, trigger)

@@ -1,121 +1,121 @@
 {
- "window_minutes": 20,
+ "window_minutes": 30,
  "sensor_to_scored": [
   {
    "context": "home",
-   "windows": 934,
-   "uplink_p50_s": "0.004",
-   "uplink_p95_s": "0.046",
-   "pipeline_p50_s": "0.018",
-   "pipeline_p95_s": "2.855",
-   "sensor_to_scored_p50_s": "0.024",
-   "sensor_to_scored_p95_s": "3.228",
-   "sensor_to_scored_p99_s": "19.168"
+   "windows": 3386,
+   "uplink_p50_s": "0.003",
+   "uplink_p95_s": "0.008",
+   "pipeline_p50_s": "0.011",
+   "pipeline_p95_s": "0.045",
+   "sensor_to_scored_p50_s": "0.013",
+   "sensor_to_scored_p95_s": "0.053",
+   "sensor_to_scored_p99_s": "5.939"
   },
   {
    "context": "icu",
-   "windows": 609,
-   "uplink_p50_s": "0.005",
-   "uplink_p95_s": "0.038",
-   "pipeline_p50_s": "0.018",
-   "pipeline_p95_s": "3.557",
-   "sensor_to_scored_p50_s": "0.024",
-   "sensor_to_scored_p95_s": "4.053",
-   "sensor_to_scored_p99_s": "17.834"
+   "windows": 951,
+   "uplink_p50_s": "0.002",
+   "uplink_p95_s": "0.008",
+   "pipeline_p50_s": "0.009",
+   "pipeline_p95_s": "0.036",
+   "sensor_to_scored_p50_s": "0.012",
+   "sensor_to_scored_p95_s": "0.043",
+   "sensor_to_scored_p99_s": "6.033"
   }
  ],
  "sensor_to_page": [
   {
    "channel": "console",
    "cause": "agent",
-   "pages": 3,
-   "p50_s": "0.259",
-   "p95_s": "0.263",
+   "pages": 6,
+   "p50_s": "0.257",
+   "p95_s": "0.262",
    "max_s": "0.263"
   },
   {
    "channel": "email",
    "cause": "agent",
-   "pages": 3,
-   "p50_s": "0.285",
-   "p95_s": "0.287",
-   "max_s": "0.287"
+   "pages": 6,
+   "p50_s": "0.714",
+   "p95_s": "1.299",
+   "max_s": "1.490"
   },
   {
    "channel": "console",
    "cause": "event",
-   "pages": 5,
-   "p50_s": "0.340",
-   "p95_s": "1.603",
-   "max_s": "1.624"
+   "pages": 6,
+   "p50_s": "0.300",
+   "p95_s": "5.856",
+   "max_s": "7.706"
   },
   {
    "channel": "email",
    "cause": "event",
-   "pages": 5,
-   "p50_s": "0.619",
-   "p95_s": "1.637",
-   "max_s": "1.655"
+   "pages": 6,
+   "p50_s": "1.835",
+   "p95_s": "8.164",
+   "max_s": "10.012"
   },
   {
    "channel": "watch",
    "cause": "event",
-   "pages": 2,
-   "p50_s": "1.202",
-   "p95_s": "1.611",
-   "max_s": "1.656"
+   "pages": 5,
+   "p50_s": "1.820",
+   "p95_s": "8.415",
+   "max_s": "10.056"
   },
   {
    "channel": "console",
    "cause": "timer",
-   "pages": 3,
-   "p50_s": "0.280",
-   "p95_s": "0.781",
-   "max_s": "0.837"
+   "pages": 13,
+   "p50_s": "0.782",
+   "p95_s": "1.005",
+   "max_s": "1.166"
   },
   {
    "channel": "email",
    "cause": "timer",
-   "pages": 3,
-   "p50_s": "0.335",
-   "p95_s": "1.486",
-   "max_s": "1.614"
+   "pages": 12,
+   "p50_s": "1.066",
+   "p95_s": "2.434",
+   "max_s": "2.850"
   }
  ],
  "agent_runs": [
   {
    "trigger": "alert",
    "provider": "bedrock",
-   "runs": 3,
-   "p50_s": "49.7",
-   "p95_s": "59.6",
-   "avg_input_tokens": "32006",
-   "avg_output_tokens": "4403"
+   "runs": 6,
+   "p50_s": "59.0",
+   "p95_s": "62.4",
+   "avg_input_tokens": "34096",
+   "avg_output_tokens": "4976"
   },
   {
    "trigger": "discharge",
    "provider": "bedrock",
    "runs": 1,
-   "p50_s": "63.6",
-   "p95_s": "63.6",
-   "avg_input_tokens": "30831",
-   "avg_output_tokens": "5493"
+   "p50_s": "54.8",
+   "p95_s": "54.8",
+   "avg_input_tokens": "35601",
+   "avg_output_tokens": "4931"
   },
   {
    "trigger": "monitor",
    "provider": "bedrock",
-   "runs": 6,
-   "p50_s": "35.5",
-   "p95_s": "37.3",
-   "avg_input_tokens": "17591",
-   "avg_output_tokens": "2958"
+   "runs": 12,
+   "p50_s": "31.3",
+   "p95_s": "37.2",
+   "avg_input_tokens": "16414",
+   "avg_output_tokens": "2822"
   },
   {
    "trigger": "reply",
    "provider": "offline",
-   "runs": 6,
+   "runs": 16,
    "p50_s": "0.0",
-   "p95_s": "0.1",
+   "p95_s": "0.0",
    "avg_input_tokens": null,
    "avg_output_tokens": null
   }
