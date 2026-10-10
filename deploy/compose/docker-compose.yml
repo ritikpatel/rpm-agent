@@ -95,6 +95,8 @@ services:
       RPM_CONSOLE_URL: http://localhost:${RPM_CONSOLE_PORT:-3000}
       RPM_ESCALATION_TIMEOUT_SCALE: "${RPM_ESCALATION_TIMEOUT_SCALE:-0.2}"   # demo: 5 minutes -> 1 minute
       RPM_MAX_REMINDERS: "${RPM_MAX_REMINDERS:-3}"
+      RPM_AGENT_DAILY_LIMIT: "${RPM_AGENT_DAILY_LIMIT:-0}"                  # ceiling on automatic agent runs per 24 h (0 = none)
+      RPM_AGENT_MONITOR_INTERVAL_S: "${RPM_AGENT_MONITOR_INTERVAL_S:-600}"  # per patient, between agent check-ins
       RPM_EMBEDDINGS: ${RPM_EMBEDDINGS:-hash}
     volumes: ["../config:/config:ro"]
     ports: ["${RPM_API_PORT:-8000}:8000"]

@@ -37,7 +37,7 @@ class AgentSettings(BaseServiceSettings):
     model_reasoning: str = "au.anthropic.claude-sonnet-4-6"           # escalation and summary agents
     model_fallback: str | None = "amazon.nova-lite-v1:0"              # used when a model call fails
     workers: int = 2
-    visibility_timeout_s: int = 180
+    visibility_timeout_s: int = 600   # longer than waiting for a patient's previous run plus the run itself
 
 
 def main() -> None:
@@ -59,8 +59,12 @@ def main() -> None:
             log.warning("agent queue not available yet", extra={"error": str(exc)[:200]})
             stop.wait(3)
 
-    busy: set[str] = set()   # one run per patient at a time: two runs would act on the same alert twice
-    lock = threading.Lock()
+    # One run per patient at a time (two runs would act on the same alert twice): a second task for the same patient
+    # waits here for the first. Deferring it to the queue instead would count as a failed delivery each time and
+    # dead-letter the task while a long run is still going.
+    locks: dict[str, threading.Lock] = {}
+    locks_guard = threading.Lock()
+    slots = threading.Semaphore(cfg.workers)   # a message is only taken off the queue when a worker is free for it
 
     def handle(msg: dict) -> None:
         try:
@@ -69,12 +73,10 @@ def main() -> None:
             log.exception("undecodable agent task dropped")
             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg["ReceiptHandle"])
             return
-        with lock:
-            if task.patient_id in busy:
-                sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg["ReceiptHandle"],
-                                              VisibilityTimeout=10)
-                return
-            busy.add(task.patient_id)
+        with locks_guard:
+            patient = locks.setdefault(task.patient_id, threading.Lock())
+        if not patient.acquire(timeout=cfg.visibility_timeout_s / 2):
+            return  # still busy after a long wait: the message reappears when its visibility timeout ends
         t0 = time.monotonic()
         try:
             out = graph.run(task)
@@ -93,22 +95,28 @@ def main() -> None:
             RUNS.labels(task.trigger, "failed").inc()
             log.exception("agent run failed; the task will be retried", extra={"patient_id": task.patient_id})
         finally:
-            with lock:
-                busy.discard(task.patient_id)
+            patient.release()
 
     log.info("agent service started", extra={"provider": cfg.llm_provider, "fast": cfg.model_fast,
                                              "reasoning": cfg.model_reasoning})
     with ThreadPoolExecutor(max_workers=cfg.workers) as workers:
         while not stop.is_set():
+            if not slots.acquire(timeout=1):
+                continue
+            free = 1
+            while free < cfg.workers and slots.acquire(blocking=False):
+                free += 1
             try:
-                resp = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=cfg.workers, WaitTimeSeconds=10,
-                                           VisibilityTimeout=cfg.visibility_timeout_s)
+                messages = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=free, WaitTimeSeconds=10,
+                                               VisibilityTimeout=cfg.visibility_timeout_s).get("Messages", [])
             except Exception:
                 log.exception("receive failed")
+                messages = []
                 stop.wait(2)
-                continue
-            for m in resp.get("Messages", []):
-                workers.submit(handle, m)
+            for _ in range(free - len(messages)):
+                slots.release()
+            for m in messages:
+                workers.submit(handle, m).add_done_callback(lambda _f: slots.release())
 
 
 if __name__ == "__main__":

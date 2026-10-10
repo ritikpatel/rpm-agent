@@ -62,6 +62,7 @@ Set these in the shell before `make up`.
 | `RPM_MODEL_FAST`, `RPM_MODEL_REASONING` | Claude Haiku 4.5, Claude Sonnet 4.6 | Bedrock model ids for the agents |
 | `RPM_EMBEDDINGS` | hash | `titan` uses Amazon Titan Embeddings for guideline search; re-run `make seed` after changing it |
 | `RPM_SIM_AUTO_SCENARIOS` | 0 | Random deterioration scenarios per hour |
+| `RPM_AGENT_DAILY_LIMIT`, `RPM_AGENT_MONITOR_INTERVAL_S` | 0 (none), 600 | Limits on automatic agent runs; see the AWS cost section |
 
 ### Replacing a model
 
@@ -167,8 +168,21 @@ person chooses their own at first sign-in. Groups decide what they can do: `phys
 | Each alert the agents work on | US$0.13 in Bedrock calls (estimate) |
 
 With the cohort of 30 the patients' own data raises around 15 to 20 alerts a day, each with e-mail to the paged
-tier. **Stop the instance, or at least pause the simulated devices, when nobody is watching.** IoT Core, SQS, S3,
-Cognito, CloudFront and SES stay within their free allowances at this scale.
+tier. The first ten minutes after loading the cohort are the busiest (several patients are already unwell in the
+data): about US$2 of Bedrock calls in the first deployment. **Stop the instance, or at least pause the simulated
+devices, when nobody is watching.** IoT Core, SQS, S3, Cognito, CloudFront and SES stay within their free
+allowances at this scale; the SES sandbox also limits the project to 200 e-mails a day.
+
+Two settings bound what the agents can spend on AWS. Neither affects alerts or e-mail, which never wait for the
+agents. Change them with, for example, `RPM_AGENT_DAILY_LIMIT=200 SKIP_BUILD=1 make cloud-deploy`.
+
+| Setting | On AWS | Meaning |
+|---|---|---|
+| `RPM_AGENT_DAILY_LIMIT` | 80 | Automatic agent runs (alert, check-in, discharge) in any 24 hours; 0 = no limit. A clinician's "ask the agents" and a patient's reply always run |
+| `RPM_AGENT_MONITOR_INTERVAL_S` | 3600 | Per patient, at most one agent check-in that no alert started (a rising score) in this many seconds |
+
+When the daily limit is reached, care-api logs "daily agent-run limit reached" and new alerts open and page as
+usual but show no agent summary until older runs fall out of the 24-hour window.
 
 ### Differences from the local stack
 
@@ -186,6 +200,6 @@ Cognito, CloudFront and SES stay within their free allowances at this scale.
 | Console shows "403" or does not load after `cloud-start` | Containers still starting | Wait three minutes; `make cloud-status` |
 | Sign-in page says the redirect is not allowed | Opened by IP or another address | Use the address `make cloud-status` prints |
 | Patients listed but none streaming | Simulated devices paused or not restarted | `make cloud-sim-resume`; `make cloud-logs S=simulator` |
-| No agent summary | Bedrock refused the call | `make cloud-logs S=agent-service` |
+| No agent summary | Bedrock refused the call, or the daily agent-run limit was reached | `make cloud-logs S=agent-service`; `make cloud-logs S=care-api` |
 | A pod is `ImagePullBackOff` | ECR pull secret expired after a long stop | `SKIP_BUILD=1 make cloud-deploy` |
 | `cloud-up` fails with "not eligible for Free Tier" | Instance type not allowed on the Free plan | Keep the default `m7i-flex.large` |

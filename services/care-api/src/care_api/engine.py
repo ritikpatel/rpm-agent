@@ -52,6 +52,47 @@ TRIGGER_FOR = {"CHECKIN_REPLY": "reply", "NEWS2_RISING": "monitor", "RISK_HIGH":
 TRIGGER_RANK = {"alert": 3, "reply": 2, "discharge": 2, "monitor": 1}
 
 
+class AgentThrottle:
+    """Bounds what the agents cost. Per patient: one run per window unless severity rose, with a longer window for
+    runs that no alert started (a rising score, a risk band). Overall: an optional ceiling on automatic runs in any
+    24 hours. A clinician's on-demand review and a patient's reply always pass, and nothing here delays a page."""
+
+    AUTOMATIC = ("alert", "monitor", "discharge")
+
+    def __init__(self, debounce_s: float, monitor_interval_s: float | None, daily_limit: int, runs_last_24h,
+                 clock=time.monotonic):
+        self.debounce_s = debounce_s
+        self.monitor_interval_s = debounce_s if monitor_interval_s is None else monitor_interval_s
+        self.daily_limit, self.runs_last_24h, self.clock = daily_limit, runs_last_24h, clock
+        self._last: dict[str, tuple[int, float]] = {}
+        self._count: tuple[float, int] | None = None   # (when counted, runs): the store is asked at most twice a minute
+        self._lock = threading.Lock()
+
+    def _runs(self, now: float) -> int:
+        if self._count is None or now - self._count[0] > 30:
+            self._count = (now, int(self.runs_last_24h()))
+        return self._count[1]
+
+    def admit(self, trigger: str, patient_id: str, rank: int = 0) -> str:
+        """"queued", "debounced" or "capped"."""
+        if trigger not in self.AUTOMATIC:
+            return "queued"
+        with self._lock:
+            now = self.clock()
+            if trigger != "discharge":
+                prev = self._last.get(patient_id)
+                window = self.monitor_interval_s if trigger == "monitor" else self.debounce_s
+                if prev and now - prev[1] < window and rank <= prev[0]:
+                    return "debounced"
+            if self.daily_limit and self._runs(now) >= self.daily_limit:
+                return "capped"
+            if trigger != "discharge":
+                self._last[patient_id] = (rank, now)
+            if self._count:
+                self._count = (self._count[0], self._count[1] + 1)
+            return "queued"
+
+
 class AlertEngine:
     def __init__(self, cfg: CareSettings, pool, sqs, commander: DeviceCommander):
         self.cfg, self.pool, self.sqs = cfg, pool, sqs
@@ -72,8 +113,9 @@ class AlertEngine:
         self.notifier = Notifier(self.policy, team, channels, cfg.console_url)
         self._wake = threading.Event()   # intake nudges the dispatcher so first pages go out immediately
         self._queue_url: str | None = None
-        self._last_task: dict[str, tuple[int, float]] = {}
-        self._lock = threading.Lock()
+        self.throttle = AgentThrottle(cfg.agent_debounce_s, cfg.agent_monitor_interval_s, cfg.agent_daily_limit,
+                                      self._agent_runs_last_24h)
+        self._capped_logged = 0.0
 
     # ------------------------------------------------------------------ live
     def summary(self, alert_id) -> dict | None:
@@ -137,17 +179,23 @@ class AlertEngine:
         publish(self.pool, {"type": "message", "patient_id": ev.patient_id})
 
     # ------------------------------------------------------------------ agent queue
+    def _agent_runs_last_24h(self) -> int:
+        with self.pool.connection() as conn:
+            return conn.execute("SELECT count(*) FROM agent_runs WHERE started_at > now() - interval '24 hours' "
+                                "AND trigger = ANY(%s)", (list(AgentThrottle.AUTOMATIC),)).fetchone()[0]
+
     def enqueue(self, task: AgentTask) -> int:
         """Queue agent work. Failures are logged, never raised: alerts must not depend on the agents."""
         rank = SEVERITY_RANK.get(clamp_severity((task.event or {}).get("severity", "medium")), 0) \
             if task.trigger == "alert" else 0
-        if task.trigger in ("alert", "monitor"):
-            with self._lock:
-                prev = self._last_task.get(task.patient_id)
-                if prev and time.monotonic() - prev[1] < self.cfg.agent_debounce_s and rank <= prev[0]:
-                    AGENT_TASKS.labels(task.trigger, "debounced").inc()
-                    return 0
-                self._last_task[task.patient_id] = (rank, time.monotonic())
+        outcome = self.throttle.admit(task.trigger, task.patient_id, rank)
+        if outcome != "queued":
+            AGENT_TASKS.labels(task.trigger, outcome).inc()
+            if outcome == "capped" and time.monotonic() - self._capped_logged > 600:
+                self._capped_logged = time.monotonic()
+                log.warning("daily agent-run limit reached; alerts still page, agent summaries resume as runs age out",
+                            extra={"limit": self.cfg.agent_daily_limit, "patient_id": task.patient_id})
+            return 0
         try:
             if self._queue_url is None:
                 self._queue_url = self.sqs.get_queue_url(QueueName=self.cfg.sqs_agent_queue)["QueueUrl"]

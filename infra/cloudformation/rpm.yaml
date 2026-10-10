@@ -203,7 +203,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: rpm-agent-tasks       # work for the agents, queued by care-api
-      VisibilityTimeout: 180
+      VisibilityTimeout: 600           # longer than the longest agent run, including waiting for the patient's previous run
       ReceiveMessageWaitTimeSeconds: 20
       MessageRetentionPeriod: 86400
       SqsManagedSseEnabled: true

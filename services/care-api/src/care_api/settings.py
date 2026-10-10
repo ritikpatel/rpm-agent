@@ -34,6 +34,8 @@ class CareSettings(BaseServiceSettings):
     tick_s: float = 1.0
     dispatch_settle_s: float = 0.25
     agent_debounce_s: int = 600        # at most one agent run per patient in this window, unless severity rose
+    agent_monitor_interval_s: int | None = None   # the same for runs no alert started (check-ins); default: the above
+    agent_daily_limit: int = 0         # ceiling on automatic agent runs in any 24 hours (0 = none); alerts still page
 
     # guideline search
     embeddings: str = "hash"           # hash (offline, deterministic) | titan (Amazon Bedrock)
