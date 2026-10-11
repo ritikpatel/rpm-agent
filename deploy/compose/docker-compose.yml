@@ -113,7 +113,10 @@ services:
   stream-processor:
     <<: *platform
     command: ["stream-processor"]
-    environment: { <<: *env, RPM_RUN_MIGRATIONS: "false" }
+    environment:
+      <<: *env
+      RPM_RUN_MIGRATIONS: "false"
+      RPM_SILENT_AFTER_S: "${RPM_SILENT_AFTER_S:-600}"   # no data for this long: "Monitor silent" (an alert in ICU)
     depends_on:
       care-api: { condition: service_healthy }
       sqs: { condition: service_started }

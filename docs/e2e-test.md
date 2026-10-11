@@ -164,7 +164,8 @@ When you have finished: `make cloud-stop` (or `make cloud-sim-pause` to keep the
 | Symptom | Check |
 |---|---|
 | No patients streaming | `make ps` (is `simulator` up?), then `make logs` |
-| `make e2e` stops at "an ICU patient without an alert is available" | Every ICU patient has an active alert, often "Monitor silent" ones raised while the devices were stopped or paused. Resolve them in the console and run it again. The check closes alerts left by its own earlier runs, never anyone else's |
+| "Monitor silent" alerts for ICU patients | The devices were stopped or paused for more than 10 minutes: a silent bedside monitor is an alert. They close by themselves when the devices report again |
+| `make e2e` stops at "an ICU patient without an alert is available" | Every ICU patient has an active alert. "Monitor silent" alerts close by themselves within about 15 seconds of the devices reporting again; resolve any others in the console and run it again. The check closes alerts left by its own earlier runs, never anyone else's |
 | No alert after a scenario | Give it the full ramp time plus 30 seconds |
 | "The agents are working on it…" for minutes | `make logs`; an expired AWS sign-in falls back to offline rules, a stopped container does not |
 | Summary says "offline-rules" | Started without `LLM=bedrock`, or the AWS sign-in has expired (12 hours): sign in and `make up LLM=bedrock MAIL=ses` |

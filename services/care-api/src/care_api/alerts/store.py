@@ -150,6 +150,29 @@ class AlertStore:
                 self._timeline(cur, alert_id, "resolved", f"user:{user}", f"Resolved by {user}: {resolution}")
             return row
 
+    def resolve_returned(self, recent_s: int = 120) -> list[dict]:
+        """Close alerts that say only "no data from this device" once the device is reporting again: the alert's
+        one finding is no longer true. An alert that also carries a clinical finding is left for a clinician, and so
+        is one whose device reported for a moment and then went quiet again (it must be reporting now)."""
+        with self.pool.connection() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                "UPDATE alerts a SET status='resolved', resolved_at=now(), resolved_by='system', "
+                "resolution='Data returned from ' || coalesce(s.device_id, 'the device') || ' at ' || "
+                "to_char(s.last_seen AT TIME ZONE 'UTC', 'HH24:MI') || ' UTC', "
+                "next_escalation_at=NULL, notify_pending_tier=NULL, updated_at=now() "
+                "FROM patient_status s WHERE s.patient_id = a.patient_id AND a.status = ANY(%s) "
+                "AND a.event_types = ARRAY['DEVICE_SILENT']::text[] AND s.last_seen > a.opened_at "
+                "AND s.last_seen > now() - make_interval(secs => %s) RETURNING a.*",
+                (list(ACTIVE), recent_s)).fetchall()
+            for row in rows:
+                self._timeline(cur, row["alert_id"], "resolved", "system",
+                               f"Closed automatically: {row['resolution'][0].lower()}{row['resolution'][1:]}")
+                cur.execute("INSERT INTO audit_log (actor, actor_role, action, resource_type, resource_id, patient_id, "
+                            "details) VALUES ('system', 'service', 'update', 'Alert', %s, %s, %s)",
+                            (str(row["alert_id"]), row["patient_id"],
+                             Jsonb({"op": "auto_resolve", "reason": row["resolution"]})))
+            return rows
+
     def escalate(self, alert_id, actor: str, reason: str) -> dict | None:
         """Manual or agent-requested escalation to the next tier."""
         with self.pool.connection() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:

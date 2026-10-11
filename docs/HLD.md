@@ -87,7 +87,7 @@ Source: [architecture-simple.mmd](architecture-simple.mmd).
 | ③ | The stream processor validates the event, stores it and computes the NEWS2 score. |
 | ④ | It asks the risk service for scores in the background: early deterioration on new vitals and labs, readmission at discharge and daily, recovery every 15 minutes for patients at home. |
 | ⑤ | If NEWS2 or a rule crosses its threshold, the processor hands a clinical event to the Care API. A validated model entering its high band does the same. |
-| ⑥ | The Care API opens (or updates) the patient's alert, pushes it to the console and e-mails the on-call tier. An unacknowledged alert escalates to the next tier on a timer. |
+| ⑥ | The Care API opens (or updates) the patient's alert, pushes it to the console and e-mails the on-call tier. An unacknowledged alert escalates to the next tier on a timer. A clinician resolves an alert; the one exception is an alert that says only "no data from this device" (Monitor silent), which closes by itself once the device reports again. Either way the alert's Flag in the hospital record is ended. |
 | ⑦ | The Care API queues one agent task per alert. |
 | ⑧ | Monitoring, Risk, Escalation and Summary agents run in a fixed chain on Amazon Bedrock. |
 | ⑨ | The agents read through Care API tools, search the protocols, and save a cited summary plus their escalation decision, which passes a deterministic policy gate first. |

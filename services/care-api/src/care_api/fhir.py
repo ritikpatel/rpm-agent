@@ -155,7 +155,8 @@ def flag(row: dict) -> dict:
                                   "code": "clinical"}]}],
         "code": {"coding": [{"system": f"{SYSTEM}/alert-severity", "code": row["severity"]}], "text": row["title"]},
         "subject": {"reference": f"Patient/{row['patient_id']}"},
-        "period": {"start": row["opened_at"].isoformat()},
+        "period": {"start": row["opened_at"].isoformat(),
+                   **({"end": row["resolved_at"].isoformat()} if row.get("resolved_at") else {})},
         "identifier": [{"system": f"{SYSTEM}/alert", "value": str(row["alert_id"])}],
     }
 
@@ -207,11 +208,28 @@ def _write_risk(pool, http: httpx.Client) -> int:
 def write_back_once(pool, http: httpx.Client) -> int:
     done = _write_risk(pool, http)
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-        alerts = cur.execute("SELECT alert_id, patient_id, status, severity, title, opened_at FROM alerts "
-                             "WHERE fhir_flag_id IS NULL ORDER BY opened_at LIMIT 25").fetchall()
+        alerts = cur.execute("SELECT alert_id, patient_id, status, severity, title, opened_at, resolved_at "
+                             "FROM alerts WHERE fhir_flag_id IS NULL ORDER BY opened_at LIMIT 25").fetchall()
+        # an alert resolved after its Flag was written (by a clinician, or automatically): the Flag ends too
+        ended = cur.execute("SELECT alert_id, patient_id, status, severity, title, opened_at, resolved_at, "
+                            "fhir_flag_id FROM alerts WHERE status = 'resolved' AND fhir_flag_id IS NOT NULL "
+                            "AND NOT fhir_flag_closed ORDER BY resolved_at LIMIT 25").fetchall()
         briefs = cur.execute("SELECT alert_id, patient_id, brief FROM alerts WHERE fhir_brief_id IS NULL "
                              "AND brief IS NOT NULL AND brief_status IN ('ready', 'offline') LIMIT 25").fetchall()
-    jobs = ([("Flag", flag(r), "UPDATE alerts SET fhir_flag_id = %s WHERE alert_id = %s", r["alert_id"])
+    for r in ended:
+        try:
+            http.put(f"/{r['fhir_flag_id']}", json={**flag(r), "id": r["fhir_flag_id"].split("/", 1)[1]}
+                     ).raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500:
+                continue   # the FHIR server is unwell: try again on the next pass
+            log.warning("flag could not be ended in FHIR; not retried",
+                        extra={"flag": r["fhir_flag_id"], "status": exc.response.status_code})
+        with pool.connection() as conn:
+            conn.execute("UPDATE alerts SET fhir_flag_closed = true WHERE alert_id = %s", (r["alert_id"],))
+        done += 1
+    jobs = ([("Flag", flag(r), "UPDATE alerts SET fhir_flag_id = %s, fhir_flag_closed = "
+              + ("true" if r["status"] == "resolved" else "false") + " WHERE alert_id = %s", r["alert_id"])
              for r in alerts]
             + [("DocumentReference", document_reference(r),
                 "UPDATE alerts SET fhir_brief_id = %s WHERE alert_id = %s", r["alert_id"]) for r in briefs])

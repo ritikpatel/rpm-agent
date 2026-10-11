@@ -165,6 +165,52 @@ def test_worsening_after_timer_escalation_stays_escalated_without_second_reassur
     store.resolve(res.alert_id, "t", "cleanup")
 
 
+def _status(pool, patient_id, when):
+    with pool.connection() as conn:
+        conn.execute("UPDATE patient_status SET last_seen = %s WHERE patient_id = %s", (when, patient_id))
+
+
+def test_silent_monitor_alert_closes_by_itself_when_data_returns(env, pool):
+    store, *_ = env
+    for pid in ("p-1", "p-2", "p-3"):
+        if (a := store.active_for_patient(pid)):
+            store.resolve(a["alert_id"], "test", "clean slate")
+    now = datetime.now(UTC)
+    silent = store.ingest_event(event("p-2", "medium", "DEVICE_SILENT")).alert_id
+    store.acknowledge(silent, "nurse.jane")
+    _status(pool, "p-2", now - timedelta(minutes=30))             # still silent: last reading predates the alert
+    assert store.resolve_returned() == []
+    _status(pool, "p-2", now + timedelta(seconds=5))              # the monitor reports again
+    closed = store.resolve_returned()
+    assert [r["alert_id"] for r in closed] == [silent]
+    row = store.get(silent)
+    assert row["status"] == "resolved" and row["resolved_by"] == "system"
+    assert row["resolution"].startswith("Data returned from sim-p-2 at ") and row["next_escalation_at"] is None
+    assert any(t["kind"] == "resolved" and t["actor"] == "system" and "Closed automatically" in t["summary"]
+               for t in row["timeline"])
+    with pool.connection() as conn:
+        audited = conn.execute("SELECT actor, details->>'op' FROM audit_log WHERE resource_id = %s",
+                               (str(silent),)).fetchall()
+    assert ("system", "auto_resolve") in audited
+    assert store.resolve_returned() == []                         # once
+
+
+def test_alert_with_a_clinical_finding_or_a_device_that_went_quiet_again_is_left_open(env, pool):
+    store, *_ = env
+    now = datetime.now(UTC)
+    mixed = store.ingest_event(event("p-2", "medium", "DEVICE_SILENT")).alert_id
+    store.ingest_event(event("p-2", "high", "NEWS2_HIGH"))       # the same alert now carries a clinical finding
+    _status(pool, "p-2", now + timedelta(seconds=5))
+    assert store.resolve_returned() == [] and store.get(mixed)["status"] != "resolved"
+    quiet = store.ingest_event(event("p-3", "medium", "DEVICE_SILENT")).alert_id
+    with pool.connection() as conn:                               # reported once after the alert, then stopped
+        conn.execute("UPDATE alerts SET opened_at = now() - interval '20 minutes' WHERE alert_id = %s", (quiet,))
+    _status(pool, "p-3", now - timedelta(minutes=10))
+    assert store.resolve_returned() == [] and store.get(quiet)["status"] != "resolved"
+    for alert_id in (mixed, quiet):
+        store.resolve(alert_id, "test", "clean up")
+
+
 def test_failed_channel_is_recorded_and_others_still_sent(env, pool):
     store, _, chans, policy = env
     chans["email"] = FakeChannel("email", fail=True)
