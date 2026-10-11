@@ -51,6 +51,16 @@ def test_monitoring_starts_where_each_patients_recorded_data_ends(data):
         assert "severity" not in m.last                                        # a label, never a reading
 
 
+def test_every_patient_has_their_own_settled_values_from_the_data(data):
+    for m in build_cohort(data, ANCHOR, home=0):
+        assert set(m.well) == set(m.last) and "severity" not in m.well
+        if m.origin == "mimic_real":       # the home baseline the data gives
+            assert m.well["heart_rate"] == pytest.approx(m.record.home_baseline["heart_rate"])
+        elif m.care_setting == "home":     # the median of their own readings outside deterioration episodes
+            assert 93 <= m.well["spo2"] <= 100 and 55 <= m.well["heart_rate"] <= 100
+        assert m.live_from_h == (m.points[-1][0] if m.care_setting == "home" else 0.0)
+
+
 def test_only_the_offline_evaluation_places_patients_inside_their_recorded_data(data):
     for m in build_cohort(data, ANCHOR, replay=True):
         if m.care_setting == "home":

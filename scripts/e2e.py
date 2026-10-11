@@ -87,8 +87,10 @@ def main() -> None:
         clin, demo, admin = tok("physician"), tok("presenter"), tok("admin")
 
     print("1. Live data")
+    # a bedside monitor reporting shows the devices are running (a home patient's status starts as their record)
     patients, _ = wait("patients are streaming", lambda: [
-        p for p in api.call("GET", "/api/patients", clin) if p["last_seen"]] or None, 120)
+        p for p in api.call("GET", "/api/patients", clin) if p["care_setting"] == "icu" and p["last_seen"]] or None,
+        120)
     all_patients = api.call("GET", "/api/patients", clin)
     icu = [p for p in all_patients if p["care_setting"] == "icu" and p["last_seen"]]
     home = [p for p in all_patients if p["care_setting"] == "home" and p["last_seen"]]

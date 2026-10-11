@@ -40,8 +40,19 @@ every patient at that point (readings a simulated device sent in an earlier run 
 
 **Expect alerts within a few minutes of starting, without doing anything.** Eight of the 24 home patients were
 unwell when their recorded data ended (for example `SYN-000118`, `SYN-000128`, `SYN-000143`, `SYN-000051`,
-`SYN-000095`, `RPM-10007928`: SpO2 around 89%, heart rate above 110), so they stay unwell. That is the data, not a
-fault. The other 16 are stable until you start a scenario.
+`SYN-000095`, `RPM-10007928`: SpO2 around 89%, heart rate above 110). That is the data, not a fault. Before the
+devices start, the worklist already shows each home patient's last recorded reading.
+
+What happens next without your doing anything:
+
+- **The unwell patients recover gradually.** The gap to their own settled values halves every two hours: SpO2
+  89% is about 91% after an hour, 93% after two and 95% after four. Their alerts stay open until a clinician
+  resolves them.
+- **A settled patient deteriorates now and then**, about once every four hours across the cohort, and recovers
+  over the following hour. The simulator's log names the patient and the kind ("spontaneous deterioration"):
+  `make cloud-logs S=simulator` on AWS.
+
+Both are settings: see `RPM_SIM_RECOVERY_HALF_LIFE_H` and `RPM_SIM_AUTO_SCENARIOS` in the [runbook](runbook.md).
 
 ## Part A: automated check
 

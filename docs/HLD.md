@@ -40,10 +40,17 @@ How the platform uses them:
   loaded, the recorded readings are stored as the patient's past (they appear on the chart and feed the risk
   models), without passing through the alert rules.
 - **Live readings are new.** The simulated wearable generates them from the patient's last recorded values: each
-  vital sign wanders slowly around that value and is pulled back to it, with sensor noise on top. The size of the
-  wander is taken from the recorded streams. A patient who was stable when the data ended stays stable; one who
-  was unwell (8 of the default 24 at home) stays unwell and alerts as soon as monitoring starts. No recorded
-  reading is ever sent as if it were new.
+  vital sign wanders slowly and is pulled back, with sensor noise on top. The size of the wander is taken from the
+  recorded streams. No recorded reading is ever sent as if it were new.
+- **Unwell patients recover gradually.** A patient whose record ended with them unwell (8 of the default 24 at
+  home) alerts as soon as monitoring starts, then moves towards their own settled values: the gap halves every
+  two hours. The settled values come from the data: the home baseline it gives for MIMIC patients, and for
+  synthetic patients the median of their recorded readings outside their deterioration episodes. Recovery runs
+  only while devices run, and a restarted simulator carries on from what each device last reported.
+- **Settled patients deteriorate now and then.** About once every four hours across the cohort, a settled patient
+  (at home or in the ICU) starts a deterioration of their own: the one that matches their condition where there
+  is one (sepsis, heart failure, COPD), otherwise one picked at random. It builds over minutes, holds for 20 to
+  40 minutes and fades over 30 to 45. Patients who are still recovering are left alone.
 - **Patients in the ICU.** Every patient in the data has already been discharged, so a few of the real MIMIC
   patients (six by default) are shown as still admitted. A simulated bedside monitor carries on from the vital
   signs charted at their discharge, the last ICU readings the data has. When one is discharged in a

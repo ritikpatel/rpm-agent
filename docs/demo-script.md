@@ -8,7 +8,7 @@ data (for example `SYN-000118`).
 | Min | Show | Say |
 |---|---|---|
 | 0–1 | Architecture diagram | "One straight path: devices, one queue, a rules engine, three risk models, four agents, the care team." |
-| 1–2 | Worklist, ICU and Post-discharge filters; open a home patient that is already alerting | "These are the patients our models were trained on. Admitted patients are on bedside monitors. Discharged patients wear a watch. Their recorded data is the history on this chart; monitoring picked up where it ended. This one was already unwell at that point, and the platform caught it." |
+| 1–2 | Worklist, ICU and Post-discharge filters; open a home patient that is already alerting | "These are the patients our models were trained on. Admitted patients are on bedside monitors. Discharged patients wear a watch. Their recorded data is the history on this chart; monitoring picked up where it ended. This one was already unwell at that point, and the platform caught it; you can see the values recovering since." |
 | 2–3 | A patient's Risk models card | "Three models from our team: early deterioration, readmission risk, recovery monitoring. Each is a plug-in; these are placeholders until the trained models are dropped in." |
 | 3–5 | Start `sepsis` on the ICU patient, ramp 60 | "Watch the vitals turn. The rules engine scores NEWS2 on every reading." Wait for the alert. "The care team was paged in under a second, by rules alone. No AI on that path." Show the e-mail. |
 | 5–7 | Agent summary on the alert | "Meanwhile four agents worked: what is happening, how serious, who must act, and a handover summary. Every claim is cited; click one and you see the protocol text. The agents raised the sampling rate and escalated; they cannot lower an alert." |

@@ -58,14 +58,21 @@ def events(body: EventsIn, caller: Caller) -> dict:
 
 @router.get("/cohort")
 def cohort(caller: Caller) -> list[dict]:
-    """Who is monitored, where, and on what kind of device (no clinical data). The simulator follows this."""
+    """Who is monitored, where, and on what kind of device. The simulator follows this. For a simulated device it
+    also gets back the vital signs that device last reported, so a restarted simulator carries on from them; nothing
+    is returned for a real watch."""
     with STATE["pool"].connection() as conn:
         rows = conn.execute(
-            "SELECT p.patient_id, p.care_setting, d.device_id, d.device_kind, p.discharge_at FROM patients p "
+            "SELECT p.patient_id, p.care_setting, d.device_id, d.device_kind, p.discharge_at, s.latest "
+            "FROM patients p "
             "LEFT JOIN device_assignments d ON d.patient_id = p.patient_id AND d.active_to IS NULL "
+            "LEFT JOIN patient_status s ON s.patient_id = p.patient_id "
             "WHERE p.monitoring_active ORDER BY p.patient_id").fetchall()
+    vitals = ("heart_rate", "resp_rate", "spo2", "sbp", "temp")
     return [{"patient_id": r[0], "care_setting": r[1], "device_id": r[2], "device_kind": r[3],
-             "discharge_at": r[4].isoformat() if r[4] else None} for r in rows]
+             "discharge_at": r[4].isoformat() if r[4] else None,
+             "latest": {k: r[5][k] for k in vitals if k in r[5]} if r[3] == "simulator" and r[5] else None}
+            for r in rows]
 
 
 # ------------------------------------------------------------------ agent tools: read

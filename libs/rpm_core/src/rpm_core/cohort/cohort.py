@@ -3,7 +3,8 @@
 Every patient in the data has been discharged, so by default everyone is monitored at home on a wearable. The
 recorded data is their history: monitoring starts at the moment the recorded readings end (72 hours after discharge
 for the synthetic patients, 24 for the MIMIC ones), and the simulator generates new readings from each patient's last
-recorded values (`CohortMember.last`). A few of the real MIMIC patients are shown as still admitted to the ICU: a
+recorded values (`CohortMember.last`), recovering towards the patient's own settled values (`CohortMember.well`)
+where the record ended with them unwell. A few of the real MIMIC patients are shown as still admitted to the ICU: a
 bedside monitor carries on from the vital signs charted at their discharge, the last ICU readings the data has.
 
 No patient or lab value comes from anywhere else, and no recorded reading is streamed as if it were new. Names are
@@ -16,6 +17,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 import re
+import statistics
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -78,6 +80,8 @@ class CohortMember:
     baseline: dict[str, float] = field(default_factory=dict)   # vital signs at discharge, every channel
     points: tuple = ()                # ((hours since discharge, {vital: value}), ...): the recorded readings
     last: dict[str, float] = field(default_factory=dict)       # the last recorded reading: new ones start here
+    well: dict[str, float] = field(default_factory=dict)       # the patient's own settled values: recovery heads here
+    live_from_h: float = 0.0          # hours after discharge at which live monitoring takes over from the record
     los_days: float = 0.0
     prior_admissions_12m: int = 0
     drg_severity: int | None = None
@@ -106,6 +110,17 @@ def _name(seed: str, pid: str, sex: str) -> str:
     return f"{first} {_LAST[int(_h(seed, 'ln:' + pid) * 20) % 20]}"
 
 
+def _well(p: PatientRecord, points: tuple, last: dict[str, float]) -> dict[str, float]:
+    """The patient's own settled vital signs, from the data: the home baseline it gives for MIMIC patients; for
+    synthetic patients the median of their recorded readings outside their deterioration episodes. A patient the
+    data gives neither for is taken to be settled where the record ends."""
+    own = {k: v for k, v in p.home_baseline.items() if k in VITALS}
+    calm = [v for _, v in points if v.get("severity") == 0.0]
+    if not own and len(calm) >= 8:
+        own = {k: statistics.median(v[k] for v in calm) for k in VITALS}
+    return {**last, **own}
+
+
 def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str, replay: bool = False) -> CohortMember:
     points = tuple(p.trajectory_points())
     start = dict(points[0][1]) if points else {}
@@ -113,7 +128,7 @@ def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str, replay:
     los = p.value("length_of_stay_days") or 0.0
     icu_los = p.value("icu_length_of_stay") or 1.0
     if setting == "icu":
-        discharge_at, icu_admit_at = None, anchor - timedelta(days=min(icu_los, 14.0))
+        discharge_at, icu_admit_at, offset_h = None, anchor - timedelta(days=min(icu_los, 14.0)), 0.0
         last = {k: baseline[k] for k in VITALS}
     else:
         # Live: the recorded data has just ended. Replay (offline evaluation): 2 to 24 hours into it.
@@ -126,7 +141,8 @@ def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str, replay:
         subject_id=p.subject_id, patient_id=p.patient_id, display_name=_name(seed, p.patient_id, p.sex), sex=p.sex,
         age=p.age, condition=condition, diagnosis=p.text("primary_diagnosis"), origin=p.origin, care_setting=setting,
         device_id=sim_device_id(p.patient_id, setting), discharge_at=discharge_at, icu_admit_at=icu_admit_at,
-        hypercapnic=condition == "COPD", baseline=baseline, points=points, last=last, los_days=los,
+        hypercapnic=condition == "COPD", baseline=baseline, points=points, last=last, well=_well(p, points, last),
+        live_from_h=offset_h, los_days=los,
         prior_admissions_12m=int(p.value("prior_admission_count_365d") or 0),
         drg_severity=int(v) if (v := p.value("drg_severity")) is not None else None,
         discharge_disposition=None if setting == "icu" else p.text("discharge_location"), record=p)

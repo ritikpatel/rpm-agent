@@ -52,7 +52,7 @@ running the stack can open it; on AWS it is the public console address.
 
 ### Settings worth knowing
 
-Set these in the shell before `make up`.
+Set these in the shell before `make up` (the `RPM_SIM_*` ones before `make sim`).
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -60,7 +60,8 @@ Set these in the shell before `make up`.
 | `RPM_ESCALATION_TIMEOUT_SCALE` | 0.2 (1 with `MAIL=ses`) | Shortens escalation timers for demonstrations (0.2 turns 5 minutes into 1) |
 | `RPM_MODEL_FAST`, `RPM_MODEL_REASONING` | Claude Haiku 4.5, Claude Sonnet 4.6 | Bedrock model ids for the agents |
 | `RPM_EMBEDDINGS` | hash | `titan` uses Amazon Titan Embeddings for guideline search; re-run `make seed` after changing it |
-| `RPM_SIM_AUTO_SCENARIOS` | 0 | Random deterioration scenarios per hour |
+| `RPM_SIM_AUTO_SCENARIOS` | 0.25 | How often a settled patient deteriorates on their own, per hour across the whole cohort (0 = never) |
+| `RPM_SIM_RECOVERY_HALF_LIFE_H` | 2 | Patients whose record ended with them unwell: hours for the gap to their settled values to halve (0 = they stay as the record left them) |
 | `RPM_AGENT_DAILY_LIMIT`, `RPM_AGENT_MONITOR_INTERVAL_S` | 0 (none), 600 | Limits on automatic agent runs; see the AWS cost section |
 
 ### Replacing a model
@@ -167,7 +168,9 @@ person chooses their own at first sign-in. Groups decide what they can do: `phys
 | Each alert the agents work on | US$0.13 in Bedrock calls (estimate) |
 
 With the cohort of 30, the eight home patients who were unwell when their recorded data ended alert as soon as
-monitoring starts, each with e-mail to the paged tier; after that, new alerts come from scenarios you start. The first ten minutes after loading the cohort are the busiest (several patients are already unwell in the
+monitoring starts, each with e-mail to the paged tier. After that a settled patient deteriorates about once every
+four hours (around six alerts a day, roughly US$1 of agent runs), plus whatever scenarios you start. On AWS, change
+the rate with, for example, `RPM_SIM_AUTO_SCENARIOS=0 SKIP_BUILD=1 make cloud-deploy`. The first ten minutes after loading the cohort are the busiest (several patients are already unwell in the
 data): about US$2 of Bedrock calls in the first deployment. **Stop the instance, or at least pause the simulated
 devices, when nobody is watching.** IoT Core, SQS, S3, Cognito, CloudFront and SES stay within their free
 allowances at this scale; the SES sandbox also limits the project to 200 e-mails a day.

@@ -63,8 +63,11 @@ up: $(ENV_FILES) ## start the local stack: make up [LLM=bedrock] [MAIL=ses]
 	  risk-service agent-service console
 	@echo "console http://localhost:3000   FHIR http://localhost:8080   agents: $(LLM)   alert e-mail: $(if $(filter ses,$(MAIL)),Amazon SES to the care team,local inbox http://localhost:8025)"
 
-seed: $(ENV_FILES) ## load the cohort: registry, FHIR record, guideline index, FHIR subscriptions
+seed: $(ENV_FILES) ## load the cohort: registry, recorded readings as history, FHIR record, guideline index, subscriptions
 	$(COMPOSE) --profile seed run --rm seed
+	@for s in stream-processor simulator; do \
+	  [ -z "$$($(COMPOSE) --profile sim ps --status running -q $$s)" ] || $(COMPOSE) --profile sim restart $$s; \
+	done   # every patient's timeline has restarted: so do the rules' working state and any running devices
 
 sim: $(ENV_FILES) ## start the simulated devices (ICU monitors for admitted patients, wearables at home)
 	$(COMPOSE) --profile sim up -d simulator

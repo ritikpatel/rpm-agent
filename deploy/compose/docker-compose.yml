@@ -170,7 +170,8 @@ services:
       <<: *env
       RPM_DATA_DIR: /data/training
       RPM_MQTT_HOST: mosquitto
-      RPM_SIM_AUTO_SCENARIOS: "${RPM_SIM_AUTO_SCENARIOS:-0}"
+      RPM_SIM_AUTO_SCENARIOS: "${RPM_SIM_AUTO_SCENARIOS:-0.25}"            # spontaneous deteriorations per hour, across everyone
+      RPM_SIM_RECOVERY_HALF_LIFE_H: "${RPM_SIM_RECOVERY_HALF_LIFE_H:-2}"   # unwell patients: hours for the gap to well to halve
     volumes: ["../../Training Data:/data/training:ro"]
     depends_on: [mosquitto, care-api]
     mem_limit: 256m

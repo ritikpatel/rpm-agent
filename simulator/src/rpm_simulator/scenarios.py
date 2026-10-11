@@ -56,10 +56,15 @@ class ActiveScenario:
     duration_s: float
     event_emitted: bool = False
     ramp_override_s: float | None = None  # presenters compress a deterioration for live demos
+    recover_override_s: float | None = None  # a spontaneous deterioration fades slowly
 
     @property
     def ramp_s(self) -> float:
         return self.ramp_override_s or self.spec.ramp_s
+
+    @property
+    def recover_s(self) -> float:
+        return self.recover_override_s or self.spec.recover_s
 
     def intensity(self, now: float) -> float:
         """0..1 effect multiplier; 0 once fully recovered."""
@@ -71,10 +76,10 @@ class ActiveScenario:
         if t < self.duration_s:
             return 1.0
         rec = t - self.duration_s
-        return max(0.0, 1.0 - rec / self.spec.recover_s)
+        return max(0.0, 1.0 - rec / self.recover_s)
 
     def finished(self, now: float) -> bool:
-        return now - self.started >= self.duration_s + self.spec.recover_s
+        return now - self.started >= self.duration_s + self.recover_s
 
     def in_hold(self, now: float) -> bool:
         return now - self.started < self.duration_s

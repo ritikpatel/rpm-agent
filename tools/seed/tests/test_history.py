@@ -31,6 +31,18 @@ def test_recorded_readings_become_history_that_ends_where_monitoring_starts(memb
     assert len({r[3] for r in rows}) == len(rows)                            # one id per reading
 
 
+def test_current_status_starts_as_the_last_recorded_reading(members):
+    home = next(m for m in members if m.origin == "synthetic")
+    device, last_seen, latest, news2, band, partial, detail, pid = history.status(home)
+    assert (device, pid) == (home.device_id, home.patient_id) and last_seen == ANCHOR.replace(tzinfo=UTC)
+    assert latest.obj["spo2"] == {"v": home.last["spo2"], "ts": last_seen.isoformat()}
+    assert set(latest.obj) == {"heart_rate", "spo2", "resp_rate", "sbp", "temp"}
+    assert news2 == history.rows(home)[-1][11] and band and detail.obj["total"] == news2
+    icu = next(m for m in members if m.care_setting == "icu")
+    _, seen, nothing, *scores, _ = history.status(icu)
+    assert seen is None and nothing.obj == {} and scores == [None, None, None, None]   # until the monitor reports
+
+
 def test_patients_shown_in_icu_have_no_home_history_and_labels_are_never_written(members):
     assert all(not history.rows(m) for m in members if m.care_setting == "icu")
     mimic = next(m for m in members if m.origin == "mimic_real" and m.care_setting == "home")

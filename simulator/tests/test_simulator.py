@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -49,11 +49,11 @@ def test_every_device_publishes_valid_telemetry(cohort_and_series):
 
 
 def test_wearable_carries_on_from_the_last_recorded_reading(cohort_and_series):
-    """Live readings are new: they start on the patient's last recorded values and stay around them. A patient who
-    was unwell when the data ended stays unwell; one who was stable stays stable."""
+    """Live readings are new: they start on the patient's last recorded values. With recovery switched off they
+    stay around them for good."""
     members, _ = cohort_and_series
     home = [m for m in members if m.care_setting == "home"]
-    sim = Simulator(home, lambda *_: None)
+    sim = Simulator(home, lambda *_: None, recovery_half_life_h=0)
     for m in home:
         gen = sim.devices[m.device_id].gen
         assert isinstance(gen, ContinuingWearable) and gen.last == m.last
@@ -72,6 +72,70 @@ def test_wearable_carries_on_from_the_last_recorded_reading(cohort_and_series):
     readings = [sim.devices[m.device_id].gen.sample(1e9, 12, 30, {}, False, False).metrics["heart_rate"]["mean"]
                 for m in home[:2]]
     assert readings[0] != readings[1]                                         # every patient has their own stream
+
+
+def _unwell(members):
+    return [m for m in members if m.care_setting == "home" and m.last["spo2"] < 92]
+
+
+def test_unwell_patients_recover_gradually_towards_their_own_settled_values(cohort_and_series):
+    members, _ = cohort_and_series
+    unwell = _unwell(members)
+    assert len(unwell) == 8                                   # of the 24 at home in the default cohort
+    sim = Simulator(unwell, lambda *_: None)                  # default: the gap to well halves every two hours
+    for m in unwell:
+        gen = sim.devices[m.device_id].gen
+        assert m.well["spo2"] > 95 and m.well["heart_rate"] < m.last["heart_rate"]
+        assert gen.centre(gen.t0) == pytest.approx(m.last) and not gen.settled(gen.t0)   # starts as recorded
+        for hours, left in ((2, 0.5), (4, 0.25), (24, 0.0)):
+            now = gen.centre(gen.t0 + hours * 3600)
+            for k in ("spo2", "heart_rate", "resp_rate"):
+                assert now[k] == pytest.approx(m.well[k] + (m.last[k] - m.well[k]) * left, abs=0.05)
+        assert gen.centre(gen.t0 + 1800)["spo2"] < 92         # still unwell after half an hour: no sudden cure
+        assert gen.settled(gen.t0 + 24 * 3600)
+    stable = next(m for m in members if m.care_setting == "home" and m.origin == "synthetic" and m not in unwell)
+    gen = Simulator([stable], lambda *_: None).devices[stable.device_id].gen
+    assert gen.settled(gen.t0) and gen.centre(gen.t0 + 6 * 3600)["spo2"] == pytest.approx(stable.well["spo2"], abs=1)
+
+
+def test_a_restarted_simulator_carries_on_from_what_the_device_last_reported(cohort_and_series):
+    members, _ = cohort_and_series
+    m = _unwell(members)[0]
+    row = {"patient_id": m.patient_id, "care_setting": "home", "device_kind": "simulator",
+           "discharge_at": m.discharge_at.isoformat() + "+00:00"}
+    live_from = m.discharge_at + timedelta(hours=m.live_from_h)
+
+    def restarted(latest):
+        sim = Simulator([m], lambda *_: None)
+        sim.sync([{**row, "latest": latest}])
+        gen = sim.devices[m.device_id].gen
+        return gen.centre(time.monotonic())["spo2"]
+
+    partly = {"spo2": {"v": 94.0, "ts": (live_from + timedelta(hours=3)).isoformat() + "+00:00"}}
+    assert restarted(partly) == pytest.approx(94.0, abs=0.1)                     # not back to the recorded 89
+    recorded = {"spo2": {"v": m.last["spo2"], "ts": live_from.isoformat() + "+00:00"}}
+    assert restarted(recorded) == pytest.approx(m.last["spo2"], abs=0.1)         # nothing live yet: the record
+    assert restarted(None) == pytest.approx(m.last["spo2"], abs=0.1)
+
+
+def test_settled_patients_deteriorate_now_and_then_and_recovering_ones_are_left_alone(cohort_and_series):
+    members, _ = cohort_and_series
+    sim = Simulator(members, lambda *_: None, auto_scenarios_per_hour=3600)      # one a second, to see who is chosen
+    unwell = {m.device_id for m in _unwell(members)}
+    now = time.monotonic()
+    settled = {d.device_id for d in sim.devices.values() if d.context == "icu" or d.gen.settled(now)}
+    for _ in range(60):
+        sim._maybe_auto_scenario(1.0)
+    hit = {d.device_id: d.scenario for d in sim.devices.values() if d.scenario}
+    assert set(hit) == settled and len(hit) >= 15 and not unwell & set(hit)      # everyone settled, nobody recovering
+    for device_id, sc in hit.items():
+        m = sim.devices[device_id].member
+        assert sc.spec.name == {"Sepsis": "sepsis", "CHF": "chf_decompensation",
+                                "COPD": "copd_exacerbation"}.get(m.condition, sc.spec.name)
+        assert 1200 <= sc.duration_s <= 2400 and 1800 <= sc.recover_s <= 2700
+        end = sc.started + sc.duration_s
+        assert sc.intensity(end - 1) == 1.0 and 0.4 < sc.intensity(end + sc.recover_s / 2) < 0.6   # fades, not stops
+    assert not Simulator(members, lambda *_: None)._maybe_auto_scenario(1.0)     # off unless a rate is given
 
 
 def test_recorded_data_is_only_played_back_in_the_offline_evaluation(cohort_and_series):

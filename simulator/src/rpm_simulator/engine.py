@@ -41,6 +41,8 @@ log = logging.getLogger(__name__)
 CONTROL_TOPIC = "rpm/v1/sim/control"
 CMD_FILTER = "rpm/v1/dev/+/cmd"
 CLINICAL_SCENARIOS = ["sepsis", "chf_decompensation", "copd_exacerbation", "hypoxia", "af_rvr", "bradycardia"]
+# a spontaneous deterioration follows the patient's condition where there is a matching scenario
+CONDITION_SCENARIO = {"Sepsis": "sepsis", "CHF": "chf_decompensation", "COPD": "copd_exacerbation"}
 
 Publish = Callable[[str, str, str], None]  # (key, topic, payload)
 
@@ -58,6 +60,7 @@ class SimDevice:
     battery: float = 100.0
     pending: list[tuple[float, str, dict]] = field(default_factory=list)  # (due, event_type, data)
     force_spo2: bool = False
+    resume_pending: bool = False   # a new wearable: carry on from the patient's latest readings at the next sync
 
     @property
     def device_id(self) -> str:
@@ -79,8 +82,11 @@ class SimDevice:
 class Simulator:
     def __init__(self, members: list[CohortMember], publish: Publish, *, window_s: int = 30, speed: float = 1.0,
                  seed: str = "rpm-v1", tz_offset_h: float = 5.5, auto_scenarios_per_hour: float = 0.0,
-                 manual_every_s: float = 900, icu_window_s: int = 10, replay: bool = False):
+                 manual_every_s: float = 900, icu_window_s: int = 10, replay: bool = False,
+                 recovery_half_life_h: float = 2.0):
         self.publish = publish
+        self.recovery_half_life_s = recovery_half_life_h * 3600   # unwell patients: the gap to well halves this often
+        self._last_tick: float | None = None
         self.replay = replay                   # offline evaluation: play recorded data back instead of continuing it
         self.speed = speed
         self.tz_offset_h = tz_offset_h
@@ -117,10 +123,12 @@ class Simulator:
             period = self.window_s
         else:
             # live: the recorded data is history; the wearable carries on from the last recorded reading
-            gen = ContinuingWearable(m.last or m.baseline, rng, now, hrv_base=hrv,
+            gen = ContinuingWearable(m.last or m.baseline, rng, now, well=m.well,
+                                     half_life_s=self.recovery_half_life_s, hrv_base=hrv,
                                      manual_every_s=self.default_manual_every_s)
             period = self.window_s
-        dev = SimDevice(m, gen, next_due=now + offset % period, window_s=period)
+        dev = SimDevice(m, gen, next_due=now + offset % period, window_s=period,
+                        resume_pending=isinstance(gen, ContinuingWearable))
         self.devices[m.device_id] = dev
         self.members[m.patient_id] = m
         for alias in (m.device_id, m.patient_id, m.subject_id):
@@ -142,8 +150,13 @@ class Simulator:
         if m is None or m.care_setting == setting:
             return False
         with self.lock:
+            old = self.devices.get(m.device_id)
+            # the new device carries on from the values the old one was showing
+            last = {k: round(v, 1) for k, v in old.gen.centre(time.monotonic()).items()} \
+                if old and isinstance(old.gen, ContinuingWearable) else m.last
             self._remove(patient_id)
-            moved = replace(m, care_setting=setting, device_id=sim_device_id(patient_id, setting),
+            moved = replace(m, care_setting=setting, device_id=sim_device_id(patient_id, setting), last=last,
+                            live_from_h=0.0,
                             discharge_at=utcnow().replace(tzinfo=None) if setting == "home" else None)
             self.members[patient_id] = moved
             if patient_id not in self.paused:
@@ -170,15 +183,43 @@ class Simulator:
             if patient_id not in self.paused:
                 self._add(moved)
 
+    def _resume(self, patient_id: str, latest: dict | None) -> None:
+        """A wearable created just now (the simulator restarted, or the devices were paused) carries on from the
+        readings the patient's device has already reported since live monitoring began, so a patient who had
+        partly recovered does not fall back to their last recorded values."""
+        m = self.members[patient_id]
+        dev = self.devices.get(m.device_id)
+        if dev is None or not dev.resume_pending:
+            return
+        dev.resume_pending = False
+        if not isinstance(dev.gen, ContinuingWearable) or not latest or m.discharge_at is None:
+            return
+        live_from = (m.discharge_at + timedelta(hours=m.live_from_h)).replace(tzinfo=UTC)
+        values = {}
+        for k, rec in latest.items():
+            try:
+                when = datetime.fromisoformat(str(rec["ts"]).replace("Z", "+00:00"))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=UTC)
+                if k in dev.gen.well and when > live_from:
+                    values[k] = float(rec["v"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        if values:
+            dev.gen.resume(values, time.monotonic())
+
     def sync(self, rows: list[dict]) -> None:
-        """Follow the platform's registry: who is admitted, who is at home and since when, and who wears a real
-        watch (those are not simulated). Rows: {patient_id, care_setting, device_kind, discharge_at}."""
+        """Follow the platform's registry: who is admitted, who is at home and since when, who wears a real watch
+        (those are not simulated), and what each simulated device last reported.
+        Rows: {patient_id, care_setting, device_kind, discharge_at, latest}."""
         for row in rows:
             pid = row["patient_id"]
             if pid not in self.members:
                 continue
             self.set_setting(pid, row["care_setting"])
             self._align_discharge(pid, row.get("discharge_at"))
+            with self.lock:
+                self._resume(pid, row.get("latest"))
             real = row.get("device_kind") == "watch"
             with self.lock:
                 if real and pid not in self.paused:
@@ -195,7 +236,7 @@ class Simulator:
         return self.devices.get(dev_id) if dev_id else None
 
     def start_scenario(self, target: str, name: str, duration_s: float | None = None,
-                       ramp_s: float | None = None) -> bool:
+                       ramp_s: float | None = None, recover_s: float | None = None) -> bool:
         spec = SCENARIOS.get(name)
         dev = self.resolve(target)
         if not spec or not dev:
@@ -203,7 +244,7 @@ class Simulator:
             return False
         with self.lock:
             dev.scenario = ActiveScenario(spec, time.monotonic(), duration_s or spec.default_duration_s,
-                                          ramp_override_s=ramp_s)
+                                          ramp_override_s=ramp_s, recover_override_s=recover_s)
             if isinstance(dev.gen, Wearable) and spec.deltas:
                 dev.gen.manual_every_s = 300  # the patient is prompted for extra blood pressure readings
         log.info("scenario started", extra={"device_id": dev.device_id, "patient_id": dev.member.patient_id,
@@ -347,15 +388,27 @@ class Simulator:
             self._event(dev, etype, data)
 
     def _maybe_auto_scenario(self, dt: float) -> None:
+        """Now and then a settled patient deteriorates on their own (`auto_rate` times an hour across everyone): the
+        deterioration builds at the scenario's own pace, holds for 20 to 40 minutes and fades over 30 to 45. Patients
+        who are still recovering, or already in a scenario, are left alone."""
         if self.auto_rate <= 0 or self.rng.random() > self.auto_rate * dt / 3600:
             return
-        idle = [d for d in self.devices.values() if d.scenario is None]
-        if idle:
-            dev = self.rng.choice(idle)
-            self.start_scenario(dev.device_id, self.rng.choice(CLINICAL_SCENARIOS))
-
-    def tick(self, dt: float = 1.0) -> int:
         now = time.monotonic()
+        settled = [d for d in self.devices.values() if d.scenario is None
+                   and (not isinstance(d.gen, ContinuingWearable) or d.gen.settled(now))]
+        if not settled:
+            return
+        dev = self.rng.choice(settled)
+        name = CONDITION_SCENARIO.get(dev.member.condition) or self.rng.choice(CLINICAL_SCENARIOS)
+        log.info("spontaneous deterioration", extra={"patient_id": dev.member.patient_id, "scenario": name})
+        self.start_scenario(dev.device_id, name, duration_s=self.rng.uniform(1200, 2400),
+                            recover_s=self.rng.uniform(1800, 2700))
+
+    def tick(self, dt: float | None = None) -> int:
+        now = time.monotonic()
+        if dt is None:   # real time since the last tick, so the rate of spontaneous deteriorations is per hour
+            dt = min(5.0, now - self._last_tick) if self._last_tick is not None else 0.0
+        self._last_tick = now
         sent = 0
         with self.lock:
             devices = list(self.devices.values())

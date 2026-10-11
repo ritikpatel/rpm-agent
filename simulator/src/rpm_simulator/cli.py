@@ -71,19 +71,21 @@ def _mqtt_config(a: argparse.Namespace, shards: int = 1) -> MqttConfig:
                       tls_ca=a.tls_ca, tls_cert=a.tls_cert, tls_key=a.tls_key)
 
 
-def _sync_loop(sim: Simulator, url: str, token: str, stop: threading.Event, interval_s: float = 15) -> None:
+def _sync(sim: Simulator, http: httpx.Client) -> bool:
+    try:
+        r = http.get("/internal/cohort")
+        r.raise_for_status()
+        sim.sync(r.json())
+        return True
+    except Exception as exc:  # noqa: BLE001 - the fleet keeps running on its last known state
+        log.debug("registry sync failed", extra={"error": str(exc)[:200]})
+        return False
+
+
+def _sync_loop(sim: Simulator, http: httpx.Client, stop: threading.Event, interval_s: float = 15) -> None:
     """Follow the platform's registry so a restart, a discharge or a newly assigned real watch is picked up."""
-    http = httpx.Client(base_url=url.rstrip("/"), timeout=5, headers={"X-Service-Token": token,
-                                                                       "X-Service-Name": "simulator"})
-    while True:
-        try:
-            r = http.get("/internal/cohort")
-            r.raise_for_status()
-            sim.sync(r.json())
-        except Exception as exc:  # noqa: BLE001 - the fleet keeps running on its last known state
-            log.debug("registry sync failed", extra={"error": str(exc)[:200]})
-        if stop.wait(interval_s):
-            return
+    while not stop.wait(interval_s):
+        _sync(sim, http)
 
 
 def cmd_run(a: argparse.Namespace) -> None:
@@ -92,7 +94,7 @@ def cmd_run(a: argparse.Namespace) -> None:
     pub = FleetPublisher(_mqtt_config(a, a.shards), on_message=lambda t, p: sim_ref["sim"].on_message(t, p))
     sim = Simulator(members, pub.publish, window_s=a.window_s, seed=a.seed,
                     tz_offset_h=a.tz_offset_h, auto_scenarios_per_hour=a.auto_scenarios_per_hour,
-                    icu_window_s=a.icu_window_s)
+                    icu_window_s=a.icu_window_s, recovery_half_life_h=a.recovery_half_life_h)
     sim_ref["sim"] = sim
     pub.subscribe(CONTROL_TOPIC)
     pub.subscribe(CMD_FILTER)
@@ -101,8 +103,12 @@ def cmd_run(a: argparse.Namespace) -> None:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     if a.care_api:
-        threading.Thread(target=_sync_loop, name="registry-sync", daemon=True,
-                         args=(sim, a.care_api, a.service_token, stop)).start()
+        http = httpx.Client(base_url=a.care_api.rstrip("/"), timeout=5,
+                            headers={"X-Service-Token": a.service_token, "X-Service-Name": "simulator"})
+        for _ in range(10):   # before the first reading: carry on from what each device last reported
+            if _sync(sim, http) or stop.wait(3):
+                break
+        threading.Thread(target=_sync_loop, name="registry-sync", daemon=True, args=(sim, http, stop)).start()
     homes = sum(1 for m in members if m.care_setting == "home")
     log.info("simulator started", extra={"patients": len(members), "home_wearables": homes,
                                          "icu_monitors": len(members) - homes, "window_s": a.window_s,
@@ -207,7 +213,12 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--care-api", default=_env("RPM_CARE_API_URL"),
                      help="follow the platform's registry (admissions, discharges, real watches)")
     run.add_argument("--service-token", default=_env("RPM_SERVICE_TOKEN", "dev-service-token"))
-    run.add_argument("--auto-scenarios-per-hour", type=float, default=float(_env("RPM_SIM_AUTO_SCENARIOS", "0")))
+    run.add_argument("--auto-scenarios-per-hour", type=float, default=float(_env("RPM_SIM_AUTO_SCENARIOS", "0.25")),
+                     help="how often a settled patient deteriorates on their own, across everyone (0 = never)")
+    run.add_argument("--recovery-half-life-h", type=float,
+                     default=float(_env("RPM_SIM_RECOVERY_HALF_LIFE_H", "2")),
+                     help="patients whose record ended with them unwell: hours for the gap to well to halve "
+                          "(0 = they stay as the record left them)")
     run.add_argument("--tz-offset-h", type=float, default=float(_env("RPM_SIM_TZ_OFFSET_H", "5.5")))
     run.add_argument("--duration-s", type=float, default=0, help="stop after N seconds (0 = forever)")
     run.set_defaults(fn=cmd_run)

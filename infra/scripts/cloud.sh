@@ -220,6 +220,8 @@ RPM_ESCALATION_TIMEOUT_SCALE=${RPM_ESCALATION_TIMEOUT_SCALE:-1}
 RPM_MAX_REMINDERS=${RPM_MAX_REMINDERS:-1}
 RPM_AGENT_MONITOR_INTERVAL_S=${RPM_AGENT_MONITOR_INTERVAL_S:-3600}
 RPM_AGENT_DAILY_LIMIT=${RPM_AGENT_DAILY_LIMIT:-80}
+RPM_SIM_AUTO_SCENARIOS=${RPM_SIM_AUTO_SCENARIOS:-0.25}
+RPM_SIM_RECOVERY_HALF_LIFE_H=${RPM_SIM_RECOVERY_HALF_LIFE_H:-2}
 RPM_EMBEDDINGS=titan
 RPM_LLM_PROVIDER=${RPM_LLM_PROVIDER:-bedrock}
 RPM_MODELS_URI=s3://$bucket/models/plugins
@@ -253,7 +255,9 @@ for i in \$(seq 1 180); do
 done
 \$K -n rpm logs job/\$J --tail 25 | grep -v '^{' || true
 [ \"\${S%%/*}\" = 1 ] || { echo 'seed failed'; \$K -n rpm logs job/\$J --tail 30; exit 1; }
-\$K -n rpm rollout restart deployment/simulator >/dev/null; echo 'simulated devices restarted (a paused fleet stays paused)'" 1200
+\$K -n rpm rollout restart deployment/stream-processor deployment/simulator >/dev/null
+\$K -n rpm rollout status deployment/stream-processor --timeout=180s >/dev/null
+echo 'stream processor and simulated devices restarted (a paused fleet stays paused)'" 1200
 }
 
 cmd_status() {

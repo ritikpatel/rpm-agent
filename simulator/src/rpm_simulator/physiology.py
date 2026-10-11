@@ -81,19 +81,42 @@ class Wearable:
 class ContinuingWearable(Wearable):
     """Live monitoring: the patient's recorded data has ended, and new readings carry on from the last one.
 
-    Each vital sign wanders slowly around its last recorded value and is pulled back towards it, so a patient who
-    was stable when the data ended stays stable and one who was unwell stays unwell until a clinician acts or a
-    scenario changes the picture. The size of the wander is taken from the recorded wearable streams (how much a
-    patient's readings vary from one to the next over six hours), less the sensor noise added on top."""
+    Where the record ended with the patient unwell, the values recover gradually towards the patient's own settled
+    values (`well`): the gap halves every `half_life_s`. Around that course each vital sign wanders slowly and is
+    pulled back, sized like the reading-to-reading variation in the recorded wearable streams (over six hours, less
+    the sensor noise added on top). A patient who was settled when the record ended simply stays settled."""
 
     DRIFT_SD = {"heart_rate": 1.7, "spo2": 0.4, "resp_rate": 0.8, "sbp": 3.1, "temp": 0.09}
     DRIFT_TAU_S = 1200.0   # a drift fades over about 20 minutes
+    SETTLED = {"heart_rate": 8.0, "spo2": 2.0, "resp_rate": 3.0, "sbp": 10.0, "temp": 0.4}   # "close enough to well"
 
-    def __init__(self, last: dict[str, float], rng: random.Random, t0: float, **kw):
+    def __init__(self, last: dict[str, float], rng: random.Random, t0: float, well: dict[str, float] | None = None,
+                 half_life_s: float = 7200.0, **kw):
         super().__init__(rng, t0, **kw)
         self.last = dict(last)
+        self.well = {k: (well or {}).get(k, v) for k, v in last.items()}
+        self.half_life_s = half_life_s                     # 0 = no recovery: hold at the last recorded values
+        self._away = {k: last[k] - self.well[k] for k in last}   # distance from well at _away_t
+        self._away_t = t0
         self._drift = dict.fromkeys(self.DRIFT_SD, 0.0)   # starts exactly on the last recorded reading
         self._drift_t = t0
+
+    def centre(self, t: float) -> dict[str, float]:
+        """Where the patient is on their way from the last recorded reading to their settled values."""
+        left = 0.5 ** (max(0.0, t - self._away_t) / self.half_life_s) if self.half_life_s > 0 else 1.0
+        return {k: self.well[k] + away * left for k, away in self._away.items()}
+
+    def resume(self, values: dict[str, float], t: float) -> None:
+        """Carry on from readings already reported (a restarted simulator): recovery continues from where the
+        patient had got to instead of starting again from the record."""
+        now = self.centre(t)
+        self._away = {k: values.get(k, now[k]) - self.well[k] for k in self.well}
+        self._away_t = t
+        self._drift, self._drift_t = dict.fromkeys(self.DRIFT_SD, 0.0), t
+
+    def settled(self, t: float) -> bool:
+        now = self.centre(t)
+        return all(abs(now[k] - self.well[k]) <= self.SETTLED.get(k, float("inf")) for k in now)
 
     def values(self, t: float) -> dict[str, float]:
         dt = t - self._drift_t
@@ -103,7 +126,7 @@ class ContinuingWearable(Wearable):
             for k, sd in self.DRIFT_SD.items():
                 self._drift[k] = self._drift[k] * keep + self.rng.gauss(0, sd) * push
             self._drift_t = t
-        out = {k: v + self._drift.get(k, 0.0) for k, v in self.last.items()}
+        out = {k: v + self._drift.get(k, 0.0) for k, v in self.centre(t).items()}
         out["spo2"] = min(100.0, out["spo2"])
         return out
 
