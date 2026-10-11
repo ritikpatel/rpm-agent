@@ -91,6 +91,10 @@ def main() -> None:
     patients, _ = wait("patients are streaming", lambda: [
         p for p in api.call("GET", "/api/patients", clin) if p["care_setting"] == "icu" and p["last_seen"]] or None,
         120)
+    # an earlier run of this check may have ended early and left its alert open: close those, and only those
+    for x in api.call("GET", "/api/alerts", clin):
+        if (x.get("acknowledged_by") or "").startswith("e2e."):
+            api.call("POST", f"/api/alerts/{x['alert_id']}/resolve", clin, {"resolution": "left by an earlier e2e run"})
     all_patients = api.call("GET", "/api/patients", clin)
     icu = [p for p in all_patients if p["care_setting"] == "icu" and p["last_seen"]]
     home = [p for p in all_patients if p["care_setting"] == "home" and p["last_seen"]]
@@ -165,6 +169,7 @@ def main() -> None:
     api.call("POST", f"/api/alerts/{alert['alert_id']}/ack", clin, {"note": "e2e"})
     step("clinician acknowledged the alert",
          api.call("GET", f"/api/alerts/{alert['alert_id']}", clin)["status"] == "acknowledged")
+    api.call("POST", "/api/demo/clear", demo, {"patient_id": sick["patient_id"], "scenario": "sepsis"})   # the patient settles again
 
     if a.fhir:
         print("4. FHIR write-back")
@@ -232,6 +237,9 @@ def main() -> None:
     step("clinician, service and agent actions are all audited",
          any(x.startswith("e2e.") for x in actors) and any(x.startswith("agent:") for x in actors),
          f"{len(audit)} entries; agents seen: {sorted(x for x in actors if x.startswith('agent:'))}")
+    api.call("POST", f"/api/alerts/{alert['alert_id']}/resolve", clin, {"resolution": "e2e check finished"})
+    step("clinician resolved the alert, so the patient is free for the next run",
+         api.call("GET", f"/api/alerts/{alert['alert_id']}", clin)["status"] == "resolved")
     stats = api.call("GET", "/api/stats", clin)
     step("sensor -> scored latency is under 5 s (p95)", (stats["e2e_p95_s"] or 99) < 5,
          f"p50 {stats['e2e_p50_s']:.2f}s, p95 {stats['e2e_p95_s']:.2f}s over {stats['windows_5m']} windows")

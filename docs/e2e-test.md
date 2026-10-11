@@ -63,7 +63,7 @@ make e2e
 One PASS or FAIL line per check, about four minutes. It covers live data, risk scores, a deterioration that pages
 the care team, the agents' cited summary, FHIR write-back, messaging, a lab result arriving through the hospital
 record, a discharge, the audit trail and latency. It uses one ICU patient for a scenario and discharges another;
-`make reset up seed sim` gives a fresh cohort.
+`make reset up seed sim` gives a fresh cohort. At the end it ends its scenario and resolves the alert it raised.
 
 ## Part B: a patient at home who deteriorates in the data
 
@@ -164,6 +164,7 @@ When you have finished: `make cloud-stop` (or `make cloud-sim-pause` to keep the
 | Symptom | Check |
 |---|---|
 | No patients streaming | `make ps` (is `simulator` up?), then `make logs` |
+| `make e2e` stops at "an ICU patient without an alert is available" | Every ICU patient has an active alert, often "Monitor silent" ones raised while the devices were stopped or paused. Resolve them in the console and run it again. The check closes alerts left by its own earlier runs, never anyone else's |
 | No alert after a scenario | Give it the full ramp time plus 30 seconds |
 | "The agents are working on it…" for minutes | `make logs`; an expired AWS sign-in falls back to offline rules, a stopped container does not |
 | Summary says "offline-rules" | Started without `LLM=bedrock`, or the AWS sign-in has expired (12 hours): sign in and `make up LLM=bedrock MAIL=ses` |
