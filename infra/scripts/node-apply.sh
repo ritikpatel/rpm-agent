@@ -60,14 +60,13 @@ systemctl daemon-reload
 systemctl enable --now rpm-ecr-login.timer >/dev/null 2>&1
 systemctl start rpm-ecr-login.service   # through systemd, so it never runs twice at once with the timer
 
-# `make cloud-sim-pause` survives a release: the manifest asks for one copy of the simulated fleet, so a fleet that
-# was paused is put straight back to zero, before it has connected.
-sim_replicas="$(kubectl -n "$NS" get deployment simulator -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
-kubectl apply -k k8s | sed 's/^/  /'
-if [ "$sim_replicas" = 0 ]; then
-  kubectl -n "$NS" scale deployment/simulator --replicas=0 >/dev/null
+# `make cloud-sim-pause` survives a release: if the simulated fleet is paused, this release asks for zero copies of
+# it too, so no device connects even for a moment.
+if [ "$(kubectl -n "$NS" get deployment simulator -o jsonpath='{.spec.replicas}' 2>/dev/null || true)" = 0 ]; then
+  printf 'replicas:\n  - {name: simulator, count: 0}\n' >> k8s/kustomization.yaml
   echo "simulated devices stay paused (make cloud-sim-resume starts them)"
 fi
+kubectl apply -k k8s | sed 's/^/  /'
 
 fail() {
   echo "NOT READY: $1"
