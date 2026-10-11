@@ -1,7 +1,8 @@
 """rpm-seed: prepare a fresh environment.
 
   rpm-seed all            # everything below, in order
-  rpm-seed registry       # patients and their devices in the operational store
+  rpm-seed registry       # patients and their devices in the operational store, and their recorded readings as
+                          # history: monitoring starts where each patient's recorded data ends
   rpm-seed fhir           # the hospital record: patients, encounters, conditions, labs, medications
   rpm-seed index          # the guideline index: protocols + each patient's discharge summary
   rpm-seed subscriptions  # ask the FHIR server to notify care-api of admissions, discharges and lab results
@@ -28,6 +29,7 @@ from rpm_core.logging import setup_logging
 from rpm_core.rag import RagIndex, load_protocols, make_embedder
 from rpm_core.rag.discharge import build_all
 
+from . import history
 from .client import FhirClient
 from .mapping import PatientBundleBuilder
 from .registry import seed
@@ -150,6 +152,7 @@ def main(argv: list[str] | None = None) -> None:
         migrate(a.database_url)
     if everything or a.target == "registry":
         print(f"registry: {seed(a.database_url, members)}")
+        print(f"history: {history.load(a.database_url, members)}")
     if everything:
         FhirClient(a.fhir_url).wait_ready()
         subscriptions(a, enable=False)   # loading history must not look like new admissions and results

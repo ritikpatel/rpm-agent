@@ -1,7 +1,7 @@
 """The cohort comes from the team's training data and from nowhere else."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -38,7 +38,26 @@ def test_only_real_patients_are_shown_in_icu_and_everyone_else_is_home(data):
     assert {m.origin for m in home} == {"mimic_real", "synthetic"}
 
 
-def test_wearable_values_are_the_patients_own(data):
+def test_monitoring_starts_where_each_patients_recorded_data_ends(data):
+    members = build_cohort(data, ANCHOR)
+    for m in members:
+        if m.care_setting == "home":
+            end_h, reading = m.points[-1]
+            assert end_h == (72.0 if m.origin == "synthetic" else 24.0)
+            assert m.discharge_at == ANCHOR - timedelta(hours=end_h)          # the last recorded reading is "now"
+            assert m.last == {k: reading[k] for k in ("heart_rate", "resp_rate", "spo2", "sbp", "temp")}
+        else:   # shown as admitted: the last ICU readings the data has are the ones charted at discharge
+            assert m.last == {k: m.baseline[k] for k in m.last} and set(m.last) <= set(m.baseline)
+        assert "severity" not in m.last                                        # a label, never a reading
+
+
+def test_only_the_offline_evaluation_places_patients_inside_their_recorded_data(data):
+    for m in build_cohort(data, ANCHOR, replay=True):
+        if m.care_setting == "home":
+            assert timedelta(hours=2) <= ANCHOR - m.discharge_at <= timedelta(hours=24)
+
+
+def test_recorded_readings_are_read_exactly_and_interpolated_only_for_the_replay(data):
     m = next(x for x in build_cohort(data, ANCHOR) if x.origin == "synthetic")
     stream = data.patients[m.patient_id].stream
     assert len(stream) == 289 and stream[0][0] == 0.0 and stream[-1][0] == 72.0

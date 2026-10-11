@@ -28,15 +28,20 @@ one account).
 
 `make cohort` lists them. All 30 are in the training data:
 
-| Group | Patients | Device | What plays |
+| Group | Patients | Device | Where the readings come from |
 |---|---|---|---|
-| ICU (6) | real MIMIC patients, for example `RPM-10001725`, `RPM-10005348`, `RPM-10014078` | `sim-icu-<id>` | A bedside monitor centred on the vital signs charted at their discharge |
-| Home, MIMIC (8) | for example `RPM-10004422`, `RPM-10007928` | `sim-<id>` | Their own post-discharge snapshots (1 to 24 hours) |
-| Home, synthetic (16) | for example `SYN-000160`, `SYN-000118`, `SYN-000143` | `sim-<id>` | Their own 72-hour wearable stream |
+| ICU (6) | real MIMIC patients, for example `RPM-10001725`, `RPM-10005348`, `RPM-10014078` | `sim-icu-<id>` | New readings from a bedside monitor, centred on the vital signs charted at their discharge |
+| Home, MIMIC (8) | for example `RPM-10004422`, `RPM-10007928` | `sim-<id>` | History: their discharge reading and five snapshots (to 24 hours). Live: new readings from the last one |
+| Home, synthetic (16) | for example `SYN-000160`, `SYN-000118`, `SYN-000143` | `sim-<id>` | History: their 72-hour wearable stream. Live: new readings from the last one |
 
-**Expect alerts within a few minutes of starting, without doing anything.** Several home patients are in a
-deteriorating stretch of their own data (for example `SYN-000118`, `SYN-000128`, `SYN-000143`, `RPM-10007928`:
-SpO2 around 89%, heart rate above 110). That is the data, not a fault.
+The recorded data is each patient's history; it is not replayed. Monitoring starts where it ends, and every live
+reading is newly generated around the patient's last recorded values. `make seed` loads the history and restarts
+every patient at that point (readings a simulated device sent in an earlier run are cleared).
+
+**Expect alerts within a few minutes of starting, without doing anything.** Eight of the 24 home patients were
+unwell when their recorded data ended (for example `SYN-000118`, `SYN-000128`, `SYN-000143`, `SYN-000051`,
+`SYN-000095`, `RPM-10007928`: SpO2 around 89%, heart rate above 110), so they stay unwell. That is the data, not a
+fault. The other 16 are stable until you start a scenario.
 
 ## Part A: automated check
 
@@ -56,8 +61,9 @@ Use `SYN-000118` (or any home patient already showing an alert).
 1. **Find the patient.** In the worklist, filter **Post-discharge** and open `SYN-000118`. The header reads
    "synthetic patient · home, discharged …" and the device is `sim-SYN-000118`.
 2. **Read the vitals.** Heart rate arrives every 30 seconds; SpO2, respiratory rate and temperature every 5 minutes;
-   blood pressure every 15. These are the patient's own values from the wearable stream, at the point in their
-   course they have reached. There is no ICU monitor data.
+   blood pressure every 15. Choose **24 h** on the chart: the line up to the time shown under the heading is the
+   patient's recorded data, and everything after it is live, starting from the last recorded values. There is no
+   ICU monitor data.
 3. **See the alert.** **Active alert** shows what the rules found (for example "NEWS2 high — NEWS2 9") with its
    severity and tier. Under **Notifications**, "Cause → sent" is the time from the reading to the page: well under
    a second.
@@ -85,14 +91,14 @@ Use `RPM-10001725` (a real MIMIC patient shown as admitted).
    discharge. Only the early-deterioration model applies.
 2. **Make them deteriorate.** In **Demo controls** choose `sepsis`, ramp 60, **Start scenario**. Heart rate and
    respiratory rate climb, blood pressure falls, NEWS2 rises; within about a minute an alert opens, the care team
-   is paged and the agents summarise. This adds offsets to this patient's own values; it creates no patient.
+   is paged and the agents summarise. This adds offsets to this patient's current values; it creates no patient.
 3. **End** the scenario and **Resolve** the alert.
 4. **File a lab result.** In **Demo controls** leave Lactate 4.2 mmol/L, flag H, and click **File lab result**. It
    appears under **Lab results** within seconds. It was written to the hospital record as a FHIR Observation and
    came back through the same queue as device data.
 5. **Discharge.** Click **Discharge home**. Within seconds the header changes to "home, discharged today" and the
    device to `sim-RPM-10001725`. The ICU monitor has stopped: blood pressure and temperature no longer arrive every
-   10 seconds. The wearable now plays this patient's own post-discharge data from hour 0.
+   10 seconds. The wearable carries on from the values the monitor was showing.
 6. **After discharge.** **Risk models** gains **Readmission risk** immediately and **Recovery monitoring** within a
    few minutes. With the agents on, a discharge summary appears under **Latest agent summary**.
 

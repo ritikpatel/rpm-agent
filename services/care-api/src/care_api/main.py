@@ -257,6 +257,7 @@ def stats(user: Reader) -> dict:
                percentile_cont(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM processed_at - ingest_at))
                    AS pipeline_p95_s
         FROM vitals WHERE processed_at > now() - interval '5 minutes' AND NOT buffered AND NOT late
+          AND ingest_at IS NOT NULL
         """)[0]
     pages = _query(
         """

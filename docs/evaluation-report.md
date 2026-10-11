@@ -59,7 +59,10 @@ the undisturbed end-to-end check measured 0.31 s. More pages are needed before t
 ## 3. Alert quality
 
 Method: the real simulator and the real stream processor run in memory on a virtual clock for a simulated 24 hours
-with **all 263 patients in the training data** (243 at home, 20 shown in ICU). An alert stays open while the patient
+with **all 263 patients in the training data** (243 at home, 20 shown in ICU). This offline evaluation is the only
+place where recorded readings are played back: each home patient is placed 2 to 24 hours into their recorded data so
+that the rules can be scored against the data's labels. The running platform never streams recorded readings; it
+loads them as history and generates new readings from the last one. An alert stays open while the patient
 keeps producing alert-worthy readings and is resolved after 30 quiet minutes, so one long deterioration counts as
 one alert.
 

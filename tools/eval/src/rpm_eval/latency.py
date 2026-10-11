@@ -31,6 +31,7 @@ SELECT context, count(*) AS windows,
        {_pct(0.95, 'processed_at - ts')} AS sensor_to_scored_p95_s,
        {_pct(0.99, 'processed_at - ts')} AS sensor_to_scored_p99_s
 FROM vitals WHERE processed_at > now() - make_interval(mins => %s) AND NOT buffered AND NOT late
+  AND ingest_at IS NOT NULL
 GROUP BY context ORDER BY context
 """
 _PAGES = """

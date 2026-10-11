@@ -2,8 +2,10 @@
 
 An admitted patient has an ICU bedside monitor (every vital sign, every few seconds); a discharged patient has a
 wrist wearable (heart rate, SpO2, activity). A patient never has both: discharge retires the ICU monitor and starts
-the wearable, admission does the reverse. Devices react to cloud commands (SET_PROFILE, SPOT_CHECK, CHECKIN, NOTIFY)
-and to control messages (scenario, clear, discharge, admit)."""
+the wearable, admission does the reverse. New readings are generated from each patient's last recorded values; the
+recorded data itself is never sent as if it were new (only the offline evaluation plays it back, with replay=True).
+Devices react to cloud commands (SET_PROFILE, SPOT_CHECK, CHECKIN, NOTIFY) and to control messages (scenario,
+clear, discharge, admit)."""
 
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ from rpm_core.contracts import (
     utcnow,
 )
 
-from .physiology import IcuReplay, TrajectoryWearable
+from .physiology import ContinuingWearable, IcuReplay, TrajectoryWearable, Wearable
 from .scenarios import SCENARIOS, ActiveScenario
 
 log = logging.getLogger(__name__)
@@ -46,7 +48,7 @@ Publish = Callable[[str, str, str], None]  # (key, topic, payload)
 @dataclass
 class SimDevice:
     member: CohortMember
-    gen: TrajectoryWearable | IcuReplay
+    gen: Wearable | IcuReplay
     next_due: float
     seq: int = 0
     profile: str = "normal"
@@ -77,8 +79,9 @@ class SimDevice:
 class Simulator:
     def __init__(self, members: list[CohortMember], publish: Publish, *, window_s: int = 30, speed: float = 1.0,
                  seed: str = "rpm-v1", tz_offset_h: float = 5.5, auto_scenarios_per_hour: float = 0.0,
-                 manual_every_s: float = 900, icu_window_s: int = 10):
+                 manual_every_s: float = 900, icu_window_s: int = 10, replay: bool = False):
         self.publish = publish
+        self.replay = replay                   # offline evaluation: play recorded data back instead of continuing it
         self.speed = speed
         self.tz_offset_h = tz_offset_h
         self.auto_rate = auto_scenarios_per_hour
@@ -100,16 +103,21 @@ class Simulator:
     def _add(self, m: CohortMember, offset: float = 0.0) -> SimDevice:
         rng = random.Random(f"{self.seed}:{m.subject_id}:{m.care_setting}")
         now = time.monotonic()
+        hrv = (m.record.home_baseline.get("hrv_rmssd") if m.record else None) or 32.0
         if m.care_setting == "icu":
-            # a bedside monitor shows every channel, centred on the patient's vital signs at discharge
-            series = {k: [(0.0, v)] for k, v in m.baseline.items()}
-            gen: TrajectoryWearable | IcuReplay = IcuReplay(series, rng, 0.0, 1.0)
+            # a bedside monitor shows every channel, centred on the patient's last charted vital signs
+            series = {k: [(0.0, v)] for k, v in {**m.baseline, **m.last}.items()}
+            gen: Wearable | IcuReplay = IcuReplay(series, rng, 0.0, 1.0)
             period = self.icu_window_s
-        else:
-            # the wearable plays the patient's own post-discharge data, starting where they are now in it
+        elif self.replay:
+            # evaluation: the wearable plays the patient's recorded data, starting where they are in it
             since = (utcnow().replace(tzinfo=None) - m.discharge_at).total_seconds() / 3600 if m.discharge_at else 0.0
-            hrv = (m.record.home_baseline.get("hrv_rmssd") if m.record else None) or 32.0
             gen = TrajectoryWearable(m.points, rng, max(0.0, since), now, self.speed, hrv_base=hrv,
+                                     manual_every_s=self.default_manual_every_s)
+            period = self.window_s
+        else:
+            # live: the recorded data is history; the wearable carries on from the last recorded reading
+            gen = ContinuingWearable(m.last or m.baseline, rng, now, hrv_base=hrv,
                                      manual_every_s=self.default_manual_every_s)
             period = self.window_s
         dev = SimDevice(m, gen, next_due=now + offset % period, window_s=period)
@@ -145,13 +153,16 @@ class Simulator:
         return True
 
     def _align_discharge(self, patient_id: str, discharge_at: str | None) -> None:
-        """Play a home patient's data from the discharge time the platform recorded, so a restarted simulator
-        continues the same course instead of starting another."""
+        """Keep the discharge time the platform recorded. In a replay this also restarts the device there, so a
+        restarted simulator continues the same course instead of starting another."""
         m = self.members[patient_id]
         if m.care_setting != "home" or not discharge_at:
             return
         when = datetime.fromisoformat(discharge_at.replace("Z", "+00:00")).astimezone(UTC).replace(tzinfo=None)
         if m.discharge_at is not None and abs((when - m.discharge_at).total_seconds()) < 120:
+            return
+        if not self.replay:   # live readings do not depend on the discharge time
+            self.members[patient_id] = replace(m, discharge_at=when)
             return
         with self.lock:
             self._remove(patient_id)
@@ -193,7 +204,7 @@ class Simulator:
         with self.lock:
             dev.scenario = ActiveScenario(spec, time.monotonic(), duration_s or spec.default_duration_s,
                                           ramp_override_s=ramp_s)
-            if isinstance(dev.gen, TrajectoryWearable) and spec.deltas:
+            if isinstance(dev.gen, Wearable) and spec.deltas:
                 dev.gen.manual_every_s = 300  # the patient is prompted for extra blood pressure readings
         log.info("scenario started", extra={"device_id": dev.device_id, "patient_id": dev.member.patient_id,
                                             "scenario": name, "duration_s": dev.scenario.duration_s})
@@ -207,7 +218,7 @@ class Simulator:
         if dev:
             with self.lock:
                 dev.scenario = None
-                if isinstance(dev.gen, TrajectoryWearable):
+                if isinstance(dev.gen, Wearable):
                     dev.gen.manual_every_s = self.default_manual_every_s
 
     def on_message(self, topic: str, payload: bytes) -> None:
@@ -265,7 +276,7 @@ class Simulator:
         for m, target in sc.spec.targets.items():  # absolute targets become offsets from the current value
             if isinstance(dev.gen, IcuReplay):
                 current = dev.gen._at(m, dev.gen.stay_hour(now - self.t0))
-            else:  # the wearable: the patient's own value at this point in their data
+            else:  # the wearable: the patient's current value
                 current = dev.gen.b.get(m)
             deltas[m] = deltas.get(m, 0) + (target - (current if current is not None else target)) * k
         return (deltas, sc.spec.motion_artifact and hold,
@@ -330,7 +341,7 @@ class Simulator:
         for _, etype, data in due:
             if etype == "SPOT_CHECK_RESULT":
                 deltas, *_ = self._deltas(dev, now)
-                base = dev.gen.b.get("spo2", 96.0) if isinstance(dev.gen, TrajectoryWearable) else 95.0
+                base = dev.gen.b.get("spo2", 96.0) if isinstance(dev.gen, Wearable) else 95.0
                 data = {**data, "value": round(min(100, base + deltas.get("spo2", 0) + self.rng.gauss(0, 0.5)), 1),
                         "quality": 0.92}
             self._event(dev, etype, data)

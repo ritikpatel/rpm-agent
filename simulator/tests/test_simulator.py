@@ -9,6 +9,7 @@ import pytest
 from rpm_core.cohort import TrainingData, build_cohort, trajectory_at
 from rpm_core.contracts import Command, DeviceEvent, Telemetry
 from rpm_simulator.engine import Simulator
+from rpm_simulator.physiology import ContinuingWearable, TrajectoryWearable
 from rpm_simulator.scenarios import SCENARIOS, ActiveScenario
 
 DATA = Path(os.environ.get("RPM_DATA_DIR", Path(__file__).resolve().parents[2] / "Training Data"))
@@ -47,12 +48,39 @@ def test_every_device_publishes_valid_telemetry(cohort_and_series):
     assert icu == 6
 
 
-def test_wearable_reports_the_patients_own_data_not_invented_values(cohort_and_series):
-    """A home patient's readings follow their trajectory in the training data, within sensor noise."""
+def test_wearable_carries_on_from_the_last_recorded_reading(cohort_and_series):
+    """Live readings are new: they start on the patient's last recorded values and stay around them. A patient who
+    was unwell when the data ended stays unwell; one who was stable stays stable."""
     members, _ = cohort_and_series
-    m = next(x for x in members if x.care_setting == "home" and x.origin == "synthetic")
-    sim = Simulator([m], lambda *_: None)
+    home = [m for m in members if m.care_setting == "home"]
+    sim = Simulator(home, lambda *_: None)
+    for m in home:
+        gen = sim.devices[m.device_id].gen
+        assert isinstance(gen, ContinuingWearable) and gen.last == m.last
+        assert gen.values(gen.t0) == pytest.approx(m.last)                    # the first value is the last recorded
+        seen = {k: [] for k in m.last}
+        for i in range(1, 2881):                                              # a day of 30-second windows
+            w = gen.sample(gen.t0 + i * 30, 12, 30, {}, False, False, force_spo2=True).metrics
+            seen["heart_rate"].append(w["heart_rate"]["mean"])
+            for k in ("spo2", "resp_rate", "temp"):
+                seen[k].append(w[k]["value"])
+        mean = {k: sum(v) / len(v) for k, v in seen.items() if v}
+        assert mean["heart_rate"] == pytest.approx(m.last["heart_rate"], abs=1.5)
+        assert mean["spo2"] == pytest.approx(min(m.last["spo2"], 99.7), abs=0.5)
+        assert mean["resp_rate"] == pytest.approx(m.last["resp_rate"], abs=0.8)
+        assert max(seen["heart_rate"]) - min(seen["heart_rate"]) < 25         # wanders, does not run away
+    readings = [sim.devices[m.device_id].gen.sample(1e9, 12, 30, {}, False, False).metrics["heart_rate"]["mean"]
+                for m in home[:2]]
+    assert readings[0] != readings[1]                                         # every patient has their own stream
+
+
+def test_recorded_data_is_only_played_back_in_the_offline_evaluation(cohort_and_series):
+    """With replay=True (rpm-eval) a home patient's readings follow their recorded course, within sensor noise."""
+    m = next(x for x in build_cohort(TrainingData(DATA), ANCHOR, replay=True)
+             if x.care_setting == "home" and x.origin == "synthetic")
+    sim = Simulator([m], lambda *_: None, replay=True)
     gen = sim.devices[m.device_id].gen
+    assert isinstance(gen, TrajectoryWearable)
     for hours in (0.0, 3.0, 30.0, 71.5, 200.0):
         want = trajectory_at(m.points, hours)
         got = gen.sample(gen.t0 + (hours - gen.start_h) * 3600, 12, 30, {}, False, False, force_spo2=True).metrics

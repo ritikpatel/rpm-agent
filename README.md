@@ -6,8 +6,9 @@ page the care team within a second, three risk models score each patient, and fo
 summary and an escalation recommendation. Everything is exchanged with the hospital record over FHIR.
 
 > **Every patient comes from the team's model-training data and from nowhere else**: 63 real MIMIC-IV-demo
-> patients and 200 synthetic ones. The platform invents no patients and no clinical values; see
-> [Where the patients come from](docs/HLD.md#2-where-the-patients-come-from). The controls are designed as if it
+> patients and 200 synthetic ones. The platform invents no patients. Their recorded readings are loaded as
+> history; live readings are newly generated from each patient's last recorded values, never a replay of the
+> files. See [Where the patients come from](docs/HLD.md#2-where-the-patients-come-from). The controls are designed as if it
 > were live patient data.
 
 ![Architecture](docs/architecture-simple.png)

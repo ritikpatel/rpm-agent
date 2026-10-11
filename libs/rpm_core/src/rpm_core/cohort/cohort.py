@@ -1,11 +1,14 @@
 """The monitored cohort, built only from the training data.
 
-Every patient in the data has been discharged, so by default everyone is monitored at home on a wearable, a
-deterministic number of hours into their post-discharge course. A few of the real MIMIC patients are shown as still
-admitted to the ICU (their data starts at discharge, so they are simply "before hour 0"): a bedside monitor reports
-their discharge-time vital signs until they are discharged, and from then on their own post-discharge data plays.
+Every patient in the data has been discharged, so by default everyone is monitored at home on a wearable. The
+recorded data is their history: monitoring starts at the moment the recorded readings end (72 hours after discharge
+for the synthetic patients, 24 for the MIMIC ones), and the simulator generates new readings from each patient's last
+recorded values (`CohortMember.last`). A few of the real MIMIC patients are shown as still admitted to the ICU: a
+bedside monitor carries on from the vital signs charted at their discharge, the last ICU readings the data has.
 
-No patient, vital sign or lab value comes from anywhere else. Names are the one invented field: the data has none.
+No patient or lab value comes from anywhere else, and no recorded reading is streamed as if it were new. Names are
+invented (the data has none). The offline evaluation alone (`replay=True`) places patients part-way through their
+recorded data and plays it back, to score the alert rules against the data's own labels.
 """
 
 from __future__ import annotations
@@ -72,8 +75,9 @@ class CohortMember:
     discharge_at: datetime | None
     icu_admit_at: datetime | None
     hypercapnic: bool
-    baseline: dict[str, float] = field(default_factory=dict)   # vital signs at discharge (the ICU monitor's centre)
-    points: tuple = ()                # ((hours since discharge, {vital: value}), ...) for the wearable
+    baseline: dict[str, float] = field(default_factory=dict)   # vital signs at discharge, every channel
+    points: tuple = ()                # ((hours since discharge, {vital: value}), ...): the recorded readings
+    last: dict[str, float] = field(default_factory=dict)       # the last recorded reading: new ones start here
     los_days: float = 0.0
     prior_admissions_12m: int = 0
     drg_severity: int | None = None
@@ -102,7 +106,7 @@ def _name(seed: str, pid: str, sex: str) -> str:
     return f"{first} {_LAST[int(_h(seed, 'ln:' + pid) * 20) % 20]}"
 
 
-def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str) -> CohortMember:
+def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str, replay: bool = False) -> CohortMember:
     points = tuple(p.trajectory_points())
     start = dict(points[0][1]) if points else {}
     baseline = {**NORMAL, **{k: v for k, v in start.items() if k in VITALS}, **p.discharge_vitals}
@@ -110,23 +114,28 @@ def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str) -> Coho
     icu_los = p.value("icu_length_of_stay") or 1.0
     if setting == "icu":
         discharge_at, icu_admit_at = None, anchor - timedelta(days=min(icu_los, 14.0))
+        last = {k: baseline[k] for k in VITALS}
     else:
-        offset_h = 2.0 + _h(seed, "offset:" + p.patient_id) * 22.0     # 2 to 24 hours into the post-discharge course
+        # Live: the recorded data has just ended. Replay (offline evaluation): 2 to 24 hours into it.
+        offset_h = 2.0 + _h(seed, "offset:" + p.patient_id) * 22.0 if replay else (points[-1][0] if points else 0.0)
         discharge_at, icu_admit_at = anchor - timedelta(hours=offset_h), None
+        last = {**{k: baseline[k] for k in VITALS},
+                **{k: v for k, v in (points[-1][1] if points else {}).items() if k in VITALS}}
     condition = condition_of(p)
     return CohortMember(
         subject_id=p.subject_id, patient_id=p.patient_id, display_name=_name(seed, p.patient_id, p.sex), sex=p.sex,
         age=p.age, condition=condition, diagnosis=p.text("primary_diagnosis"), origin=p.origin, care_setting=setting,
         device_id=sim_device_id(p.patient_id, setting), discharge_at=discharge_at, icu_admit_at=icu_admit_at,
-        hypercapnic=condition == "COPD", baseline=baseline, points=points, los_days=los,
+        hypercapnic=condition == "COPD", baseline=baseline, points=points, last=last, los_days=los,
         prior_admissions_12m=int(p.value("prior_admission_count_365d") or 0),
         drg_severity=int(v) if (v := p.value("drg_severity")) is not None else None,
         discharge_disposition=None if setting == "icu" else p.text("discharge_location"), record=p)
 
 
 def build_cohort(data: TrainingData, anchor: datetime, icu: int = 6, home: int = 24, seed: str = "rpm-v1",
-                 ) -> list[CohortMember]:
+                 replay: bool = False) -> list[CohortMember]:
     """`icu` real patients shown as admitted, and `home` patients on wearables (0 = everyone else in the data).
+    `anchor` is the moment monitoring starts: the end of each home patient's recorded data, unless `replay`.
 
     The choice is deterministic, so the seed tool, the simulator and the evaluation agree. Home patients are a third
     real MIMIC patients (they carry the richest record) and two thirds synthetic ones (they carry the full 72-hour
@@ -145,7 +154,8 @@ def build_cohort(data: TrainingData, anchor: datetime, icu: int = 6, home: int =
         at_home = usable[0][:n_real] + usable[1][:home - n_real]
     else:
         at_home = usable[0] + usable[1]
-    members = [_member(p, "icu", anchor, seed) for p in admitted] + [_member(p, "home", anchor, seed) for p in at_home]
+    members = [_member(p, "icu", anchor, seed, replay) for p in admitted] + \
+        [_member(p, "home", anchor, seed, replay) for p in at_home]
     return _distinct_names(sorted(members, key=lambda m: m.patient_id), seed)
 
 

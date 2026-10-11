@@ -47,6 +47,8 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
   const [summary, setSummary] = useState<{ title: string; content: string } | null>(null);
   const [evidence, setEvidence] = useState<Chunk | null>(null);
   const [table, setTable] = useState(false);
+  // the newest reading that came from the patient's record rather than from a device (rows are oldest first)
+  const lastRecorded = [...vitals].reverse().find((v) => v.source === "record");
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [scenario, setScenario] = useState("sepsis");
@@ -228,6 +230,8 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
               </div>
             </header>
             <div className="body">
+              {lastRecorded && <p className="small muted">Readings up to {hhmm(lastRecorded.ts)} are from the
+                patient's record; later ones are live.</p>}
               {table ? (
                 <div className="scroll" style={{ maxHeight: 420 }}>
                   <table className="small"><thead><tr><th>Time</th><th className="num">HR</th><th className="num">SpO₂</th>
@@ -238,7 +242,7 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
                         <td className="num">{fmt(v.spo2)}</td><td className="num">{fmt(v.resp_rate)}</td>
                         <td className="num">{v.sbp != null ? `${fmt(v.sbp)}/${fmt(v.dbp)}` : "–"}</td>
                         <td className="num">{fmt(v.temp, 1)}</td><td className="num">{fmt(v.news2)}</td>
-                        <td className="muted">{v.buffered ? "backfilled" : ""}{v.late ? " late" : ""}</td></tr>))}
+                        <td className="muted">{v.source === "record" ? "recorded" : ""}{v.buffered ? "backfilled" : ""}{v.late ? " late" : ""}</td></tr>))}
                     </tbody></table></div>
               ) : <VitalsPanels rows={vitals} minutes={minutes} now={now} stale={loadingVitals} />}
             </div>

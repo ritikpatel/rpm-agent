@@ -1,8 +1,9 @@
 """rpm-sim: simulated wearables and ICU monitors.
 
-  rpm-sim run                                           # ICU monitors for admitted patients, wearables at home
+  rpm-sim run                                           # ICU monitors for admitted patients, wearables at home;
+                                                        # new readings carry on from each patient's last recorded one
   rpm-sim scenario --target SYN-000143 --type sepsis    # make a patient deteriorate (the running fleet reacts)
-  rpm-sim discharge --target RPM-10001725               # the ICU monitor stops, the patient's wearable data starts
+  rpm-sim discharge --target RPM-10001725               # the ICU monitor stops, the patient's wearable starts
   rpm-sim send --target SYN-000143 --hr 134 --spo2 86   # one reading, sent right now
   rpm-sim send --target SYN-000143 --event SOS          # the patient presses SOS
   rpm-sim scenarios | rpm-sim cohort
@@ -89,7 +90,7 @@ def cmd_run(a: argparse.Namespace) -> None:
     members = _cohort(a)
     sim_ref: dict[str, Simulator] = {}
     pub = FleetPublisher(_mqtt_config(a, a.shards), on_message=lambda t, p: sim_ref["sim"].on_message(t, p))
-    sim = Simulator(members, pub.publish, window_s=a.window_s, speed=a.speed, seed=a.seed,
+    sim = Simulator(members, pub.publish, window_s=a.window_s, seed=a.seed,
                     tz_offset_h=a.tz_offset_h, auto_scenarios_per_hour=a.auto_scenarios_per_hour,
                     icu_window_s=a.icu_window_s)
     sim_ref["sim"] = sim
@@ -203,8 +204,6 @@ def main(argv: list[str] | None = None) -> None:
                      help="wearable reporting window")
     run.add_argument("--icu-window-s", type=int, default=int(_env("RPM_SIM_ICU_WINDOW_S", "10")),
                      help="ICU monitor reporting cadence")
-    run.add_argument("--speed", type=float, default=float(_env("RPM_SIM_SPEED", "1")),
-                     help="play the post-discharge data faster than real time (for example 12)")
     run.add_argument("--care-api", default=_env("RPM_CARE_API_URL"),
                      help="follow the platform's registry (admissions, discharges, real watches)")
     run.add_argument("--service-token", default=_env("RPM_SERVICE_TOKEN", "dev-service-token"))

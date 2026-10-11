@@ -6,7 +6,7 @@
 |---|---|
 | First-time set-up | `make setup && make models` |
 | Start | `make up` (offline agents, local inbox), `make up LLM=bedrock` (Claude on Amazon Bedrock), add `MAIL=ses` for real e-mail |
-| Load the cohort | `make seed` (30 of the patients in `Training Data/`) |
+| Load the cohort | `make seed` (30 of the patients in `Training Data/`; loads their recorded readings as history and restarts each patient where that data ends) |
 | Start / stop the simulated devices | `make sim` / `make sim-stop` |
 | Automated end-to-end check | `make e2e` |
 | Status and logs | `make ps`, `make logs`, `make stats` |
@@ -57,7 +57,6 @@ Set these in the shell before `make up`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `RPM_COHORT_ICU`, `RPM_COHORT_HOME` | 6, 24 | Training-data patients shown in ICU and monitored at home (`RPM_COHORT_HOME=0` = everyone else in the data, 263 in all) |
-| `RPM_SIM_SPEED` | 1 | Play the patients' post-discharge data faster than real time (for example 12) |
 | `RPM_ESCALATION_TIMEOUT_SCALE` | 0.2 (1 with `MAIL=ses`) | Shortens escalation timers for demonstrations (0.2 turns 5 minutes into 1) |
 | `RPM_MODEL_FAST`, `RPM_MODEL_REASONING` | Claude Haiku 4.5, Claude Sonnet 4.6 | Bedrock model ids for the agents |
 | `RPM_EMBEDDINGS` | hash | `titan` uses Amazon Titan Embeddings for guideline search; re-run `make seed` after changing it |
@@ -167,8 +166,8 @@ person chooses their own at first sign-in. Groups decide what they can do: `phys
 | The instance is stopped (`make cloud-stop`) | US$0.25 a day |
 | Each alert the agents work on | US$0.13 in Bedrock calls (estimate) |
 
-With the cohort of 30 the patients' own data raises around 15 to 20 alerts a day, each with e-mail to the paged
-tier. The first ten minutes after loading the cohort are the busiest (several patients are already unwell in the
+With the cohort of 30, the eight home patients who were unwell when their recorded data ended alert as soon as
+monitoring starts, each with e-mail to the paged tier; after that, new alerts come from scenarios you start. The first ten minutes after loading the cohort are the busiest (several patients are already unwell in the
 data): about US$2 of Bedrock calls in the first deployment. **Stop the instance, or at least pause the simulated
 devices, when nobody is watching.** IoT Core, SQS, S3, Cognito, CloudFront and SES stay within their free
 allowances at this scale; the SES sandbox also limits the project to 200 e-mails a day.

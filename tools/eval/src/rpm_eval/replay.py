@@ -276,7 +276,7 @@ def _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, pro
         records.append(_record(topic, payload, clock))
 
     sim = Simulator(members, publish, window_s=30, speed=1.0, seed=seed, auto_scenarios_per_hour=0,
-                    icu_window_s=15)
+                    icu_window_s=15, replay=True)
     injected = cases if cases is not None else schedule(members, hours, seed)
     cases = injected + dataset_episodes(members, start, hours)
     pending = sorted(injected, key=lambda c: c.onset_s)

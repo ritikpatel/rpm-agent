@@ -169,7 +169,6 @@ services:
     environment:
       <<: *env
       RPM_DATA_DIR: /data/training
-      RPM_SIM_SPEED: "${RPM_SIM_SPEED:-1}"
       RPM_MQTT_HOST: mosquitto
       RPM_SIM_AUTO_SCENARIOS: "${RPM_SIM_AUTO_SCENARIOS:-0}"
     volumes: ["../../Training Data:/data/training:ro"]

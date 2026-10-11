@@ -1,8 +1,10 @@
-"""Signal generators: a wearable replaying the patient's post-discharge data, and an ICU bedside monitor."""
+"""Signal generators: a wearable that carries on from the patient's last recorded reading, an ICU bedside monitor,
+and (for the offline evaluation only) a wearable that plays recorded data back."""
 
 from __future__ import annotations
 
 import bisect
+import math
 import random
 from dataclasses import dataclass
 
@@ -19,19 +21,16 @@ class Window:
     quality_ok: bool = True
 
 
-class TrajectoryWearable:
-    """A wrist wearable that reports the patient's own post-discharge course from the training data.
-
-    The values come from the data (interpolated between its points, with a little sensor noise): heart rate in every
-    window, SpO2, respiratory rate and temperature every few minutes, blood pressure less often. Nothing is invented
-    beyond the noise; a demonstration scenario adds its offsets on top."""
+class Wearable:
+    """A wrist wearable: heart rate in every window, SpO2, respiratory rate and temperature every few minutes, blood
+    pressure less often. Subclasses say what the patient's vital signs are at a given moment; this class turns them
+    into what the device reports (sensor noise, quality, cadence). A demonstration scenario adds its offsets on top."""
 
     NOISE = {"heart_rate": 1.0, "spo2": 0.3, "resp_rate": 0.4, "sbp": 2.0, "temp": 0.04}
 
-    def __init__(self, points: tuple, rng: random.Random, start_h: float, t0: float, speed: float = 1.0,
-                 hrv_base: float = 32.0, spo2_every_s: float = 300, manual_every_s: float = 900):
-        self.points, self.rng = points, rng
-        self.start_h, self.t0, self.speed = start_h, t0, speed
+    def __init__(self, rng: random.Random, t0: float, hrv_base: float = 32.0, spo2_every_s: float = 300,
+                 manual_every_s: float = 900):
+        self.rng, self.t0 = rng, t0
         self.hrv_base = hrv_base
         self.spo2_every_s = spo2_every_s
         self.manual_every_s = manual_every_s     # blood pressure cadence; shortened while a scenario runs
@@ -39,21 +38,18 @@ class TrajectoryWearable:
         self._last_manual = -1e9
         self._t = t0
 
-    def hours(self, t: float) -> float:
-        """Hours since discharge at simulator time t."""
-        return max(0.0, self.start_h + (t - self.t0) * self.speed / 3600)
+    def values(self, t: float) -> dict[str, float]:
+        raise NotImplementedError
 
     @property
     def b(self) -> dict[str, float]:
         """The patient's current values (what an on-demand reading would be centred on)."""
-        from rpm_core.cohort import trajectory_at
-
-        return trajectory_at(self.points, self.hours(self._t))
+        return self.values(self._t)
 
     def sample(self, t: float, hour_of_day: float, window_s: float, deltas: dict[str, float],
                motion_artifact: bool, arrhythmia: bool, force_spo2: bool = False) -> Window:
         self._t = t
-        r, now = self.rng, self.b
+        r, now = self.rng, self.values(t)
         act = "sleep" if (hour_of_day < 6 or hour_of_day >= 23) else "resting"
         hr = now["heart_rate"] + deltas.get("heart_rate", 0) + r.gauss(0, self.NOISE["heart_rate"])
         spread = 14 if arrhythmia else 4
@@ -80,6 +76,55 @@ class TrajectoryWearable:
             self._last_manual = t
             m["sbp"] = {"value": round(now["sbp"] + deltas.get("sbp", 0) + r.gauss(0, self.NOISE["sbp"]))}
         return Window(m, quality_ok=not motion_artifact)
+
+
+class ContinuingWearable(Wearable):
+    """Live monitoring: the patient's recorded data has ended, and new readings carry on from the last one.
+
+    Each vital sign wanders slowly around its last recorded value and is pulled back towards it, so a patient who
+    was stable when the data ended stays stable and one who was unwell stays unwell until a clinician acts or a
+    scenario changes the picture. The size of the wander is taken from the recorded wearable streams (how much a
+    patient's readings vary from one to the next over six hours), less the sensor noise added on top."""
+
+    DRIFT_SD = {"heart_rate": 1.7, "spo2": 0.4, "resp_rate": 0.8, "sbp": 3.1, "temp": 0.09}
+    DRIFT_TAU_S = 1200.0   # a drift fades over about 20 minutes
+
+    def __init__(self, last: dict[str, float], rng: random.Random, t0: float, **kw):
+        super().__init__(rng, t0, **kw)
+        self.last = dict(last)
+        self._drift = dict.fromkeys(self.DRIFT_SD, 0.0)   # starts exactly on the last recorded reading
+        self._drift_t = t0
+
+    def values(self, t: float) -> dict[str, float]:
+        dt = t - self._drift_t
+        if dt > 0:   # an Ornstein-Uhlenbeck step: the same statistics whatever the reporting interval
+            keep = math.exp(-dt / self.DRIFT_TAU_S)
+            push = math.sqrt(1 - keep * keep)
+            for k, sd in self.DRIFT_SD.items():
+                self._drift[k] = self._drift[k] * keep + self.rng.gauss(0, sd) * push
+            self._drift_t = t
+        out = {k: v + self._drift.get(k, 0.0) for k, v in self.last.items()}
+        out["spo2"] = min(100.0, out["spo2"])
+        return out
+
+
+class TrajectoryWearable(Wearable):
+    """Offline evaluation only: plays a patient's recorded post-discharge data back (interpolated between its
+    points), so the alert rules can be scored against the labels the data carries. The live platform never streams
+    recorded readings; see ContinuingWearable."""
+
+    def __init__(self, points: tuple, rng: random.Random, start_h: float, t0: float, speed: float = 1.0, **kw):
+        super().__init__(rng, t0, **kw)
+        self.points, self.start_h, self.speed = points, start_h, speed
+
+    def hours(self, t: float) -> float:
+        """Hours since discharge at simulator time t."""
+        return max(0.0, self.start_h + (t - self.t0) * self.speed / 3600)
+
+    def values(self, t: float) -> dict[str, float]:
+        from rpm_core.cohort import trajectory_at
+
+        return trajectory_at(self.points, self.hours(t))
 
 
 class IcuReplay:

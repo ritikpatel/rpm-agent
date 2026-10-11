@@ -253,7 +253,7 @@ for i in \$(seq 1 180); do
 done
 \$K -n rpm logs job/\$J --tail 25 | grep -v '^{' || true
 [ \"\${S%%/*}\" = 1 ] || { echo 'seed failed'; \$K -n rpm logs job/\$J --tail 30; exit 1; }
-\$K -n rpm rollout restart deployment/simulator >/dev/null; echo 'simulated devices restarted'" 1200
+\$K -n rpm rollout restart deployment/simulator >/dev/null; echo 'simulated devices restarted (a paused fleet stays paused)'" 1200
 }
 
 cmd_status() {

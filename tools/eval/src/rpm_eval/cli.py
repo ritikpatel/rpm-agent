@@ -22,7 +22,8 @@ from rpm_core.data import fetch_dir
 
 def _cohort(data_dir: str, seed: str, icu: int, home: int):
     anchor = datetime(2026, 10, 1)  # fixed: the replay is reproducible run to run
-    return build_cohort(TrainingData(fetch_dir(data_dir)), anchor, icu, home, seed)
+    # replay=True: patients are placed part-way through their recorded data, which is then played back offline
+    return build_cohort(TrainingData(fetch_dir(data_dir)), anchor, icu, home, seed, replay=True)
 
 
 def cmd_replay(a: argparse.Namespace) -> None:

@@ -35,22 +35,31 @@ Every patient is one the team's models were trained on. The two files in `Traini
 
 How the platform uses them:
 
-- **Patients at home** are placed 2 to 24 hours into their own post-discharge course, and the simulated wearable
-  reports their own values from there on, interpolated between the data points with a little sensor noise. A
-  patient who deteriorates in the data deteriorates in the demonstration, at the same point in their course.
+- **The recorded readings are history, not a live feed.** Monitoring starts at the moment each patient's recorded
+  data ends: 72 hours after discharge for the synthetic patients, 24 hours for the MIMIC ones. When the cohort is
+  loaded, the recorded readings are stored as the patient's past (they appear on the chart and feed the risk
+  models), without passing through the alert rules.
+- **Live readings are new.** The simulated wearable generates them from the patient's last recorded values: each
+  vital sign wanders slowly around that value and is pulled back to it, with sensor noise on top. The size of the
+  wander is taken from the recorded streams. A patient who was stable when the data ended stays stable; one who
+  was unwell (8 of the default 24 at home) stays unwell and alerts as soon as monitoring starts. No recorded
+  reading is ever sent as if it were new.
 - **Patients in the ICU.** Every patient in the data has already been discharged, so a few of the real MIMIC
-  patients (six by default) are shown as still admitted, "before hour 0" of their data. A simulated bedside monitor
-  reports the vital signs charted at their discharge. When they are discharged, their own post-discharge data
-  starts playing. Synthetic patients are never shown in ICU: the data holds no admission for them.
+  patients (six by default) are shown as still admitted. A simulated bedside monitor carries on from the vital
+  signs charted at their discharge, the last ICU readings the data has. When one is discharged in a
+  demonstration, a wearable carries on from the same values. Synthetic patients are never shown in ICU: the data
+  holds no admission for them.
 - **The hospital record (FHIR)** holds, for MIMIC patients, the admission, ICU stay, primary diagnosis, and the
   labs and vital signs at discharge; for synthetic patients only a Patient and a finished Encounter, because the
   data has nothing more.
 - **By default 30 patients are monitored** (6 ICU, 24 home) to keep a demonstration readable and inexpensive;
   `RPM_COHORT_HOME=0` monitors all 263. No setting adds a patient that is not in the data.
 
-What is not from the data: display names (the data has none; they are generated) and the sensor noise. A
-demonstration scenario (for example "sepsis") adds offsets on top of a real patient's own values; it never creates
-a patient.
+What is not from the data: display names (the data has none; they are generated) and every reading after the
+recorded data ends, which is generated as described above. A demonstration scenario (for example "sepsis") adds
+offsets on top of a patient's current values; it never creates a patient. The offline evaluation is the one place
+that plays recorded data back, in memory, to score the alert rules against the data's labels
+([evaluation-report.md](evaluation-report.md)).
 
 The data's ground-truth columns (`trajectory_type`, `deterioration_*`, `event_severity_fraction`, `readmit_*`) are
 used only to train the placeholder models and to score the evaluation. They are never written to the hospital
