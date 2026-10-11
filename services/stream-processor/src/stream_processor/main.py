@@ -76,7 +76,8 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     threading.Thread(target=scorer.run, name="risk", daemon=True, args=(stop,)).start()
     threading.Thread(target=silent_device_loop, name="watchdog", daemon=True,
-                     args=(pool, processor, cfg.silent_after_s, cfg.watchdog_interval_s, stop)).start()
+                     args=(pool, processor, cfg.silent_after_s, cfg.watchdog_interval_s, stop,
+                           cfg.silent_device_alerts)).start()
     threading.Thread(target=partition_loop, name="partitions", daemon=True, args=(pool, stop)).start()
     threading.Thread(target=depth_loop, name="queue-depth", daemon=True, args=(
         {"events": reader, "dlq": SqsReader(sqs, f"{cfg.sqs_events_queue}-dlq", parallelism=1)}, stop)).start()

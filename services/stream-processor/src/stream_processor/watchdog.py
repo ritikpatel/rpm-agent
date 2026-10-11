@@ -24,14 +24,15 @@ WHERE p.monitoring_active AND s.last_seen IS NOT NULL
 
 
 def silent_device_loop(pool: ConnectionPool, processor: Processor, silent_after_s: int, interval_s: int,
-                       stop: threading.Event) -> None:
+                       stop: threading.Event, alerting: bool = False) -> None:
     while not stop.wait(interval_s):
         try:
             with pool.connection() as conn:
                 rows = conn.execute(_SILENT_SQL, (silent_after_s,)).fetchall()
             for pid, device_id, last_seen, setting, cond, hyper, o2, thr, minutes in rows:
                 ref = PatientRef(pid, setting, cond, hyper, o2, thr or {})
-                processor.raise_finding(ref, device_id, silent_device_finding(setting, device_id, float(minutes)),
+                processor.raise_finding(ref, device_id,
+                                        silent_device_finding(setting, device_id, float(minutes), alerting),
                                         last_seen if isinstance(last_seen, datetime) else processor.clock())
         except Exception:
             log.exception("silent-device check failed")

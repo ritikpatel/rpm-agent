@@ -39,7 +39,8 @@ RAISED = Counter("rpm_alert_severity_raised_total", "Alerts whose severity was r
 ESCALATED = Counter("rpm_alert_escalations_total", "Timer-driven escalations", ["tier"])
 NOTIFIED = Counter("rpm_notifications_total", "Notifications", ["channel", "status"])
 AGENT_TASKS = Counter("rpm_agent_tasks_total", "Agent tasks queued", ["trigger", "outcome"])
-AUTO_RESOLVED = Counter("rpm_alerts_auto_resolved_total", "Silent-device alerts closed because data returned")
+AUTO_RESOLVED = Counter("rpm_alerts_auto_resolved_total",
+                        "Silent-device alerts closed because data returned or because they are switched off")
 RETURNED_CHECK_S = 15   # how often silent-device alerts are checked against the devices' latest readings
 NOTIFY_LATENCY = Histogram("rpm_page_latency_seconds",
                            "Page cause -> notification hand-off. cause=event is sensor-to-page latency; timer, agent "
@@ -227,9 +228,9 @@ class AlertEngine:
             self.changed(row["alert_id"])
         if time.monotonic() - self._returned_checked >= RETURNED_CHECK_S:
             self._returned_checked = time.monotonic()
-            for row in self.store.resolve_returned():
+            for row in self.store.resolve_returned(switched_off=not self.cfg.silent_device_alerts):
                 AUTO_RESOLVED.inc()
-                log.info("silent-device alert closed: data returned",
+                log.info("silent-device alert closed",
                          extra={"alert_id": str(row["alert_id"]), "patient_id": row["patient_id"]})
                 self.changed(row["alert_id"])
 

@@ -276,3 +276,14 @@ def test_lab_result_is_recorded_and_triggers_scoring(env):
     assert len(pg.ehr) == 1 and pg.ehr[0]["data"]["value"] == 4.2
     assert [e.type for e in emitter.clinical] == ["LAB_RESULT"] and not emitter.alert
     assert scored == [("p-1", "lab")]
+
+
+def test_a_silent_device_is_recorded_but_alerts_only_when_switched_on_and_only_in_icu():
+    from stream_processor.processor import silent_device_finding
+
+    quiet = silent_device_finding("icu", "sim-icu-x", 12.0)                    # the default: a simulated demo
+    assert quiet.type == "DEVICE_SILENT" and not quiet.requires_alert and quiet.severity == "low"
+    assert "No data from sim-icu-x for 12 min" in quiet.summary
+    real = silent_device_finding("icu", "monitor-7", 12.0, alerting=True)      # real monitors
+    assert real.requires_alert and real.severity == "medium"
+    assert not silent_device_finding("home", "gw-1", 12.0, alerting=True).requires_alert   # a watch taken off

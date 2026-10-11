@@ -406,8 +406,10 @@ def risk_finding(score: dict) -> Finding:
                     "band": score["band"], "top_factors": score.get("top_factors", [])[:5], "validated": validated})
 
 
-def silent_device_finding(context: str, device_id: str, minutes: float) -> Finding:
-    severity, alert = ("medium", True) if context == "icu" else ("low", False)
+def silent_device_finding(context: str, device_id: str, minutes: float, alerting: bool = False) -> Finding:
+    """A device that has stopped reporting. It is always recorded; it is an alert only for an ICU patient, and only
+    when silent-device alerts are switched on (RPM_SILENT_DEVICE_ALERTS)."""
+    severity, alert = ("medium", True) if context == "icu" and alerting else ("low", False)
     return Finding("DEVICE_SILENT", severity, "pipeline.device_silent",
                    f"No data from {device_id} for {minutes:.0f} min", alert, {"silent_minutes": round(minutes, 1)})
 

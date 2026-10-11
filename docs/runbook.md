@@ -60,7 +60,8 @@ Set these in the shell before `make up` (the `RPM_SIM_*` ones before `make sim`)
 | `RPM_ESCALATION_TIMEOUT_SCALE` | 0.2 (1 with `MAIL=ses`) | Shortens escalation timers for demonstrations (0.2 turns 5 minutes into 1) |
 | `RPM_MODEL_FAST`, `RPM_MODEL_REASONING` | Claude Haiku 4.5, Claude Sonnet 4.6 | Bedrock model ids for the agents |
 | `RPM_EMBEDDINGS` | hash | `titan` uses Amazon Titan Embeddings for guideline search; re-run `make seed` after changing it |
-| `RPM_SILENT_AFTER_S` | 600 | No data from a device for this long is reported as "Monitor silent" (an alert for ICU patients, a note for patients at home) |
+| `RPM_SILENT_DEVICE_ALERTS` | false | A device that stops reporting is always recorded. `true` also makes it an alert for an ICU patient (for real monitors); such an alert closes by itself when the device reports again. `false` suits a simulated demonstration, and closes any silent-only alert left open |
+| `RPM_SILENT_AFTER_S` | 600 | How long without data before a device counts as silent |
 | `RPM_SIM_AUTO_SCENARIOS` | 0.25 | How often a settled patient deteriorates on their own, per hour across the whole cohort (0 = never) |
 | `RPM_SIM_RECOVERY_HALF_LIFE_H` | 2 | Patients whose record ended with them unwell: hours for the gap to their settled values to halve (0 = they stay as the record left them) |
 | `RPM_AGENT_DAILY_LIMIT`, `RPM_AGENT_MONITOR_INTERVAL_S` | 0 (none), 600 | Limits on automatic agent runs; see the AWS cost section |
@@ -117,7 +118,7 @@ Everything runs in the project's selected Region, `ap-southeast-2`, from one Clo
 | Create a console account | `make cloud-user U=first.last E=<e-mail> G="physician presenter admin"` |
 | Automated end-to-end check | `make cloud-e2e` |
 | Query the hospital record | `make cloud-fhir Q='Flag?patient=RPM-10001725'` |
-| Pause / resume the simulated devices | `make cloud-sim-pause` / `make cloud-sim-resume`. After 10 minutes of silence the platform raises a "Monitor silent" alert for each ICU patient (with e-mail); those close by themselves when the devices resume |
+| Pause / resume the simulated devices | `make cloud-sim-pause` / `make cloud-sim-resume` (a paused device raises no alert) |
 | Send a reading from your Mac | `make sim-cloud ARGS="send --target SYN-000160 --hr 150 --spo2 84"` |
 | Stop / start the instance | `make cloud-stop` / `make cloud-start` |
 | Delete everything | `make cloud-down CONFIRM=rpm` |

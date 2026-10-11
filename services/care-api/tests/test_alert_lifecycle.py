@@ -207,8 +207,11 @@ def test_alert_with_a_clinical_finding_or_a_device_that_went_quiet_again_is_left
         conn.execute("UPDATE alerts SET opened_at = now() - interval '20 minutes' WHERE alert_id = %s", (quiet,))
     _status(pool, "p-3", now - timedelta(minutes=10))
     assert store.resolve_returned() == [] and store.get(quiet)["status"] != "resolved"
-    for alert_id in (mixed, quiet):
-        store.resolve(alert_id, "test", "clean up")
+    # silent-device alerts switched off: the silent-only one goes, data or no data; the clinical one still stays
+    assert [r["alert_id"] for r in store.resolve_returned(switched_off=True)] == [quiet]
+    assert store.get(quiet)["resolution"] == "Silent-device alerts are switched off"
+    assert store.get(mixed)["status"] != "resolved"
+    store.resolve(mixed, "test", "clean up")
 
 
 def test_failed_channel_is_recorded_and_others_still_sent(env, pool):

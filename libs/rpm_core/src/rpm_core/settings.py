@@ -23,3 +23,7 @@ class BaseServiceSettings(BaseSettings):
     risk_service_url: str = "http://localhost:8001"
     fhir_base_url: str = "http://localhost:8080/fhir"
     service_token: str = "dev-service-token"       # shared secret for service-to-service calls (/internal/*)
+
+    # Does a device that stops reporting raise an alert (for an ICU patient)? Off: this is a simulated
+    # demonstration, where devices are stopped and paused on purpose. With real monitors, turn it on.
+    silent_device_alerts: bool = False
