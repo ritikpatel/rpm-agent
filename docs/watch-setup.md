@@ -11,6 +11,24 @@ first, then against AWS. The watch app is in `edge/android`; it needs no code ch
 - Optional, for SpO2 and skin temperature on a Galaxy Watch: the Samsung Health Sensor SDK `.aar` from Samsung
   Developers, copied to `edge/android/wear/libs/`.
 
+## Not a Galaxy Watch?
+
+The app runs on any **Wear OS 3 or later** watch (Pixel Watch, TicWatch Pro 5 or E3, Fossil Gen 6, Mobvoi, Oppo Watch
+and others). Without Samsung's sensor kit it reads heart rate through Wear OS Health Services, so expect heart rate
+only: no SpO2, no skin temperature.
+
+How to tell: the phone app the watch pairs with is "Wear OS by Google" or "Pixel Watch", or the watch's Settings →
+System → About shows a Wear OS version. Watches that pair with their own app (Noise, boAt, Fire-Boltt, Amazfit Zepp,
+Huawei, Mi Fitness, Fitbit) run their own operating system and cannot install this app; use the emulator at the end
+of this page instead. Wear OS 2 watches (older Fossil and TicWatch models) are too old for it.
+
+On a non-Samsung watch developer options are usually under Settings → System → About → Versions (or About):
+tap **Build number** seven times. Newer watches offer **Wireless debugging** (pair with a code, as in step 2);
+some Wear OS 3 watches offer only **Debug over Wi-Fi**, which shows an address ending in `:5555`: skip
+`adb pair` and run `adb connect <address>:5555`. Also grant the notification permission in step 3
+(`pm grant com.cloudbox.rpm.wear android.permission.POST_NOTIFICATIONS`), so monitoring keeps running in the
+background.
+
 ## 1. Build the app
 
 ```bash
