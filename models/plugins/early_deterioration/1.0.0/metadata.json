@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "title": "Early deterioration",
   "outcome": "Deterioration (a vital-sign danger rule sustained for 30 minutes) within the next 6 hours",
-  "label": "Risk of deterioration (6 h)",
+  "label": "Deterioration in the next 6 hours",
   "short_label": "Deterioration",
   "owner": "Harnoor",
   "triggers": [

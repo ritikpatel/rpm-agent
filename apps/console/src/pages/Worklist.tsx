@@ -1,7 +1,7 @@
 // Worklist: stat tiles, the alert inbox (what needs a human now) and the patient census (everyone, risk-sorted).
 import { useMemo, useState } from "react";
 import { api, type AlertRow, type PatientRow, type Stats } from "../api";
-import { ago, Badge, bandStatus, fmt, News2Badge, severityStatus, Sparkline } from "../components/ui";
+import { ago, Badge, bandStatus, fmt, News2Badge, severityStatus, Sparkline, toneStatus } from "../components/ui";
 
 const TIER = ["", "RPM nurse", "Physician", "Rapid response"];
 const BAND_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 };
@@ -12,10 +12,10 @@ function topRisk(p: PatientRow) {
   if (entries.length === 0) return <span className="muted small">–</span>;
   const [model, r] = entries.sort((a, b) => (BAND_RANK[b[1].band] ?? 0) - (BAND_RANK[a[1].band] ?? 0)
     || b[1].probability - a[1].probability)[0];
-  // Each badge names what is predicted ("Poor recovery 98%"), so a high number cannot be read as good news.
-  return <Badge status={bandStatus(r.band)} title={entries.map(([m, x]) =>
-    `${x.label ?? m.replace(/_/g, " ")}: ${(x.probability * 100).toFixed(0)}% (${x.band})`).join("\n")}>
-    {r.short_label ?? model.split("_")[0]} {(r.probability * 100).toFixed(0)}%</Badge>;
+  // Each model's own short form ("Recovery 62 · Moderate", "Readmission 28%"), coloured by its own reading.
+  return <Badge status={r.tone ? toneStatus(r.tone) : bandStatus(r.band)}
+    title={entries.map(([m, x]) => x.badge ?? `${m.replace(/_/g, " ")} ${(x.probability * 100).toFixed(0)}%`).join("\n")}>
+    {r.badge ?? `${model.split("_")[0]} ${(r.probability * 100).toFixed(0)}%`}</Badge>;
 }
 
 export default function Worklist({ patients, alerts, stats, trends, flashed, now, onChange, canAct }: {

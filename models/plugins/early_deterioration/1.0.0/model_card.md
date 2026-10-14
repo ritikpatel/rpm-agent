@@ -4,6 +4,10 @@
 next 6 hours. Harnoor also trained a 3-hour model; it is not served (lower precision, and its two thresholds are
 almost equal).
 
+**What the care team sees.** The probability of deterioration in the next 6 hours, a level (High from 27%, Watch
+from 0.9%, from his two thresholds in their natural order) and up to three of his named drivers, for example "SpO2
+dropped (min_spo2_3h=88.0)".
+
 **Inputs (40).** Windows over the last 1 to 24 hours of respiratory rate, SpO2, blood pressure and heart-rate
 variability; counts of abnormal readings; change since discharge; the generator's hourly recovery score; time since
 discharge and since the last readings; labs and vital signs from the hospital record; steps, activity and

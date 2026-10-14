@@ -41,6 +41,7 @@ class Prediction:
     band: str
     top_factors: list[dict]
     features: dict[str, float]
+    contributions: dict[str, float] | None = None   # every feature's share of this score (LightGBM models)
 
 
 class ModelPlugin:
@@ -70,6 +71,7 @@ class ModelPlugin:
             raise ContractError(f"{self.name}: features.py must define FEATURES (list) and build(ctx)")
         self.features: list[str] = list(module.FEATURES)
         self._build = module.build
+        self._explain = getattr(module, "explain", None)   # the model's own reading of its result (optional)
         self.means: dict[str, float] = self.meta.get("feature_means") or {}
         self.requires: list[str] = list(self.meta.get("requires") or [])
         self._booster = None
@@ -177,7 +179,20 @@ class ModelPlugin:
         order = np.argsort(-np.abs(contrib))
         top = [{"feature": self.features[i], "value": round(float(x[0, i]), 3),
                 "contribution": round(float(contrib[i]), 4)} for i in order[:top_k] if abs(contrib[i]) >= 1e-4]
-        return Prediction(round(p, 4), self.band(p), top, features)
+        return Prediction(round(p, 4), self.band(p), top, features,
+                          {f: float(c) for f, c in zip(self.features, contrib, strict=True)})
+
+    def explain(self, ctx: dict, pred: Prediction) -> dict | None:
+        """What the result means, in the model owner's terms (features.py `explain`): a headline, a status, details
+        and the reasons. None for a plug-in without one; a failure here never loses the score itself."""
+        if self._explain is None:
+            return None
+        try:
+            out = self._explain(ctx, pred.features, pred.probability, pred.contributions or {})
+        except Exception as exc:  # noqa: BLE001
+            log.error("model explanation failed", extra={"model": self.name, "error": str(exc)[:300]})
+            return None
+        return out if isinstance(out, dict) and isinstance(out.get("headline"), dict) else None
 
     def describe(self) -> dict:
         keys = ("name", "version", "title", "outcome", "owner", "triggers", "care_settings", "bands", "metrics",

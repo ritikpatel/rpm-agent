@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { api, type AgentRun, type AlertDetail, type Brief, type Chunk, type EventRow, type LabRow, type LiveMessage,
          type MessageRow, type RiskRow, type VitalRow } from "../api";
 import VitalsPanels from "../components/VitalsPanels";
-import { ago, Badge, bandStatus, fmt, hhmm, News2Badge, severityStatus } from "../components/ui";
+import { ago, Badge, bandStatus, fmt, hhmm, News2Badge, severityStatus, toneStatus } from "../components/ui";
 
 const TIER = ["", "RPM nurse", "On-call physician", "Rapid response team"];
 export const SCENARIOS = ["sepsis", "chf_decompensation", "copd_exacerbation", "hypoxia", "af_rvr", "bradycardia",
@@ -289,30 +289,38 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
             <div className="body">
               {risk.length === 0 && <div className="muted">Not scored yet (scores follow the first readings).</div>}
               {risk.map((r) => {
-                // The probability is always the risk of the bad outcome: higher is worse. Factors are named by what
-                // they do to that risk, with the value the model saw.
-                const factor = (f: RiskRow["top_factors"][number]) =>
-                  `${f.feature.replace(/_/g, " ")} ${Number.isInteger(f.value) ? f.value : f.value.toFixed(1)}`;
-                const up = r.top_factors.filter((f) => f.contribution > 0).slice(0, 3);
-                const down = r.top_factors.filter((f) => f.contribution < 0).slice(0, 2);
+                const o = r.output;
+                const tag = r.validated ? <span className="tag">validated</span>
+                  : <span className="tag" title={`Metrics: ${JSON.stringify(r.metrics)}`}>not validated: weak evidence</span>;
+                if (!o) {   // a model without its own explanation: the probability of the outcome it names
+                  return (
+                    <div key={r.model} style={{ marginBottom: 12 }}>
+                      <div className="row" style={{ justifyContent: "space-between" }}>
+                        <b>{r.label ?? r.title ?? r.model}</b>
+                        <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band}</Badge>
+                      </div>
+                      <div className="muted small">{r.outcome}</div>
+                      <div className="muted small">v{r.version} · {ago(r.computed_at, now)} {tag}</div>
+                    </div>);
+                }
+                // The model's own reading, as its owner defined it (recovery score, readmission probability, ...).
                 return (
-                <div key={r.model} style={{ marginBottom: 12 }}>
-                  <div className="row" style={{ justifyContent: "space-between" }}>
-                    <b title={r.outcome ?? undefined}>{r.label ?? r.title ?? r.model.replace(/_/g, " ")}</b>
-                    <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band} risk</Badge>
+                <div key={r.model} style={{ marginBottom: 14 }}>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+                    <b title={r.outcome ?? undefined}>{r.label ?? r.title}</b>
+                    <Badge status={toneStatus(o.headline.tone)}>{o.headline.status}</Badge>
                   </div>
-                  {r.headline && <div className="small">
-                    {r.headline.label} <b>{r.headline.value}{r.headline.scale ? ` / ${r.headline.scale}` : ""}</b>
-                    {r.headline.status && <> · {r.headline.status}</>}
-                    <span className="muted"> ({r.headline.higher_is_better ? "higher is better" : "lower is better"})</span>
-                  </div>}
-                  <div className="muted small">{r.outcome}</div>
-                  {up.length > 0 && <div className="small">Raises the risk: {up.map(factor).join(" · ")}</div>}
-                  {down.length > 0 && <div className="small muted">Lowers the risk: {down.map(factor).join(" · ")}</div>}
-                  <div className="muted small">{r.title} v{r.version} ({r.owner ?? "team"}) · {ago(r.computed_at, now)}{" "}
-                    {r.validated ? <span className="tag">validated</span>
-                      : <span className="tag" title={`Metrics: ${JSON.stringify(r.metrics)}`}>
-                          not validated: weak evidence</span>}</div>
+                  <div style={{ fontSize: "1.25em", margin: "2px 0" }}>
+                    {o.headline.label}: <b>{o.headline.value ?? "–"}</b>{o.headline.suffix ? ` ${o.headline.suffix}` : ""}
+                    {o.headline.trend && <span className="small muted"> · {o.headline.trend}</span>}
+                  </div>
+                  {(o.details ?? []).map((d) => <div key={d} className="small">{d}</div>)}
+                  {(o.concerns ?? []).length > 0 &&
+                    <div className="small">Concerns: {(o.concerns ?? []).join(" · ")}</div>}
+                  {(o.reassurances ?? []).length > 0 &&
+                    <div className="small muted">Reassuring: {(o.reassurances ?? []).join(" · ")}</div>}
+                  {o.note && <div className="small muted" style={{ fontStyle: "italic" }}>{o.note}</div>}
+                  <div className="muted small">{r.title} v{r.version} ({r.owner ?? "team"}) · {ago(r.computed_at, now)} {tag}</div>
                 </div>);
               })}
             </div>

@@ -10,7 +10,7 @@ export interface PatientRow {
   care_setting: "home" | "icu"; discharge_at: string | null; device_id: string | null; last_seen: string | null;
   news2: number | null; news2_band: string | null; news2_partial: boolean | null; latest: Latest | null;
   alerts_24h: number;
-  risk: Record<string, { probability: number; band: string; label?: string | null; short_label?: string | null }> | null;
+  risk: Record<string, { probability: number; band: string; badge?: string | null; tone?: string | null }> | null;
 }
 
 export interface VitalRow {
@@ -52,13 +52,15 @@ export interface Assessment {
   recommended_actions: { action: string; reason: string }[]; model_evidence_note: string; confidence: string;
 }
 
-export interface RiskHeadline {
-  label: string; value: number; scale: number | null; higher_is_better: boolean; status: string | null;
+/** A model's own reading of its result (features.py `explain`; see models/CONTRACT.md). */
+export interface RiskOutput {
+  headline: { label: string; value: number | string | null; suffix?: string; status: string; tone: string; trend?: string };
+  badge?: string; details?: string[]; concerns?: string[]; reassurances?: string[]; note?: string;
 }
 
 export interface RiskRow {
   model: string; version: string; title: string | null; outcome: string | null; owner: string | null;
-  label: string | null; short_label: string | null; headline: RiskHeadline | null;
+  label: string | null; short_label: string | null; output: RiskOutput | null;
   probability: number; band: string; computed_at: string;
   top_factors: { feature: string; value: number; contribution: number }[]; validated: boolean | null;
   metrics: Record<string, number | string> | null;

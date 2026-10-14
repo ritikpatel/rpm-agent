@@ -72,3 +72,45 @@ def build(ctx):
     out["heart_rate_change_from_discharge"] = hr - float(base.get("heart_rate", hr))
     out["spo2_change_from_discharge"] = spo2 - float(base.get("spo2", spo2))
     return out
+
+
+# ---------------------------------------------------------------------------------------------- the result, her way
+# Tiya's API (deployment/app.py): the 30-day readmission probability, her exploratory alert threshold and a
+# research-only warning. Her own cross-validation (results/cv_summary.csv) is the honest measure of it.
+ALERT_THRESHOLD = 0.329
+LABELS = {
+    "hours_since_discharge": ("Time since discharge", "h"), "age": ("Age", "yrs"), "gender_male": ("Sex (male)", ""),
+    "prior_admission_count_365d": ("Admissions in the past year", ""),
+    "hospital_length_of_stay": ("Hospital stay", "days"), "icu_length_of_stay": ("ICU stay", "days"),
+    "comorbidity_count": ("Comorbidities", ""), "high_risk_med_flag": ("High-risk medicine", ""),
+    "discharge_medication_count": ("Discharge medicines", ""), "latest_heart_rate": ("Current heart rate", "bpm"),
+    "latest_oxygen_saturation": ("Current oxygen saturation", "%"), "latest_temperature": ("Current temperature", "C"),
+    "step_count": ("Steps (24h, last recorded)", ""), "active_minutes": ("Active minutes (24h, last recorded)", ""),
+    "hours_since_last_wearable_reading": ("Time since the last reading", "h"),
+    "wearable_data_completness": ("Wearable data completeness", ""),
+    "wearable_adherence": ("Watch wear rate (simulated)", ""),
+    "heart_rate_change_from_discharge": ("Heart rate change since discharge", "bpm"),
+    "spo2_change_from_discharge": ("Oxygen saturation change since discharge", "%"),
+    "activity_change_from_discharge": ("Activity change since discharge (last recorded)", ""),
+}
+
+
+def explain(ctx, features, probability, contributions):
+    def described(f):
+        label, unit = LABELS[f]
+        return f"{label} ({features[f]:.1f}{' ' + unit if unit else ''})"
+    up = sorted((f for f in contributions if contributions[f] > 0.01), key=lambda f: -contributions[f])[:3]
+    down = sorted((f for f in contributions if contributions[f] < -0.01), key=lambda f: contributions[f])[:3]
+    above = probability >= ALERT_THRESHOLD
+    return {"headline": {"label": "30-day readmission probability", "value": f"{probability:.0%}", "suffix": "",
+                         "status": "Above the exploratory alert threshold" if above else "Below the alert threshold",
+                         "tone": "bad" if above else "warn" if probability >= 0.15 else "good"},
+            "badge": f"Readmission {probability:.0%}",
+            "details": [f"Exploratory alert threshold: {ALERT_THRESHOLD:.0%}.",
+                        f"Re-estimated as the patient recovers ({features['hours_since_discharge']:.0f} hours after "
+                        "discharge); the snapshots it learnt from were 1 to 24 hours after discharge."],
+            "concerns": [described(f) for f in up], "reassurances": [described(f) for f in down],
+            "note": "Research prototype, not for patient-care decisions: 63 labelled admissions, 10 readmissions. In "
+                    "Tiya's cross-validation the AUROC averaged 0.42 (range 0.12 to 0.75).",
+            "values": {"readmission_probability": round(probability, 4), "exploratory_alert_threshold": ALERT_THRESHOLD,
+                       "alert": above}}

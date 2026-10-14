@@ -196,8 +196,10 @@ def list_patients(user: Reader,
                s.latest,
                (SELECT count(*) FROM clinical_events e WHERE e.patient_id = p.patient_id
                   AND e.detected_at > now() - interval '24 hours' AND e.requires_alert) AS alerts_24h,
-               (SELECT jsonb_object_agg(r.model, jsonb_build_object('probability', r.probability, 'band', r.band))
-                  FROM (SELECT DISTINCT ON (model) model, probability, band FROM risk_scores
+               (SELECT jsonb_object_agg(r.model, jsonb_build_object('probability', r.probability, 'band', r.band,
+                                                                  'badge', r.badge, 'tone', r.tone))
+                  FROM (SELECT DISTINCT ON (model) model, probability, band, features->'output'->>'badge' AS badge,
+                               features->'output'->'headline'->>'tone' AS tone FROM risk_scores
                         WHERE patient_id = p.patient_id
                           AND (%(versions)s::jsonb IS NULL OR model_version = %(versions)s::jsonb ->> model)
                         ORDER BY model, computed_at DESC) r) AS risk

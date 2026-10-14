@@ -1,8 +1,16 @@
 # Recovery monitoring (Navya), 1.0.0
 
-**What it predicts.** The probability that a patient at home has a deterioration episode in the next 72 hours.
-Alongside it the features include Navya's rule-based recovery score (0 to 100): 100 means the vital signs are normal
-and no worse than at discharge.
+**What it gives the care team (her words: "is the patient recovering, stable or getting worse right now?").**
+1. The **recovery score**, 0 to 100: 100 means the vital signs are normal and no worse than at discharge; the lower,
+   the worse. Good recovery from 75, Moderate from 50, Poor below 50. With a trend over 3 hours (Improving, Stable,
+   Worsening) and a sudden-decline flag. This is a written rule, not a trained model.
+2. The **chance of a deterioration episode within the next 72 hours**, from the LightGBM model; alert from 0.348.
+   The platform's band (low, medium, high) follows this number.
+3. The top three reasons, in her wording. No reading for more than 6 hours shows "Insufficient data", never an old
+   score.
+
+The console leads with the recovery score. `explain()` in `features.py` is a port of her `RecoveryModel.score()`; on
+her own example request it reproduces her output field for field.
 
 **Inputs (24).** Hours since discharge; heart rate, respiratory rate, SpO2, systolic pressure and temperature at
 discharge; the latest value of each; the worst values of the last six hours; the change of each since discharge; the

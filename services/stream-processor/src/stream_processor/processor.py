@@ -399,8 +399,13 @@ def risk_finding(score: dict) -> Finding:
     """A risk model crossed into its high band. Unvalidated models inform but never page."""
     pct = round(float(score["probability"]) * 100)
     validated = bool(score.get("validated"))
+    head = (score.get("output") or {}).get("headline")
+    # in the model's own terms when it gives them ("Recovery score 34.8 / 100: Poor recovery"), so a probability of
+    # a bad outcome is never shown bare next to a name that reads like good news
+    said = (f"{head['label']} {head['value']}{(' ' + head['suffix']) if head.get('suffix') else ''}: {head['status']}"
+            if head else f"{pct}% ({score['band']})")
     return Finding("RISK_HIGH", "high" if validated else "info", f"risk.{score['model']}",
-                   f"{score.get('title', score['model'])}: {pct}% ({score['band']})"
+                   f"{score.get('title', score['model'])}: {said}"
                    + ("" if validated else " [unvalidated model]"), validated,
                    {"model": score["model"], "version": score.get("version"), "probability": score["probability"],
                     "band": score["band"], "top_factors": score.get("top_factors", [])[:5], "validated": validated})

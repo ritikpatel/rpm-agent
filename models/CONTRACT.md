@@ -45,7 +45,7 @@ Rules:
 | `now` | Current time (timezone-aware `datetime`). |
 | `care_setting` | `"icu"` or `"home"`. |
 | `profile` | `age`, `sex` (`"M"`/`"F"`), `primary_condition` (CHF, COPD, IHD, Sepsis, Stroke), `los_days`, `prior_admissions_12m`, `drg_severity`, `discharge_disposition`, `discharge_at`, `icu_admit_at`, `hypercapnic_resp_failure`, `on_supplemental_o2`. |
-| `vitals` | Rows from the last 24 hours, oldest first (at most 3,000). Each has `ts`, `heart_rate`, `hrv_rmssd`, `spo2`, `resp_rate`, `sbp`, `dbp`, `temp`, `skin_temp`, `gcs`, `steps`, `activity`, `news2`, `news2_partial`, `context`. Any value can be `None`: a watch does not measure blood pressure. |
+| `vitals` | Rows from the last 30 hours, oldest first (at most 4,000). Each has `ts`, `heart_rate`, `hrv_rmssd`, `spo2`, `resp_rate`, `sbp`, `dbp`, `temp`, `skin_temp`, `gcs`, `steps`, `activity`, `news2`, `news2_partial`, `context`. Any value can be `None`: a watch does not measure blood pressure. |
 | `daily` | One row per day for the last 7 days, oldest first: `day`, `windows`, `hr_mean`, `hr_min`, `hr_max`, `spo2_mean`, `spo2_min`, `rr_max`, `temp_max`, `hrv_mean`, `steps`, `news2_max`, `news2_mean`. |
 | `labs` | Lab results from the last 7 days, oldest first: `ts`, `code`, `name`, `value`, `unit`, `flag`. |
 | `hours_since_discharge` | For home patients, otherwise `None`. |
@@ -56,6 +56,24 @@ Rules:
 
 `pd.DataFrame(ctx["vitals"])` gives a table if you prefer pandas. If your model needs something that is not here,
 say so: adding a field to the context is a small change on the platform side.
+
+## explain (optional, in features.py)
+
+```python
+def explain(ctx, features, probability, contributions) -> dict:   # what the result means, in your terms
+    return {"headline": {"label": "Recovery score", "value": 62.4, "suffix": "/ 100",
+                         "status": "Moderate recovery", "tone": "warn"},       # tone: good | warn | bad | unknown
+            "badge": "Recovery 62 · Moderate",                                  # the worklist's short form
+            "details": ["Trend over 3 hours: Worsening (-9.5 points)"],
+            "concerns": ["Current oxygen saturation (91.0 %)"],                 # what pushes the risk up
+            "reassurances": ["Highest heart rate (6h) (78.0 bpm)"],
+            "note": "optional caution", "values": {...}}                        # your API's own fields
+```
+
+The console and the agents show this instead of a bare probability, so a model is read the way its owner meant it:
+a recovery score where higher is better, a probability with your alert threshold, your named drivers.
+`contributions` is each feature's contribution to the score (LightGBM). Without `explain` the console shows the
+probability, its band and the top factors.
 
 ## metadata.json
 
@@ -78,11 +96,8 @@ say so: adding a field to the context is a small change on the platform side.
 }
 ```
 
-- `label` and `short_label`: what the probability is, as the console shows it ("Risk of poor recovery (72 h)",
-  "Poor recovery"). Say what is predicted, so a high number cannot be read as good news.
-- `headline` (optional): one feature worth showing beside the probability, for example a score the model is built
-  around: `{"feature": "recovery_score", "label": "Recovery score", "scale": 100, "higher_is_better": true,
-  "bands": [[75, "Good recovery"], [50, "Moderate recovery"], [0, "Poor recovery"]]}`.
+- `label` and `short_label`: the model's name as the console shows it ("Recovery monitoring score",
+  "Recovery").
 - `triggers`: when the model runs. `vitals` (new readings; at most once per `min_interval_s` per patient), `lab` (a
   new lab result), `discharge` (the patient was just discharged), `daily` (a scheduled run for every home patient).
   Any model can also be run on demand.

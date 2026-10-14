@@ -51,11 +51,14 @@ def assess(ctx: dict, event: dict) -> dict:
     if concern in ("high", "critical"):
         actions.append({"action": "SET_PROFILE_CRITICAL" if concern == "critical" else "SET_PROFILE_ELEVATED",
                         "reason": "increase sampling while deterioration is assessed"})
-    def described(m):   # the probability is the risk of the bad outcome; a headline score may run the other way
-        head = m.get("headline")
-        extra = f"; {head['label'].lower()} {head['value']}/{head['scale']} ({head['status']})" if head else ""
+    def described(m):   # each model as its owner reads it (its explain() output), else its probability
+        o = m.get("output") or {}
+        h = o.get("headline")
+        if h:
+            return (f"{m.get('label') or m['model']}: {h['label'].lower()} {h['value']}{h.get('suffix') or ''} "
+                    f"({h['status']}; {'validated' if m.get('validated') else 'not validated'})")
         return (f"{m.get('label') or m['model']} {m['probability']:.0%} ({m['band']}, "
-                f"{'validated' if m.get('validated') else 'not validated'}{extra})")
+                f"{'validated' if m.get('validated') else 'not validated'})")
     models = ", ".join(described(m) for m in ctx["risk"])
     return {
         "signal_quality": quality, "concern_level": concern,

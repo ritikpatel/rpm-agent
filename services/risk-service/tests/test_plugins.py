@@ -56,6 +56,9 @@ def test_plugin_follows_the_contract(path: Path) -> None:
             assert list(features) == plugin.features and all(math.isfinite(v) for v in features.values())
             pred = plugin.predict(features)
             assert 0.0 <= pred.probability <= 1.0 and pred.band in ("low", "medium", "high")
+            out = plugin.explain(ctx, pred)
+            assert out and out["headline"]["tone"] in ("good", "warn", "bad", "unknown") and out["badge"]
+            json.dumps(out)
     json.dumps(plugin.describe())
 
 
@@ -84,6 +87,27 @@ def test_recovery_scores_higher_when_vitals_worsen_and_explains_why() -> None:
     worse = plugin.predict(plugin.build(context("home", deteriorating=True)))
     assert worse.probability > calm and worse.top_factors
     assert {"feature", "value", "contribution"} <= set(worse.top_factors[0])
+
+
+def test_each_model_reads_its_result_the_way_its_owner_defined_it() -> None:
+    models = PluginRegistry(ROOT).models
+    recovery = models["recovery_monitoring"]
+    for ctx, status in ((context("home"), "Good recovery"), (context("home", deteriorating=True), "Poor recovery")):
+        out = recovery.explain(ctx, recovery.predict(recovery.build(ctx)))
+        assert out["headline"]["label"] == "Recovery score" and out["headline"]["suffix"] == "/ 100"
+        assert out["headline"]["status"] == status                # a high score is good, a low one is poor
+    gone = context("home")
+    gone["now"] = NOW + timedelta(hours=7)                         # nothing for 7 hours: no score, not an old one
+    out = recovery.explain(gone, recovery.predict(recovery.build(gone)))
+    assert out["headline"]["status"] == "Insufficient data" and out["headline"]["value"] is None
+    readmit = models["readmission_risk"]
+    out = readmit.explain(context("home"), readmit.predict(readmit.build(context("home"))))
+    assert out["headline"]["label"] == "30-day readmission probability" and "Research prototype" in out["note"]
+    deterioration = models["early_deterioration"]
+    worse = context("home", deteriorating=True)
+    out = deterioration.explain(worse, deterioration.predict(deterioration.build(worse)))
+    assert out["headline"]["label"] == "Deterioration in the next 6 hours"
+    assert any(c.startswith("SpO2 dropped") for c in out["concerns"])
 
 
 def test_broken_plugin_is_rejected_with_a_clear_reason(tmp_path: Path) -> None:

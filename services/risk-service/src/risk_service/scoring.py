@@ -19,7 +19,7 @@ VITAL_COLUMNS = ("ts, heart_rate, hrv_rmssd, spo2, resp_rate, sbp, dbp, temp, sk
 
 
 class Scorer:
-    def __init__(self, pool: ConnectionPool, registry: PluginRegistry, max_rows: int = 3000):
+    def __init__(self, pool: ConnectionPool, registry: PluginRegistry, max_rows: int = 4000):
         self.pool, self.registry, self.max_rows = pool, registry, max_rows
 
     def context(self, patient_id: str) -> dict:
@@ -38,7 +38,7 @@ class Scorer:
             discharge_vitals = profile.pop("discharge_vitals") or {}
             vitals = cur.execute(
                 f"SELECT {VITAL_COLUMNS} FROM (SELECT {VITAL_COLUMNS} FROM vitals WHERE patient_id = %s "
-                "AND ts > now() - interval '24 hours' AND NOT late ORDER BY ts DESC LIMIT %s) v ORDER BY ts",
+                "AND ts > now() - interval '30 hours' AND NOT late ORDER BY ts DESC LIMIT %s) v ORDER BY ts",
                 (patient_id, self.max_rows)).fetchall()
             daily = cur.execute(
                 """SELECT date_trunc('day', ts) AS day, count(*) AS windows, avg(heart_rate) AS hr_mean,
@@ -77,20 +77,21 @@ class Scorer:
                 continue
             try:
                 pred = plugin.predict(plugin.build(ctx))
+                output = plugin.explain(ctx, pred)
             except Exception as exc:  # noqa: BLE001 - one model failing must not hide the others' scores
                 log.error("model failed", extra={"model": name, "patient_id": patient_id, "error": str(exc)[:300]})
                 continue
             res = {"model": name, "version": plugin.version, "title": plugin.meta["title"],
                    "outcome": plugin.meta["outcome"], "probability": pred.probability, "band": pred.band,
                    "top_factors": pred.top_factors, "validated": bool(plugin.meta.get("validated")),
-                   "trigger": trigger, "computed_at": utcnow().isoformat()}
+                   "output": output, "trigger": trigger, "computed_at": utcnow().isoformat()}
             if persist:
                 with self.pool.connection() as conn:
                     conn.execute(
                         "INSERT INTO risk_scores (patient_id, model, model_version, probability, band, top_factors, "
                         "features) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                         (patient_id, name, plugin.version, pred.probability, pred.band, Jsonb(pred.top_factors),
-                         Jsonb({"values": pred.features, "trigger": trigger})))
+                         Jsonb({"values": pred.features, "trigger": trigger, "output": output})))
             results.append(res)
         return results
 

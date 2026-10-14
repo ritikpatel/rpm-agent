@@ -178,3 +178,69 @@ def build(ctx):
     out["score_change_1h"] = round(change_1h, 1)
     out["sudden_score_drop_flag"] = 1.0 if (change_1h <= -10 or change_3h <= -15) else 0.0
     return out
+
+
+# ---------------------------------------------------------------------------------------------- the result, his way
+# Harnoor's inference.py: the probability of deterioration in the next 6 hours, an alert level from his two
+# thresholds, and up to three named drivers (DRIVER_CANDIDATES), each shown with its value over the last 3 hours.
+# His "red" threshold (picked for 90% recall) came out lower than his "yellow" one (70% recall), so his own
+# alert_level would call nearly every patient RED; the levels below keep his thresholds in their natural order.
+HIGH, WATCH = 0.272, 0.00895
+
+
+def _shock_index_max(s, now, hours=3):
+    """Heart rate / systolic pressure, pairing each cuff reading with the heart rate within 10 minutes of it."""
+    lo = now - timedelta(hours=hours)
+    out = []
+    for t, sbp in s["sbp"]:
+        near = [v for th, v in s["hr"] if abs((th - t).total_seconds()) <= 600]
+        if t > lo and near and sbp > 0:
+            out.append(sum(near) / len(near) / sbp)
+    return max(out) if out else None
+
+
+def _drivers(ctx):
+    now = ctx["now"]
+    rows = [r for r in ctx["vitals"] if r["ts"] <= now]
+    s = {k: _series(rows, k) for k in COL}
+
+    def win(key, hours=3, offset=0.0):
+        return _window(s[key], now, hours, offset)
+    spo2, hr, sbp, rr = win("spo2"), win("hr"), win("sbp"), win("rr")
+    worsening = 0
+    for key, delta in WORSENING_DELTA.items():
+        cur, prev = win(key), win(key, 3, 3)
+        if cur and prev:
+            d = sum(cur) / len(cur) - sum(prev) / len(prev)
+            worsening += (delta > 0 and d >= delta) or (delta < 0 and d <= delta)
+    values = {"min_spo2_3h": min(spo2) if spo2 else None, "spo2_drop_3h": max(spo2) - min(spo2) if spo2 else None,
+              "max_heart_rate_3h": max(hr) if hr else None, "min_sbp_3h": min(sbp) if sbp else None,
+              "sbp_drop_3h": max(sbp) - min(sbp) if sbp else None, "max_respiratory_rate_3h": max(rr) if rr else None,
+              "shock_index_max_3h": _shock_index_max(s, now),
+              "activity_change_from_discharge": (ctx.get("last_recorded") or {}).get("activity_change_from_discharge"),
+              "multi_vital_worsening_count_3h": float(worsening)}
+    rules = (("min_spo2_3h", "SpO2 dropped", lambda v: v < 92), ("spo2_drop_3h", "SpO2 dropped", lambda v: v > 3),
+             ("max_heart_rate_3h", "Heart rate elevated", lambda v: v > 100),
+             ("min_sbp_3h", "Blood pressure low", lambda v: v < 90),
+             ("sbp_drop_3h", "Blood pressure dropping", lambda v: v > 10),
+             ("max_respiratory_rate_3h", "Breathing rate elevated", lambda v: v > 22),
+             ("shock_index_max_3h", "Shock index elevated", lambda v: v > 0.9),
+             ("activity_change_from_discharge", "Activity reduced vs. baseline", lambda v: v < -15),
+             ("multi_vital_worsening_count_3h", "Multiple vitals worsening together", lambda v: v >= 2))
+    return [f"{label} ({col}={values[col]:.1f})" for col, label, cond in rules
+            if values[col] is not None and cond(values[col])][:3]
+
+
+def explain(ctx, features, probability, contributions):
+    level, tone = (("High", "bad") if probability >= HIGH else ("Watch", "warn") if probability >= WATCH
+                   else ("Low", "good"))
+    drivers = _drivers(ctx)
+    return {"headline": {"label": "Deterioration in the next 6 hours", "value": f"{probability:.0%}", "suffix": "",
+                         "status": level, "tone": tone},
+            "badge": f"Deterioration {probability:.0%}",
+            "details": [f"Levels from Harnoor's thresholds: High from {HIGH:.0%} (70% of training events caught), "
+                        f"Watch from {WATCH:.1%} (90% caught)."],
+            "concerns": drivers or ["No single driver stands out: check the full vital signs."], "reassurances": [],
+            "note": "Not validated: on the shared training data this model ranks patients no better than chance "
+                    "(AUROC 0.51); it was trained on a different 300-patient file.",
+            "values": {"predicted_probability": round(probability, 4), "level": level, "top_drivers": drivers}}

@@ -62,6 +62,38 @@ def test_recovery_features_and_scores_match_navyas_training_table(data, models):
 
 
 @pytest.mark.skipif(not NAVYA.exists(), reason="Navya's hand-over folder is not present")
+def test_recovery_output_reproduces_navyas_own_example(models):
+    """Her sample request (patient P10002428, 6 hours after discharge) through the platform, against the output of
+    her RecoveryModel.score() as her DEPLOYMENT.md documents it."""
+    import json
+
+    base = NAVYA.parents[1] / "deployment"
+    req = json.loads((base / "sample_request.json").read_text())
+    col = {"heart_rate": "heart_rate", "respiratory_rate": "resp_rate", "spo2": "spo2", "sbp": "sbp",
+           "temperature": "temp"}
+
+    def t(s):
+        return datetime.fromisoformat(s).replace(tzinfo=UTC)
+    vitals = sorted(({"ts": t(r["timestamp"]), col[r["channel"]]: r["value"], "source": "watch"}
+                     for r in req["readings"] if r["channel"] in col), key=lambda r: r["ts"])
+    dv = req["discharge_vitals"]
+    ctx = {"now": t(req["scoring_time"]), "vitals": vitals, "care_setting": "home", "record": {}, "last_recorded": {},
+           "discharge_vitals": {"heart_rate": dv["hr"], "resp_rate": dv["rr"], "spo2": dv["spo2"], "sbp": dv["sbp"],
+                                "temp": dv["temp"]}, "profile": {"age": req["age"], "sex": req["sex"]},
+           "hours_since_discharge": (t(req["scoring_time"]) - t(req["discharge_time"])).total_seconds() / 3600}
+    plugin = models["recovery_monitoring"]
+    out = plugin.explain(ctx, plugin.predict(plugin.build(ctx)))
+    for k, v in {"recovery_score": 57.8, "recovery_status": "Moderate recovery", "trend_direction": "Worsening",
+                 "score_change_1h": -7.8, "score_change_3h": -9.5, "score_change_24h": -37.1,
+                 "sudden_decline_flag": False, "poor_recovery_probability": 0.996, "poor_recovery_alert": True,
+                 "data_freshness": "Recent", "vitals_imputed_from_discharge": 2}.items():
+        assert out["values"][k] == v, k
+    assert out["concerns"] == ["Current oxygen saturation (91.0 %)", "Recovery score (57.8 pts)",
+                               "Current heart rate (118.0 bpm)"]
+    assert out["reassurances"] == ["Highest heart rate (6h) (128.0 bpm)", "Respiratory rate at discharge (19.0 /min)"]
+
+
+@pytest.mark.skipif(not NAVYA.exists(), reason="Navya's hand-over folder is not present")
 def test_recovery_discharge_baseline_for_mimic_patients_is_what_navya_used(data):
     for r in csv.DictReader(NAVYA.open()):
         if r["data_origin"] != "mimic_real" or r["hours_since_discharge"] != "1.0":

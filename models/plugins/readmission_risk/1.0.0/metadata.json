@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "title": "Readmission risk",
   "outcome": "Unplanned hospital readmission within 30 days of discharge",
-  "label": "Risk of readmission (30 days)",
+  "label": "30-day readmission risk",
   "short_label": "Readmission",
   "owner": "Tiya",
   "triggers": [
@@ -34,12 +34,19 @@
     "split": "held-out admissions at the 24-hour snapshot",
     "labelled_admissions": 63,
     "positive_admissions": 10,
-    "platform_parity": "the platform's inputs reproduce Tiya's own exactly: all 63 labelled admissions score identically at 24 hours"
+    "platform_parity": "the platform's inputs reproduce Tiya's own exactly: all 63 labelled admissions score identically at 24 hours",
+    "cv_auroc_mean": 0.423,
+    "cv_auroc_range": [
+      0.115,
+      0.75
+    ],
+    "cv_auprc_mean": 0.274,
+    "cv_note": "Tiya's grouped cross-validation: AUROC averages 0.42, below chance; the single held-out 0.97 rests on 3 readmissions"
   },
   "libraries": {
     "lightgbm": "4.7.0"
   },
   "trained_on": "The 63 MIMIC-IV-demo admissions in the shared training data that carry a readmission label (47 for training)",
-  "limitations": "Ten readmissions in all, three in the test set: the evidence is too thin to page anyone, and Tiya's own notes call it exploratory. Runs only for patients with a hospital record (the MIMIC patients). Steps, active minutes and the activity change are carried forward from the last recorded snapshot because the platform receives no activity data. The high band is Tiya's exploratory alert threshold (0.329); the medium band (0.15) was set on the platform.",
+  "limitations": "Ten readmissions in all, three in the test set, and in Tiya's cross-validation the AUROC averaged 0.42 (range 0.12 to 0.75): it does not yet rank patients reliably, and her own notes call it a research prototype. Runs only for patients with a hospital record (the MIMIC patients). Steps, active minutes and the activity change are carried forward from the last recorded snapshot because the platform receives no activity data. The high band is Tiya's exploratory alert threshold (0.329); the medium band (0.15) was set on the platform.",
   "source": "Readmission Model/deployment (hand-over of 2026-10-14)"
 }

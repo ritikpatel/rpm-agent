@@ -27,6 +27,10 @@ export const bandStatus = (band: string | null | undefined): Status =>
   band === "high" ? "critical" : band === "medium" ? "serious" : band === "low-medium" ? "warning"
     : band === "low" ? "good" : "neutral";
 
+/** A model's own reading of its result (good, warn, bad, unknown) as a badge colour. */
+export const toneStatus = (tone: string | null | undefined): Status =>
+  tone === "bad" ? "critical" : tone === "warn" ? "warning" : tone === "good" ? "good" : "neutral";
+
 export const severityStatus = (s: string): Status =>
   s === "critical" ? "critical" : s === "high" ? "serious" : s === "medium" ? "warning" : "neutral";
 
