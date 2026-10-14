@@ -81,8 +81,11 @@ A watch can only be assigned to a patient at home. Admitted patients are on ICU 
 | Watch: press SOS twice | A critical alert opens in the console within a second and an e-mail goes out |
 | Turn the watch's Wi-Fi off for two minutes, then on | The missing readings arrive marked as backfilled; no false alert |
 
-To hand the patient back to the simulator, assign the simulator's device id (`sim-` plus the digits of the patient
-id, for example `sim-90000019`).
+To hand the patient back to the simulator, assign the simulator's device id: `sim-` plus the patient id, for
+example `sim-SYN-000160`.
+
+A watch taken off or switched off raises no alert: silent devices are recorded but not alerted on in this
+demonstration (`RPM_SILENT_DEVICE_ALERTS`, see the runbook).
 
 ## No watch to hand: the emulator
 
@@ -103,6 +106,7 @@ The emulator reaches the Mac's broker at `10.0.2.2`. The scripted source plays `
 |---|---|
 | `adb connect` fails | The watch sleeps its Wi-Fi: wake it and reopen Wireless debugging; the port changes each time |
 | App shows "not connected" | Wrong address or the Mac's firewall blocks port 8883 (1883 for `plain`); re-run `provision.sh` with the right `--host` |
+| Not connected, against AWS only | The Wi-Fi network blocks outgoing port 8883 (common on campus and office networks): put the watch on a phone hotspot |
 | Connected, but nothing in the console | The device is not assigned to a patient (step 5), or it is assigned to a patient in the ICU |
 | TLS error against AWS | The certificate was not created for this device id: run `make cloud-device D=<id>` and provision again |
 | Heart rate only on a Galaxy Watch | The Samsung SDK `.aar` is missing from `wear/libs/`; add it and rebuild |
