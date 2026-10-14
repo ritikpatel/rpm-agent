@@ -89,10 +89,19 @@ spec:
                 - python
                 - -c
                 - |
-                  import os, urllib.request as u
+                  # After the instance starts, a missed run fires at once, before the risk service is up: wait for it.
+                  import os, time, urllib.error, urllib.request as u
                   r = u.Request(os.environ["RPM_RISK_SERVICE_URL"] + "/v1/score/daily", method="POST",
                                 headers={"X-Service-Token": os.environ["RPM_SERVICE_TOKEN"]})
-                  print(u.urlopen(r, timeout=600).read().decode())
+                  for attempt in range(30):
+                      try:
+                          print(u.urlopen(r, timeout=600).read().decode())
+                          break
+                      except urllib.error.URLError as exc:
+                          if attempt == 29:
+                              raise
+                          print(f"risk service not ready ({exc.reason}); retrying in 20 s", flush=True)
+                          time.sleep(20)
               envFrom:
                 - configMapRef: {name: rpm-config}
                 - secretRef: {name: rpm-secrets}
