@@ -12,9 +12,10 @@ function topRisk(p: PatientRow) {
   if (entries.length === 0) return <span className="muted small">–</span>;
   const [model, r] = entries.sort((a, b) => (BAND_RANK[b[1].band] ?? 0) - (BAND_RANK[a[1].band] ?? 0)
     || b[1].probability - a[1].probability)[0];
+  // Each badge names what is predicted ("Poor recovery 98%"), so a high number cannot be read as good news.
   return <Badge status={bandStatus(r.band)} title={entries.map(([m, x]) =>
-    `${m.replace(/_/g, " ")}: ${(x.probability * 100).toFixed(0)}% (${x.band})`).join("\n")}>
-    {model.split("_")[0]} {(r.probability * 100).toFixed(0)}%</Badge>;
+    `${x.label ?? m.replace(/_/g, " ")}: ${(x.probability * 100).toFixed(0)}% (${x.band})`).join("\n")}>
+    {r.short_label ?? model.split("_")[0]} {(r.probability * 100).toFixed(0)}%</Badge>;
 }
 
 export default function Worklist({ patients, alerts, stats, trends, flashed, now, onChange, canAct }: {

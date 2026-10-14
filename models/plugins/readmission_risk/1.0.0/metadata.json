@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "title": "Readmission risk",
   "outcome": "Unplanned hospital readmission within 30 days of discharge",
+  "label": "Risk of readmission (30 days)",
+  "short_label": "Readmission",
   "owner": "Tiya",
   "triggers": [
     "discharge",

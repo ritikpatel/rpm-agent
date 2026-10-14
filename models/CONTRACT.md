@@ -78,6 +78,11 @@ say so: adding a field to the context is a small change on the platform side.
 }
 ```
 
+- `label` and `short_label`: what the probability is, as the console shows it ("Risk of poor recovery (72 h)",
+  "Poor recovery"). Say what is predicted, so a high number cannot be read as good news.
+- `headline` (optional): one feature worth showing beside the probability, for example a score the model is built
+  around: `{"feature": "recovery_score", "label": "Recovery score", "scale": 100, "higher_is_better": true,
+  "bands": [[75, "Good recovery"], [50, "Moderate recovery"], [0, "Poor recovery"]]}`.
 - `triggers`: when the model runs. `vitals` (new readings; at most once per `min_interval_s` per patient), `lab` (a
   new lab result), `discharge` (the patient was just discharged), `daily` (a scheduled run for every home patient).
   Any model can also be run on demand.

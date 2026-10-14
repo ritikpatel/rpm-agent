@@ -90,9 +90,12 @@ Use `SYN-000118` (or any home patient already showing an alert).
 7. **Act.** Click **Acknowledge** (the timer stops), then **Resolve** with a reason.
 8. **Talk to the patient.** In **Messages with the patient** send a short message; in **Actions** click
    **Ask: short of breath?** The simulated patient's answer appears within about 20 seconds.
-9. **Risk models.** The card shows early deterioration, readmission risk and recovery monitoring for this patient,
-   each with a probability, a band and the factors behind it. Readmission risk and early deterioration only
-   appear for patients with a hospital record (the MIMIC ones), and are labelled "not validated".
+9. **Risk models.** Each line names the bad outcome it predicts, so the percentage is always a risk: higher is
+   worse. "Risk of poor recovery (72 h)" (Navya's model) also shows her recovery score out of 100, where higher is
+   better: a patient recovering well reads, for example, "0% low risk" with "Recovery score 98.9 / 100 · Good
+   recovery". "Risk of readmission (30 days)" and "Risk of deterioration (6 h)" appear only for patients with a
+   hospital record (the MIMIC ones) and are labelled "not validated". Below each: what raises and what lowers the
+   risk, with the values the model saw.
 
 ## Part C: a patient in the ICU, then discharged
 

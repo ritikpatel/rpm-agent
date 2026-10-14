@@ -181,7 +181,8 @@ class ModelPlugin:
 
     def describe(self) -> dict:
         keys = ("name", "version", "title", "outcome", "owner", "triggers", "care_settings", "bands", "metrics",
-                "validated", "min_interval_s", "limitations", "trained_at", "libraries", "requires")
+                "validated", "min_interval_s", "limitations", "trained_at", "libraries", "requires", "label",
+                "short_label", "headline")
         return {**{k: self.meta.get(k) for k in keys}, "validated": bool(self.meta.get("validated")),
                 "features": self.features}
 

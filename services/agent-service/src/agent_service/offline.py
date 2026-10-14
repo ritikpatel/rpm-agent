@@ -51,8 +51,12 @@ def assess(ctx: dict, event: dict) -> dict:
     if concern in ("high", "critical"):
         actions.append({"action": "SET_PROFILE_CRITICAL" if concern == "critical" else "SET_PROFILE_ELEVATED",
                         "reason": "increase sampling while deterioration is assessed"})
-    models = ", ".join(f"{m['model']} {m['probability']:.2f} ({m['band']}, "
-                       f"{'validated' if m.get('validated') else 'unvalidated baseline'})" for m in ctx["risk"])
+    def described(m):   # the probability is the risk of the bad outcome; a headline score may run the other way
+        head = m.get("headline")
+        extra = f"; {head['label'].lower()} {head['value']}/{head['scale']} ({head['status']})" if head else ""
+        return (f"{m.get('label') or m['model']} {m['probability']:.0%} ({m['band']}, "
+                f"{'validated' if m.get('validated') else 'not validated'}{extra})")
+    models = ", ".join(described(m) for m in ctx["risk"])
     return {
         "signal_quality": quality, "concern_level": concern,
         "clinical_picture": (f"{p['display_name']} ({p['age']}{p['sex']}, {p['primary_condition']}, "
@@ -120,7 +124,7 @@ def brief(ctx: dict, event: dict, assessment: dict, hits: list) -> dict:
     if assessment["signal_quality"] != "reliable":
         uncertain.append(f"Signal quality: {assessment['signal_quality'].replace('_', ' ')}.")
     if any(not m.get("validated") for m in ctx["risk"]):
-        uncertain.append("Risk scores come from unvalidated baseline models.")
+        uncertain.append("Some risk scores come from models that are not validated.")
     return {
         "headline": f"{event['severity'].upper()}: {event['summary']}"[:110],
         "situation": f"{p['display_name']}, {p['age']}{p['sex']}, {event['summary']} [CURRENT].",

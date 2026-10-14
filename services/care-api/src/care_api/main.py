@@ -19,6 +19,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from prometheus_client import make_asgi_app
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from rpm_core.aws import client
@@ -30,7 +31,7 @@ from rpm_core.rag import RagIndex, make_embedder
 
 from . import clinical, fhir, internal
 from .auth import AUTH, AuthError, DevIssuer, Reader, User, cognito_verifier, current_user
-from .context import PatientContext
+from .context import PatientContext, current_versions
 from .engine import AlertEngine
 from .settings import CareSettings
 
@@ -185,7 +186,9 @@ def me(user: Annotated[User, Depends(current_user)]) -> dict:
 @app.get("/api/patients")
 def list_patients(user: Reader,
                   setting: Annotated[str | None, Query(pattern="^(home|icu)$")] = None) -> list[dict]:
-    return _query(
+    meta = state["ctx"].models()
+    versions = Jsonb(current_versions(meta)) if meta else None
+    rows = _query(
         """
         SELECT p.patient_id, p.display_name, p.sex, p.age, p.primary_condition, p.primary_diagnosis, p.data_origin,
                p.care_setting,
@@ -195,13 +198,19 @@ def list_patients(user: Reader,
                   AND e.detected_at > now() - interval '24 hours' AND e.requires_alert) AS alerts_24h,
                (SELECT jsonb_object_agg(r.model, jsonb_build_object('probability', r.probability, 'band', r.band))
                   FROM (SELECT DISTINCT ON (model) model, probability, band FROM risk_scores
-                        WHERE patient_id = p.patient_id ORDER BY model, computed_at DESC) r) AS risk
+                        WHERE patient_id = p.patient_id
+                          AND (%(versions)s::jsonb IS NULL OR model_version = %(versions)s::jsonb ->> model)
+                        ORDER BY model, computed_at DESC) r) AS risk
         FROM patients p LEFT JOIN patient_status s USING (patient_id)
         WHERE p.monitoring_active AND (%(setting)s::text IS NULL OR p.care_setting = %(setting)s)
         ORDER BY s.news2 DESC NULLS LAST, p.patient_id
         """,
-        {"setting": setting},
+        {"setting": setting, "versions": versions},
     )
+    for row in rows:   # what each probability means, for the worklist badge
+        for name, r in (row["risk"] or {}).items():
+            r.update(label=meta.get(name, {}).get("label"), short_label=meta.get(name, {}).get("short_label"))
+    return rows
 
 
 @app.get("/api/patients/{patient_id}")

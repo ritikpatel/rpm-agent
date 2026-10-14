@@ -9,7 +9,8 @@ export interface PatientRow {
   primary_diagnosis: string | null; data_origin: string | null;
   care_setting: "home" | "icu"; discharge_at: string | null; device_id: string | null; last_seen: string | null;
   news2: number | null; news2_band: string | null; news2_partial: boolean | null; latest: Latest | null;
-  alerts_24h: number; risk: Record<string, { probability: number; band: string }> | null;
+  alerts_24h: number;
+  risk: Record<string, { probability: number; band: string; label?: string | null; short_label?: string | null }> | null;
 }
 
 export interface VitalRow {
@@ -51,8 +52,13 @@ export interface Assessment {
   recommended_actions: { action: string; reason: string }[]; model_evidence_note: string; confidence: string;
 }
 
+export interface RiskHeadline {
+  label: string; value: number; scale: number | null; higher_is_better: boolean; status: string | null;
+}
+
 export interface RiskRow {
   model: string; version: string; title: string | null; outcome: string | null; owner: string | null;
+  label: string | null; short_label: string | null; headline: RiskHeadline | null;
   probability: number; band: string; computed_at: string;
   top_factors: { feature: string; value: number; contribution: number }[]; validated: boolean | null;
   metrics: Record<string, number | string> | null;

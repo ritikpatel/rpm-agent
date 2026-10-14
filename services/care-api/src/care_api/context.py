@@ -8,6 +8,7 @@ import logging
 
 import httpx
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class PatientContext:
                 "messages_24h": messages}
 
     def models(self) -> dict[str, dict]:
+        """The models the risk service serves now (name -> description), cached; {} if it cannot be reached."""
         if not self._models and self.risk_url:
             try:
                 r = httpx.get(f"{self.risk_url}/v1/models", timeout=5, headers={"X-Service-Token": self.token})
@@ -91,14 +93,18 @@ class PatientContext:
                            timeout=15, headers={"X-Service-Token": self.token}).raise_for_status()
             except httpx.HTTPError as exc:
                 log.warning("risk scoring unavailable", extra={"patient_id": patient_id, "error": str(exc)[:200]})
-        rows = self._q(
-            "SELECT DISTINCT ON (model) model, model_version AS version, probability, band, top_factors, computed_at "
-            "FROM risk_scores WHERE patient_id = %s ORDER BY model, computed_at DESC", (patient_id,))
         meta = self.models()
+        rows = self._q(
+            "SELECT DISTINCT ON (model) model, model_version AS version, probability, band, top_factors, computed_at, "
+            "features->'values' AS feature_values FROM risk_scores WHERE patient_id = %s "
+            "AND (%s::jsonb IS NULL OR model_version = %s::jsonb ->> model) ORDER BY model, computed_at DESC",
+            (patient_id, *[Jsonb(current_versions(meta)) if meta else None] * 2))
         for r in rows:
             m = meta.get(r["model"], {})
-            r.update(title=m.get("title"), outcome=m.get("outcome"), validated=bool(m.get("validated")),
-                     metrics=m.get("metrics"), owner=m.get("owner"))
+            values = r.pop("feature_values") or {}
+            r.update(title=m.get("title"), outcome=m.get("outcome"), label=m.get("label"),
+                     short_label=m.get("short_label"), validated=bool(m.get("validated")),
+                     metrics=m.get("metrics"), owner=m.get("owner"), headline=headline(m.get("headline"), values))
         return {"risk_models": rows}
 
     def record(self, patient_id: str) -> dict:
@@ -131,3 +137,19 @@ class PatientContext:
         if name == "profile":
             return {"profile": self.profile(patient_id)}
         return getattr(self, name)(patient_id)
+
+
+def current_versions(meta: dict[str, dict]) -> dict[str, str]:
+    """name -> the version served now. Scores from an older version (a replaced model) are history, not current."""
+    return {name: m["version"] for name, m in meta.items() if m.get("version")}
+
+
+def headline(spec: dict | None, values: dict) -> dict | None:
+    """The feature a model's metadata asks to show beside its probability (for example Navya's recovery score), with
+    the band its value falls in."""
+    if not spec or values.get(spec.get("feature")) is None:
+        return None
+    value = float(values[spec["feature"]])
+    status = next((name for cut, name in spec.get("bands", []) if value >= cut), None)
+    return {"label": spec.get("label", spec["feature"]), "value": round(value, 1), "scale": spec.get("scale"),
+            "higher_is_better": spec.get("higher_is_better", True), "status": status}

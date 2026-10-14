@@ -288,20 +288,33 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
             <header><h2 id="risk-h">Risk models</h2><span className="muted small">decision support only</span></header>
             <div className="body">
               {risk.length === 0 && <div className="muted">Not scored yet (scores follow the first readings).</div>}
-              {risk.map((r) => (
-                <div key={r.model} style={{ marginBottom: 10 }}>
+              {risk.map((r) => {
+                // The probability is always the risk of the bad outcome: higher is worse. Factors are named by what
+                // they do to that risk, with the value the model saw.
+                const factor = (f: RiskRow["top_factors"][number]) =>
+                  `${f.feature.replace(/_/g, " ")} ${Number.isInteger(f.value) ? f.value : f.value.toFixed(1)}`;
+                const up = r.top_factors.filter((f) => f.contribution > 0).slice(0, 3);
+                const down = r.top_factors.filter((f) => f.contribution < 0).slice(0, 2);
+                return (
+                <div key={r.model} style={{ marginBottom: 12 }}>
                   <div className="row" style={{ justifyContent: "space-between" }}>
-                    <b title={r.outcome ?? undefined}>{r.title ?? r.model.replace(/_/g, " ")}</b>
-                    <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band}</Badge>
+                    <b title={r.outcome ?? undefined}>{r.label ?? r.title ?? r.model.replace(/_/g, " ")}</b>
+                    <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band} risk</Badge>
                   </div>
+                  {r.headline && <div className="small">
+                    {r.headline.label} <b>{r.headline.value}{r.headline.scale ? ` / ${r.headline.scale}` : ""}</b>
+                    {r.headline.status && <> · {r.headline.status}</>}
+                    <span className="muted"> ({r.headline.higher_is_better ? "higher is better" : "lower is better"})</span>
+                  </div>}
                   <div className="muted small">{r.outcome}</div>
-                  <div className="muted small">v{r.version} · {ago(r.computed_at, now)}{" "}
+                  {up.length > 0 && <div className="small">Raises the risk: {up.map(factor).join(" · ")}</div>}
+                  {down.length > 0 && <div className="small muted">Lowers the risk: {down.map(factor).join(" · ")}</div>}
+                  <div className="muted small">{r.title} v{r.version} ({r.owner ?? "team"}) · {ago(r.computed_at, now)}{" "}
                     {r.validated ? <span className="tag">validated</span>
-                      : <span className="tag" title={`Owner: ${r.owner ?? "?"}. Metrics: ${JSON.stringify(r.metrics)}`}>
-                          placeholder, not validated: weak evidence</span>}</div>
-                  <div className="small">{r.top_factors.slice(0, 3).map((f) =>
-                    `${f.feature.replace(/_/g, " ")} ${f.contribution > 0 ? "↑" : "↓"}`).join(" · ")}</div>
-                </div>))}
+                      : <span className="tag" title={`Metrics: ${JSON.stringify(r.metrics)}`}>
+                          not validated: weak evidence</span>}</div>
+                </div>);
+              })}
             </div>
           </section>
 

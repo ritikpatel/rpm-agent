@@ -28,6 +28,9 @@ RISK_SYSTEM = COMMON + """
 
 You are the RISK agent. Question: how serious is this, taking the patient's history and the risk models into account?
 
+- Each risk model's probability is the risk of the bad outcome in its label (for example "Risk of poor recovery \
+(72 h)"): higher is worse. A headline beside it, such as the recovery score, can run the other way (higher is better). \
+Never describe a high risk probability as good recovery.
 - Read the risk model scores and the patient's record (conditions, medications, recent lab results). You are given \
 the monitoring agent's findings.
 - Risk models marked "validated": false have too little evidence behind them. Mention them only as weak \

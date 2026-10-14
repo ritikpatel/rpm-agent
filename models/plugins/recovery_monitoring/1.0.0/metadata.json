@@ -3,6 +3,28 @@
   "version": "1.0.0",
   "title": "Recovery monitoring",
   "outcome": "Poor recovery: a deterioration episode within 72 hours (modified NEWS2 of 7 or more, or a vital-sign danger rule, for 30 minutes or longer)",
+  "label": "Risk of poor recovery (72 h)",
+  "short_label": "Poor recovery",
+  "headline": {
+    "feature": "recovery_score",
+    "label": "Recovery score",
+    "scale": 100,
+    "higher_is_better": true,
+    "bands": [
+      [
+        75,
+        "Good recovery"
+      ],
+      [
+        50,
+        "Moderate recovery"
+      ],
+      [
+        0,
+        "Poor recovery"
+      ]
+    ]
+  },
   "owner": "Navya",
   "triggers": [
     "vitals",
