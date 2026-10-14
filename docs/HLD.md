@@ -69,7 +69,7 @@ that plays recorded data back, in memory, to score the alert rules against the d
 ([evaluation-report.md](evaluation-report.md)).
 
 The data's ground-truth columns (`trajectory_type`, `deterioration_*`, `event_severity_fraction`, `readmit_*`) are
-used only to train the placeholder models and to score the evaluation. They are never written to the hospital
+used only to train the team's models and to score the evaluation. They are never written to the hospital
 record or the guideline index, so no model or agent sees the answer at run time; a test enforces this.
 
 ## 3. Architecture
@@ -130,7 +130,7 @@ The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 | Real-time patient monitoring | IoT Core → SQS → stream processor → console | Full |
 | Agentic AI clinical monitoring engine | Agent service, four agents | Full |
 | Early warning and alert system | Alert rules, Care API escalation, console and e-mail to the care team's own mailboxes | Full; no SMS (blocked on the Free plan) |
-| Predictive risk modelling | Risk service with three model plug-ins | Three models; placeholders until the team's models arrive |
+| Predictive risk modelling | Risk service with the team's three LightGBM models as plug-ins | Recovery monitoring validated; readmission and early deterioration shown as weak evidence (see the model cards) |
 | FHIR-based integration | HAPI FHIR, subscriptions in, write-back out | Full |
 | RAG-powered clinical summarisation | Summary agent, pgvector, Titan embeddings, citation check | Full |
 | Smart hospital connectivity | Live console, two-way messages to the watch | Messaging; no video |

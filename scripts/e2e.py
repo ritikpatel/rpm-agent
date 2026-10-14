@@ -123,16 +123,19 @@ def main() -> None:
     hv = api.call("GET", f"/api/patients/{chatty['patient_id']}/vitals?minutes=10", clin)
     step("home patient has wearable data only", all(r["source"] != "icu_monitor" for r in hv), f"{len(hv)} windows")
 
-    print("2. Risk models")
-    risk, _ = wait("risk scores for the ICU patient", lambda: api.call(
-        "GET", f"/api/patients/{sick['patient_id']}/risk", clin), 120)
-    step("early deterioration model scored the ICU patient",
-         any(r["model"] == "early_deterioration" for r in risk),
-         ", ".join(f"{r['model']} {r['probability']:.2f}" for r in risk))
-    hrisk, _ = wait("risk scores for the home patient", lambda: [
+    print("2. The team's risk models")
+    hrisk, _ = wait("recovery score for a home patient", lambda: [
         r for r in api.call("GET", f"/api/patients/{chatty['patient_id']}/risk", clin)
         if r["model"] == "recovery_monitoring"], 180)
-    step("recovery monitoring model scored the home patient", True, f"{hrisk[0]['probability']:.2f} ({hrisk[0]['band']})")
+    step("Navya's recovery monitoring model scored a home patient", True,
+         f"{chatty['patient_id']}: {hrisk[0]['probability']:.2f} ({hrisk[0]['band']}), version {hrisk[0]['version']}")
+    recorded = next((p for p in home if p.get("data_origin") == "mimic_real"), None)
+    step("a home patient with a hospital record is available", recorded is not None)
+    rrisk, _ = wait("readmission and early-deterioration scores", lambda: (lambda rs: rs if {
+        "readmission_risk", "early_deterioration"} <= {r["model"] for r in rs} else None)(
+        api.call("GET", f"/api/patients/{recorded['patient_id']}/risk", clin)), 240)
+    step("Tiya's readmission and Harnoor's early-deterioration models scored a patient with a hospital record", True,
+         f"{recorded['patient_id']}: " + ", ".join(f"{r['model']} {r['probability']:.2f} ({r['band']})" for r in rrisk))
 
     print("3. Deterioration -> alert -> page -> agents")
     api.call("POST", "/api/demo/scenario", demo, {"patient_id": sick["patient_id"], "scenario": "sepsis",

@@ -12,7 +12,7 @@ The two training files must be in `Training Data/` in the repo root.
 
 ```bash
 aws login --profile rpm-capstone        # needed for the Claude agents and for real e-mail
-make setup && make models               # once
+make setup                              # once
 make up LLM=bedrock MAIL=ses            # Claude agents, alert e-mail to the care team's mailboxes
 make seed                               # loads 30 of the training patients
 make sim                                # starts their devices
@@ -91,7 +91,8 @@ Use `SYN-000118` (or any home patient already showing an alert).
 8. **Talk to the patient.** In **Messages with the patient** send a short message; in **Actions** click
    **Ask: short of breath?** The simulated patient's answer appears within about 20 seconds.
 9. **Risk models.** The card shows early deterioration, readmission risk and recovery monitoring for this patient,
-   each with a probability, a band and the factors behind it, labelled "placeholder, not validated".
+   each with a probability, a band and the factors behind it. Readmission risk and early deterioration only
+   appear for patients with a hospital record (the MIMIC ones), and are labelled "not validated".
 
 ## Part C: a patient in the ICU, then discharged
 

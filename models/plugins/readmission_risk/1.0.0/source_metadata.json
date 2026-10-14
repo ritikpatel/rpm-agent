@@ -1,0 +1,153 @@
+{
+  "model_name": "Remote Patient Monitoring \u2014 30-day Readmission Risk Model",
+  "version": "0.1.0-exploratory",
+  "target": "readmit_30d_flag",
+  "target_definition": "Observed 30-day readmission label in the source table.",
+  "prediction_design": "Dynamic risk prediction at 1, 3, 6, 12, and 24 hours after discharge; all snapshots for an admission stay in one split.",
+  "features": [
+    "hours_since_discharge",
+    "age",
+    "gender_male",
+    "prior_admission_count_365d",
+    "hospital_length_of_stay",
+    "icu_length_of_stay",
+    "comorbidity_count",
+    "high_risk_med_flag",
+    "discharge_medication_count",
+    "latest_heart_rate",
+    "latest_oxygen_saturation",
+    "latest_temperature",
+    "step_count",
+    "active_minutes",
+    "hours_since_last_wearable_reading",
+    "wearable_data_completness",
+    "wearable_adherence",
+    "heart_rate_change_from_discharge",
+    "spo2_change_from_discharge",
+    "activity_change_from_discharge"
+  ],
+  "feature_groups": {
+    "Time since discharge": [
+      "hours_since_discharge"
+    ],
+    "Demographics": [
+      "age",
+      "gender_male"
+    ],
+    "Prior history and hospital stay": [
+      "prior_admission_count_365d",
+      "hospital_length_of_stay",
+      "icu_length_of_stay",
+      "comorbidity_count",
+      "high_risk_med_flag",
+      "discharge_medication_count"
+    ],
+    "Current wearable vitals": [
+      "latest_heart_rate",
+      "latest_oxygen_saturation",
+      "latest_temperature"
+    ],
+    "Activity": [
+      "step_count",
+      "active_minutes"
+    ],
+    "Data quality": [
+      "hours_since_last_wearable_reading",
+      "wearable_data_completness",
+      "wearable_adherence"
+    ],
+    "Change from discharge": [
+      "heart_rate_change_from_discharge",
+      "spo2_change_from_discharge",
+      "activity_change_from_discharge"
+    ]
+  },
+  "excluded_leakage_fields": [
+    "readmit_30d_flag",
+    "readmit_90d_flag",
+    "is_censored_last_admission",
+    "deterioration_next_3h",
+    "deterioration_next_6h",
+    "deterioration_event_time",
+    "deterioration_event_type",
+    "onset_time",
+    "trajectory_type",
+    "episode_notes"
+  ],
+  "alert_threshold": 0.329,
+  "threshold_selection": "Training-only grouped out-of-fold predictions at the 24h snapshot; exploratory threshold only.",
+  "model_params": {
+    "objective": "binary",
+    "n_estimators": 100,
+    "learning_rate": 0.03,
+    "num_leaves": 7,
+    "min_child_samples": 15,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 2.0,
+    "random_state": 42,
+    "verbose": -1
+  },
+  "data": {
+    "raw_rows": 1315,
+    "raw_columns": 336,
+    "labeled_rows": 315,
+    "labeled_admissions": 63,
+    "positive_admissions": 10,
+    "negative_admissions": 53,
+    "synthetic_unlabeled_rows": 1000
+  },
+  "split": {
+    "test_fraction": 0.25,
+    "random_state": 42,
+    "group_column": "admission_id",
+    "train_admissions": 47,
+    "test_admissions": 16
+  },
+  "test_results_24h": {
+    "LightGBM (24h snapshot)": {
+      "rows": 16.0,
+      "positives": 3.0,
+      "positive_rate": 0.1875,
+      "AUROC": 0.9743589743589745,
+      "AUPRC": 0.9166666666666666,
+      "Brier": 0.10907803244529118,
+      "Threshold": 0.329,
+      "Sensitivity": 0.3333333333333333,
+      "Specificity": 1.0,
+      "Precision": 1.0
+    },
+    "Logistic regression (24h snapshot)": {
+      "rows": 16.0,
+      "positives": 3.0,
+      "positive_rate": 0.1875,
+      "AUROC": 0.8205128205128205,
+      "AUPRC": 0.6666666666666666,
+      "Brier": 0.2200170344383271,
+      "Threshold": null,
+      "Sensitivity": null,
+      "Specificity": null,
+      "Precision": null
+    },
+    "Training prevalence baseline (24h snapshot)": {
+      "rows": 16.0,
+      "positives": 3.0,
+      "positive_rate": 0.1875,
+      "AUROC": 0.5,
+      "AUPRC": 0.1875,
+      "Brier": 0.15383091896785875,
+      "Threshold": null,
+      "Sensitivity": null,
+      "Specificity": null,
+      "Precision": null
+    }
+  },
+  "missing_value_handling": "LightGBM handles numeric missing values natively; the logistic-regression comparator uses training-fit median imputation.",
+  "limitations": [
+    "Only 63 labeled admissions and 10 positive admissions are available.",
+    "The 1,000 synthetic rows do not have readmission labels and are not used for supervised training.",
+    "All post-discharge wearable features in the source may be simulated; provenance must be verified.",
+    "This is a research prototype, not a clinically validated model. Metrics on a tiny held-out set are highly unstable."
+  ]
+}

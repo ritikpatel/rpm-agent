@@ -1,0 +1,43 @@
+{
+  "name": "readmission_risk",
+  "version": "1.0.0",
+  "title": "Readmission risk",
+  "outcome": "Unplanned hospital readmission within 30 days of discharge",
+  "owner": "Tiya",
+  "triggers": [
+    "discharge",
+    "daily",
+    "vitals"
+  ],
+  "care_settings": [
+    "home"
+  ],
+  "min_interval_s": 3600,
+  "requires": [
+    "record"
+  ],
+  "bands": {
+    "medium": 0.15,
+    "high": 0.329
+  },
+  "validated": false,
+  "metrics": {
+    "auroc": 0.9744,
+    "auprc": 0.9167,
+    "brier": 0.1091,
+    "sensitivity_at_high": 0.3333,
+    "specificity_at_high": 1.0,
+    "n_test_admissions": 16,
+    "positives": 3,
+    "split": "held-out admissions at the 24-hour snapshot",
+    "labelled_admissions": 63,
+    "positive_admissions": 10,
+    "platform_parity": "the platform's inputs reproduce Tiya's own exactly: all 63 labelled admissions score identically at 24 hours"
+  },
+  "libraries": {
+    "lightgbm": "4.7.0"
+  },
+  "trained_on": "The 63 MIMIC-IV-demo admissions in the shared training data that carry a readmission label (47 for training)",
+  "limitations": "Ten readmissions in all, three in the test set: the evidence is too thin to page anyone, and Tiya's own notes call it exploratory. Runs only for patients with a hospital record (the MIMIC patients). Steps, active minutes and the activity change are carried forward from the last recorded snapshot because the platform receives no activity data. The high band is Tiya's exploratory alert threshold (0.329); the medium band (0.15) was set on the platform.",
+  "source": "Readmission Model/deployment (hand-over of 2026-10-14)"
+}

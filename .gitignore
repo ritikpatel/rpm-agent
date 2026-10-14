@@ -53,9 +53,8 @@ edge/**/build/
 # --- trained model packages (derived from the confidential dataset; publish to S3, not git)
 models/registry/
 
-# --- fitted model files (derived from the dataset; rebuilt by `make models`, published to S3 for AWS)
-models/plugins/**/model.joblib
-models/plugins/**/model.onnx
+# --- the team's models are committed as LightGBM text files (model.txt); pickled copies are not
+models/plugins/**/*.pkl
 
 # --- real care-team contacts and the team's training data stay out of git
 deploy/config/care-team.yaml
@@ -65,3 +64,8 @@ training_data/
 Training Data/
 deploy/compose/.run.env
 deploy/compose/.run.env.tmp
+
+# --- the teammates' model hand-overs (as delivered); only the serving files are copied into models/plugins/
+Early deterioration model/
+Readmission Model/
+Recovery Monitoring Score - Model Files/

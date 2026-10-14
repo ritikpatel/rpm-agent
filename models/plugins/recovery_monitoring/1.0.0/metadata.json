@@ -1,0 +1,45 @@
+{
+  "name": "recovery_monitoring",
+  "version": "1.0.0",
+  "title": "Recovery monitoring",
+  "outcome": "Poor recovery: a deterioration episode within 72 hours (modified NEWS2 of 7 or more, or a vital-sign danger rule, for 30 minutes or longer)",
+  "owner": "Navya",
+  "triggers": [
+    "vitals",
+    "daily"
+  ],
+  "care_settings": [
+    "home"
+  ],
+  "min_interval_s": 900,
+  "bands": {
+    "medium": 0.2,
+    "high": 0.348
+  },
+  "validated": true,
+  "metrics": {
+    "auroc": 0.9098,
+    "auprc": 0.835,
+    "brier": 0.1115,
+    "sensitivity_at_high": 0.7326,
+    "specificity_at_high": 0.8443,
+    "n_test_rows": 330,
+    "positives": 86,
+    "cv_auroc_mean": 0.874,
+    "cv_auroc_95": [
+      0.815,
+      0.937
+    ],
+    "split": "held-out test patients; 5-fold cross-validation by patient",
+    "rule_score_only_auroc": 0.8281,
+    "platform_parity": "the platform's inputs match Navya's training table to 6 decimal places; AUROC 0.989 through the platform's feature path on the training data (0.991 on her table)"
+  },
+  "libraries": {
+    "lightgbm": "4.7.0",
+    "numpy": "2.4.4",
+    "pandas": "3.0.2"
+  },
+  "trained_on": "263 patients of the shared training data (MIMIC-IV-demo discharge state and the synthetic 72-hour wearable streams), scored at 1, 3, 6, 12 and 24 hours after discharge",
+  "limitations": "The outcome is defined by the data generator's danger rules, not observed clinical events. Trained on the first 24 hours after discharge; the platform scores patients later than that, where the model treats them like a 24-hour patient. The high band is Navya's alert threshold (0.348); the medium band (0.2) was set on the platform.",
+  "source": "Recovery Monitoring Score - Model Files/recovery_score_model (hand-over of 2026-10-14)"
+}

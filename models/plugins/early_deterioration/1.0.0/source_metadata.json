@@ -1,0 +1,163 @@
+{
+ "training_metadata": {
+  "exported_at_utc": "2026-10-11T14:21:39.874322+00:00",
+  "source_file": "rpm_training_sample_test.csv",
+  "n_rows": 7200,
+  "n_subjects": 300,
+  "horizons": {
+   "deterioration_next_3h": {
+    "test_auroc": 0.9283266238711784,
+    "test_auprc": 0.2267574915806921,
+    "cv_full_features_auprc_mean": 0.1694059786238254,
+    "cv_pruned_features_auprc_mean": 0.23739116528678963,
+    "n_features_used": 40,
+    "thresholds": {
+     "red_threshold": 0.010730230649523631,
+     "yellow_threshold": 0.010739545935320286
+    },
+    "lightgbm_params": {
+     "objective": "binary",
+     "metric": "average_precision",
+     "verbosity": -1,
+     "seed": 42,
+     "scale_pos_weight": 91.37735849056604,
+     "num_leaves": 63,
+     "min_data_in_leaf": 10,
+     "feature_fraction": 0.6,
+     "bagging_fraction": 1.0,
+     "lambda_l1": 0.0,
+     "lambda_l2": 0.1,
+     "learning_rate": 0.01
+    }
+   },
+   "deterioration_next_6h": {
+    "test_auroc": 0.9193776324540013,
+    "test_auprc": 0.6252708243679529,
+    "cv_full_features_auprc_mean": 0.423898107156316,
+    "cv_pruned_features_auprc_mean": 0.4641617520641968,
+    "n_features_used": 40,
+    "thresholds": {
+     "red_threshold": 0.00895095324156477,
+     "yellow_threshold": 0.27206678922678806
+    },
+    "lightgbm_params": {
+     "objective": "binary",
+     "metric": "average_precision",
+     "verbosity": -1,
+     "seed": 42,
+     "scale_pos_weight": 45.18867924528302,
+     "num_leaves": 63,
+     "min_data_in_leaf": 30,
+     "feature_fraction": 1.0,
+     "bagging_fraction": 0.8,
+     "lambda_l1": 0.0,
+     "lambda_l2": 0.0,
+     "learning_rate": 0.01
+    }
+   }
+  }
+ },
+ "thresholds": {
+  "deterioration_next_3h": {
+   "red_threshold": 0.010730230649523631,
+   "yellow_threshold": 0.010739545935320286
+  },
+  "deterioration_next_6h": {
+   "red_threshold": 0.00895095324156477,
+   "yellow_threshold": 0.27206678922678806
+  }
+ },
+ "feature_manifest": {
+  "deterioration_next_3h": {
+   "feature_cols": [
+    "symptom_score_change_from_discharge",
+    "activity_change_from_discharge",
+    "sudden_score_drop_flag",
+    "score_change_1h",
+    "activity_std_24h",
+    "hours_since_discharge",
+    "PTT",
+    "heart_rate_variability_1h",
+    "sodium",
+    "spo2_drop_24h",
+    "latest_sleep_measurement",
+    "phosphate",
+    "hours_since_last_rr",
+    "hours_since_last_wearable_reading",
+    "creatinine",
+    "shock_index_max_1h",
+    "spo2_drop_12h",
+    "neutrophil_lymphocyte_ratio",
+    "latest_heart_rate",
+    "non_invasive_bp_systolic",
+    "bicarbonate",
+    "magnesium",
+    "heart_rate_variability_6h",
+    "pCO2",
+    "calcium",
+    "neutrophils",
+    "hours_since_last_spo2",
+    "min_spo2_3h",
+    "glucose",
+    "hemoglobin",
+    "max_sbp_12h",
+    "activity_std_12h",
+    "BMI",
+    "heart_rate_variability_3h",
+    "max_respiratory_rate_24h",
+    "heart_rate",
+    "bun_creatinine_ratio",
+    "pO2",
+    "activity_std_1h",
+    "activity_std_6h"
+   ],
+   "categorical_cols": []
+  },
+  "deterioration_next_6h": {
+   "feature_cols": [
+    "activity_change_from_discharge",
+    "abnormal_reading_count_24h",
+    "abnormal_count_spo2_24h",
+    "symptom_score_change_from_discharge",
+    "hours_since_discharge",
+    "max_respiratory_rate_12h",
+    "active_minutes",
+    "abnormal_count_temp_24h",
+    "PTT",
+    "sudden_score_drop_flag",
+    "respiratory_rate_change_from_discharge",
+    "pCO2",
+    "min_respiratory_rate_12h",
+    "heart_rate_change_from_discharge",
+    "anchor_age",
+    "max_spo2_3h",
+    "min_respiratory_rate_3h",
+    "hours_since_last_wearable_reading",
+    "step_count",
+    "heart_rate",
+    "bun_creatinine_ratio",
+    "non_invasive_bp_systolic",
+    "spo2_drop_6h",
+    "spo2_drop_12h",
+    "latest_pain_score",
+    "spo2_change_from_discharge",
+    "hours_since_last_rr",
+    "min_sbp_1h",
+    "eGFR",
+    "min_spo2_12h",
+    "score_change_1h",
+    "heart_rate_variability_1h",
+    "multi_vital_worsening_count_1h",
+    "heart_rate_variability_6h",
+    "bicarbonate",
+    "activity_std_6h",
+    "heart_rate_variability_12h",
+    "potassium",
+    "pO2",
+    "max_respiratory_rate_6h"
+   ],
+   "categorical_cols": []
+  }
+ },
+ "note": "Copied from Harnoor's hand-over (deployment/artifacts). The platform serves the 6-hour model (model_deterioration_next_6h.txt)."
+}

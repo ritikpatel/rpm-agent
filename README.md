@@ -37,7 +37,6 @@ The folder is git-ignored and must never be committed.
 
 ```bash
 make setup          # Python workspace
-make models         # fit the three placeholder models
 make up             # start the stack (add LLM=bedrock to use the Claude agents; see below)
 make seed           # 30 of the training patients: registry, FHIR record, guideline index
 make sim            # simulated ICU monitors and wearables
@@ -113,10 +112,14 @@ One image (`deploy/docker/python.Dockerfile`) holds every Python service; each c
 
 ## The team's models
 
-| Model | Owner | Status |
-|---|---|---|
-| Early deterioration | Harnoor | placeholder in place; drop the real plug-in into `models/plugins/` |
-| Readmission risk | Tiya | placeholder in place |
-| Recovery monitoring | Navya | placeholder in place |
+All three are LightGBM models served from `models/plugins/<name>/1.0.0/` (model file, feature builder, metadata,
+model card). Their hand-over folders are git-ignored; only what serving needs is committed.
 
-Placeholders are labelled "not validated" everywhere they appear, and an unvalidated model can never page anyone.
+| Model | Owner | Runs for | Evidence | On the platform |
+|---|---|---|---|---|
+| Recovery monitoring | Navya | patients at home | held-out AUROC 0.91; the platform rebuilds her inputs exactly | validated: a high score can raise an alert |
+| Readmission risk | Tiya | patients at home with a hospital record | held-out AUROC 0.97, but 3 readmissions in the test set; the platform rebuilds her inputs exactly | not validated: shown as weak evidence |
+| Early deterioration (6 h) | Harnoor | patients at home with a hospital record | his report: AUROC 0.92 on a file not in the hand-over; on the shared data 0.51, and 0.75 through the platform's features | not validated: shown as weak evidence |
+
+`make model-check` checks every plug-in against [models/CONTRACT.md](models/CONTRACT.md) and that the platform builds
+the same inputs each model was trained on. The model cards explain the limits.

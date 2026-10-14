@@ -396,7 +396,7 @@ class Processor:
 
 
 def risk_finding(score: dict) -> Finding:
-    """A risk model crossed into its high band. Unvalidated placeholder models inform but never page."""
+    """A risk model crossed into its high band. Unvalidated models inform but never page."""
     pct = round(float(score["probability"]) * 100)
     validated = bool(score.get("validated"))
     return Finding("RISK_HIGH", "high" if validated else "info", f"risk.{score['model']}",

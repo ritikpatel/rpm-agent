@@ -12,6 +12,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "joblib>=1.4",
     "onnxruntime>=1.19",
+    "lightgbm>=4.3,<5",   # the team's three models are LightGBM boosters (model.txt)
 ]
 
 [project.scripts]

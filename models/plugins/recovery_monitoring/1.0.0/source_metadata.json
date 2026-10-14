@@ -1,0 +1,153 @@
+{
+  "model_name": "Recovery Monitoring Score Model",
+  "version": "1.0.0",
+  "population": "Adults discharged home after an ICU stay; first 72h post-discharge",
+  "outputs": {
+    "recovery_score": "Rule-based 0-100 (recovery_model.recovery_score). 100 = normal & no worse than discharge.",
+    "poor_recovery_probability": "LightGBM probability of a deterioration episode within 72h"
+  },
+  "target_definition": "poor_recovery_72h = 1 if vitals stay in the danger zone (modified NEWS2 >= 7 or SpO2<90 & RR>24, HR>130 & SBP<90, Temp>38.3 & HR>120) for >= 30 min at any time from the scoring time to +72h",
+  "features": [
+    "hours_since_discharge",
+    "discharge_hr",
+    "discharge_rr",
+    "discharge_spo2",
+    "discharge_sbp",
+    "discharge_temp",
+    "latest_hr",
+    "latest_rr",
+    "latest_spo2",
+    "latest_sbp",
+    "latest_temp",
+    "hr_6h_mean",
+    "hr_6h_max",
+    "rr_6h_max",
+    "spo2_6h_min",
+    "sbp_6h_min",
+    "temp_6h_max",
+    "hr_change_from_discharge",
+    "rr_change_from_discharge",
+    "spo2_change_from_discharge",
+    "sbp_change_from_discharge",
+    "temp_change_from_discharge",
+    "recovery_score",
+    "score_change_from_discharge"
+  ],
+  "alert_threshold": 0.348,
+  "status_bands": {
+    "Good recovery": ">=75",
+    "Moderate recovery": "50-74",
+    "Poor recovery": "<50"
+  },
+  "score_rules": {
+    "ranges": {
+      "hr": [
+        51.0,
+        90.0,
+        40.0,
+        131.0
+      ],
+      "rr": [
+        12.0,
+        20.0,
+        8.0,
+        25.0
+      ],
+      "spo2": [
+        96.0,
+        100.0,
+        91.0,
+        100.0
+      ],
+      "sbp": [
+        111.0,
+        219.0,
+        90.0,
+        220.0
+      ],
+      "temp": [
+        36.1,
+        38.0,
+        35.0,
+        39.1
+      ]
+    },
+    "weights": {
+      "hr": 0.2,
+      "rr": 0.25,
+      "spo2": 0.25,
+      "sbp": 0.15,
+      "temp": 0.15
+    },
+    "worsening_step": {
+      "hr": 20.0,
+      "rr": 6.0,
+      "spo2": -4.0,
+      "sbp": -20.0,
+      "temp": 1.0
+    }
+  },
+  "lightgbm_params": {
+    "objective": "binary",
+    "n_estimators": 200,
+    "learning_rate": 0.05,
+    "num_leaves": 15,
+    "min_child_samples": 20,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "random_state": 42,
+    "verbose": -1
+  },
+  "training_data": {
+    "rows": 985,
+    "patients": 197,
+    "sources": "MIMIC-IV demo v2.2 (real discharge state) + synthetic wearable stream"
+  },
+  "test_results": {
+    "LightGBM model": {
+      "rows": 330.0,
+      "positives": 86.0,
+      "AUROC": 0.9098,
+      "AUPRC": 0.835,
+      "Brier": 0.1115,
+      "Sensitivity": 0.7326,
+      "Specificity": 0.8443,
+      "Precision": 0.6238
+    },
+    "Rule-based score only": {
+      "rows": 330.0,
+      "positives": 86.0,
+      "AUROC": 0.8281,
+      "AUPRC": 0.7903,
+      "Brier": 0.1268,
+      "Sensitivity": null,
+      "Specificity": null,
+      "Precision": null
+    }
+  },
+  "cv_summary": {
+    "LightGBM AUROC": {
+      "mean": 0.874,
+      "95% range low": 0.815,
+      "95% range high": 0.937
+    },
+    "Rule AUROC": {
+      "mean": 0.805,
+      "95% range low": 0.716,
+      "95% range high": 0.874
+    },
+    "LightGBM AUPRC": {
+      "mean": 0.829,
+      "95% range low": 0.765,
+      "95% range high": 0.896
+    },
+    "Rule AUPRC": {
+      "mean": 0.776,
+      "95% range low": 0.706,
+      "95% range high": 0.855
+    }
+  },
+  "readmission_check_auroc": 0.509
+}

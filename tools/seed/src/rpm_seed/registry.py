@@ -7,17 +7,19 @@ from datetime import UTC
 import psycopg
 from psycopg.types.json import Jsonb
 
-from rpm_core.cohort import CohortMember
+from rpm_core.cohort import CohortMember, model_inputs
 
 _UPSERT_PATIENT = """
 INSERT INTO patients (patient_id, subject_id, display_name, sex, age, primary_condition, primary_diagnosis,
                       data_origin, care_setting, discharge_at,
                       icu_admit_at, hypercapnic_resp_failure, on_supplemental_o2, thresholds, monitoring_active,
-                      los_days, prior_admissions_12m, drg_severity, discharge_disposition)
+                      los_days, prior_admissions_12m, drg_severity, discharge_disposition, record_facts,
+                      last_recorded, discharge_vitals)
 VALUES (%(patient_id)s, %(subject_id)s, %(display_name)s, %(sex)s, %(age)s, %(condition)s, %(diagnosis)s,
         %(origin)s, %(care_setting)s,
         %(discharge_at)s, %(icu_admit_at)s, %(hypercapnic)s, false, %(thresholds)s, true,
-        %(los_days)s, %(prior_admissions_12m)s, %(drg_severity)s, %(discharge_disposition)s)
+        %(los_days)s, %(prior_admissions_12m)s, %(drg_severity)s, %(discharge_disposition)s, %(record)s,
+        %(last_recorded)s, %(discharge_vitals)s)
 ON CONFLICT (patient_id) DO UPDATE SET
     display_name = EXCLUDED.display_name, sex = EXCLUDED.sex, age = EXCLUDED.age,
     primary_condition = EXCLUDED.primary_condition, primary_diagnosis = EXCLUDED.primary_diagnosis,
@@ -25,7 +27,9 @@ ON CONFLICT (patient_id) DO UPDATE SET
     discharge_at = EXCLUDED.discharge_at, icu_admit_at = EXCLUDED.icu_admit_at,
     hypercapnic_resp_failure = EXCLUDED.hypercapnic_resp_failure, monitoring_active = true,
     los_days = EXCLUDED.los_days, prior_admissions_12m = EXCLUDED.prior_admissions_12m,
-    drg_severity = EXCLUDED.drg_severity, discharge_disposition = EXCLUDED.discharge_disposition, updated_at = now()
+    drg_severity = EXCLUDED.drg_severity, discharge_disposition = EXCLUDED.discharge_disposition,
+    record_facts = EXCLUDED.record_facts, last_recorded = EXCLUDED.last_recorded,
+    discharge_vitals = EXCLUDED.discharge_vitals, updated_at = now()
 """
 
 
@@ -58,6 +62,7 @@ def seed(database_url: str, members: list[CohortMember]) -> dict[str, int]:
                 "hypercapnic": m.hypercapnic, "thresholds": Jsonb({}), "los_days": m.los_days,
                 "prior_admissions_12m": m.prior_admissions_12m, "drg_severity": m.drg_severity,
                 "discharge_disposition": m.discharge_disposition,
+                **{k: Jsonb(v) for k, v in model_inputs(m).items()},
             })
             assign_device(conn, m.device_id, m.patient_id, "icu_monitor" if m.care_setting == "icu" else "simulator")
             conn.execute("INSERT INTO patient_status (patient_id, device_id) VALUES (%s, %s) "

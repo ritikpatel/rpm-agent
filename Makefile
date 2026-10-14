@@ -14,7 +14,7 @@ SIM := uv run rpm-sim
 .DEFAULT_GOAL := help
 CLOUD := AWS_PROFILE=$(AWS_PROFILE) DATA="$(DATA)" infra/scripts/cloud.sh
 
-.PHONY: help setup test lint models model-check build up seed sim sim-stop scenario clear scenarios cohort \
+.PHONY: help setup test lint model-check build up seed sim sim-stop scenario clear scenarios cohort \
         discharge send stats logs ps down reset e2e mail-status cloud-up cloud-deploy cloud-seed cloud-status \
         cloud-logs cloud-fhir cloud-stop cloud-start cloud-down cloud-user cloud-device cloud-e2e sim-cloud \
         cloud-sim-pause cloud-sim-resume
@@ -32,11 +32,8 @@ test:            ## unit and contract tests
 lint:            ## ruff
 	uv run ruff check .
 
-models:          ## fit the placeholder models into models/plugins (the data team's models replace them)
-	uv run python models/train_placeholders.py --data-dir "$(DATA)"
-
-model-check:     ## check every model plug-in against models/CONTRACT.md
-	uv run pytest services/risk-service/tests/test_plugins.py -q
+model-check:     ## check every model plug-in against models/CONTRACT.md, and that serving matches training
+	uv run pytest services/risk-service/tests/test_plugins.py services/risk-service/tests/test_team_models.py -q
 
 # ------------------------------------------------------------------ local stack
 build: $(ENV_FILES) ## build the images

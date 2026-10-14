@@ -15,7 +15,7 @@ from .plugins import PluginRegistry
 log = logging.getLogger(__name__)
 
 VITAL_COLUMNS = ("ts, heart_rate, hrv_rmssd, spo2, resp_rate, sbp, dbp, temp, skin_temp, gcs, steps, activity, "
-                 "news2, news2_partial, context")
+                 "news2, news2_partial, context, source")
 
 
 class Scorer:
@@ -29,9 +29,13 @@ class Scorer:
             profile = cur.execute(
                 "SELECT patient_id, age, sex, primary_condition, care_setting, discharge_at, icu_admit_at, los_days, "
                 "prior_admissions_12m, drg_severity, discharge_disposition, hypercapnic_resp_failure, "
-                "on_supplemental_o2 FROM patients WHERE patient_id = %s", (patient_id,)).fetchone()
+                "on_supplemental_o2, record_facts, last_recorded, discharge_vitals FROM patients "
+                "WHERE patient_id = %s", (patient_id,)).fetchone()
             if not profile:
                 raise KeyError(patient_id)
+            record = profile.pop("record_facts") or {}
+            last_recorded = profile.pop("last_recorded") or {}
+            discharge_vitals = profile.pop("discharge_vitals") or {}
             vitals = cur.execute(
                 f"SELECT {VITAL_COLUMNS} FROM (SELECT {VITAL_COLUMNS} FROM vitals WHERE patient_id = %s "
                 "AND ts > now() - interval '24 hours' AND NOT late ORDER BY ts DESC LIMIT %s) v ORDER BY ts",
@@ -50,7 +54,8 @@ class Scorer:
             return None if since is None else round((now - since).total_seconds() / 3600, 2)
 
         return {"now": now, "patient_id": patient_id, "care_setting": profile["care_setting"], "profile": profile,
-                "vitals": vitals, "daily": daily, "labs": labs,
+                "vitals": vitals, "daily": daily, "labs": labs, "record": record, "last_recorded": last_recorded,
+                "discharge_vitals": discharge_vitals,
                 "hours_since_discharge": hours(profile["discharge_at"]) if profile["care_setting"] == "home" else None,
                 "hours_in_icu": hours(profile["icu_admit_at"]) if profile["care_setting"] == "icu" else None}
 
@@ -66,7 +71,7 @@ class Scorer:
         age = self._recent(patient_id) if trigger == "vitals" else {}
         results = []
         for name, plugin in self.registry.models.items():
-            if not plugin.applies(trigger, ctx["care_setting"]):
+            if not plugin.applies(trigger, ctx["care_setting"], ctx):
                 continue
             if age.get(name, float("inf")) < plugin.min_interval_s:
                 continue

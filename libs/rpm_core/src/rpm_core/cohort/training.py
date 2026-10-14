@@ -38,6 +38,30 @@ LAB_COLUMNS: dict[str, tuple[str, str, str]] = {
     "pH": ("pH", "", "2744-1"), "eGFR": ("eGFR", "mL/min/1.73m2", "33914-3"),
 }
 
+# What the team's models may read about a patient beyond the live readings, by name in the training data. An explicit
+# allow-list: anything not named here (above all the label columns) never leaves the training files.
+#
+# Facts from the hospital record: the same on every snapshot of a patient (the admission, the ICU stay, the labs and
+# vital signs charted before discharge).
+RECORD_FACTS = (
+    "age", "anchor_age", "prior_admission_count_90d", "prior_admission_count_365d", "hospital_length_of_stay",
+    "icu_length_of_stay", "comorbidity_count", "chronic_condition_count", "high_risk_med_flag",
+    "discharge_medication_count", "discharge_med_count", "BMI", "drg_severity", "drg_mortality",
+    "heart_rate", "respiratory_rate", "O2_saturation_pulseoxymetry", "non_invasive_bp_systolic",
+    "non_invasive_bp_diastolic", "temperature",
+    "creatinine", "BUN", "bun_creatinine_ratio", "glucose", "sodium", "potassium", "chloride", "bicarbonate",
+    "anion_gap", "calcium", "magnesium", "phosphate", "hemoglobin", "hematocrit", "WBC", "neutrophils",
+    "lymphocytes", "neutrophil_lymphocyte_ratio", "platelet_count", "PT", "PTT", "INR", "pH", "pCO2", "pO2",
+    "base_excess", "eGFR",
+)
+# Wearable values the platform does not stream (activity, steps, patient-reported scores) and the simulated watch's
+# wear pattern: the values at the patient's last recorded snapshot, carried forward.
+LAST_RECORDED = (
+    "step_count", "active_minutes", "latest_activity_level", "activity_change_from_discharge", "activity_std_1h",
+    "activity_std_3h", "activity_std_6h", "activity_std_12h", "activity_std_24h", "latest_pain_score",
+    "latest_symptom_score", "symptom_score_change_from_discharge", "wearable_adherence", "wearable_data_completness",
+)
+
 
 def num(value) -> float | None:
     if value is None or value == "":
@@ -116,6 +140,31 @@ class PatientRecord:
     @property
     def labs(self) -> dict[str, float]:
         return {c: v for c in LAB_COLUMNS if (v := self.value(c)) is not None}
+
+    @property
+    def record_facts(self) -> dict[str, float]:
+        """Admission-level facts from the hospital record (RECORD_FACTS), for MIMIC patients; synthetic patients
+        have no hospital record. Numbers only; `sex` is in the profile."""
+        return {c: v for c in RECORD_FACTS if (v := self.value(c)) is not None} if self.real else {}
+
+    @property
+    def last_recorded(self) -> dict[str, float]:
+        """LAST_RECORDED values at the last snapshot that has them (MIMIC patients)."""
+        out: dict[str, float] = {}
+        for s in self.snapshots:   # oldest first: later snapshots overwrite
+            out.update({c: v for c in LAST_RECORDED if (v := num(s.get(c))) is not None})
+        return out if self.real else {}
+
+    @property
+    def discharge_state(self) -> dict[str, float]:
+        """Vital signs at discharge, as the team's models were trained on them: for MIMIC patients those charted in
+        the ICU before discharge; for synthetic patients the first point of their wearable stream."""
+        if self.stream:
+            return {k: v for k, v in self.stream[0][1].items() if k in VITALS}
+        names = {"heart_rate": "heart_rate", "resp_rate": "respiratory_rate", "spo2": "O2_saturation_pulseoxymetry",
+                 "sbp": "non_invasive_bp_systolic", "temp": "temperature"}
+        out = {k: v for k, col in names.items() if (v := self.value(col)) is not None}
+        return out or {k: v for k, v in self.discharge_vitals.items() if k in VITALS}
 
     def trajectory_points(self) -> list[tuple[float, dict[str, float]]]:
         """Vital signs against hours since discharge. Synthetic patients: the 72-hour wearable stream. MIMIC

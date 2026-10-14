@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,26 +13,30 @@ from risk_service.plugins import ContractError, ModelPlugin, PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[3] / "models" / "plugins"
 NOW = datetime(2026, 10, 2, 10, 0, tzinfo=UTC)
-FITTED = sorted(p.parent for p in ROOT.glob("*/*/model.*") if p.suffix in (".joblib", ".onnx"))
+PLUGINS = sorted(p.parent for p in ROOT.glob("*/*/metadata.json"))
+RECORD = {"age": 71.0, "anchor_age": 71.0, "prior_admission_count_365d": 1.0, "hospital_length_of_stay": 6.5,
+          "icu_length_of_stay": 2.0, "comorbidity_count": 12.0, "high_risk_med_flag": 1.0,
+          "discharge_medication_count": 3.0, "heart_rate": 88.0, "non_invasive_bp_systolic": 118.0, "PTT": 30.0,
+          "pCO2": 40.0, "pO2": 90.0, "bicarbonate": 25.0, "potassium": 4.2, "eGFR": 80.0,
+          "bun_creatinine_ratio": 18.0}
+LAST = {"step_count": 900.0, "active_minutes": 3.0, "activity_change_from_discharge": -1.0, "activity_std_6h": 3.0,
+        "wearable_adherence": 0.8, "wearable_data_completness": 0.9}
+DISCHARGE = {"heart_rate": 84.0, "resp_rate": 18.0, "spo2": 96.0, "sbp": 124.0, "temp": 36.9}
 
-pytestmark = pytest.mark.skipif(not FITTED, reason="no fitted models (run `make models`)")
 
-
-def context(setting: str, rows: int = 120, deteriorating: bool = False) -> dict:
+def context(setting: str, rows: int = 120, deteriorating: bool = False, record: bool = True) -> dict:
     vitals = []
     for i in range(rows):
         k = i / max(1, rows - 1) if deteriorating else 0.0
         vitals.append({"ts": NOW - timedelta(minutes=rows - i), "heart_rate": 78 + 40 * k, "hrv_rmssd": 35.0,
-                       "spo2": 97 - 9 * k, "resp_rate": (16 + 10 * k) if setting == "icu" else None,
-                       "sbp": 122.0 if setting == "icu" else None, "dbp": 76.0 if setting == "icu" else None,
-                       "temp": 36.9 if setting == "icu" else None, "skin_temp": 33.0, "gcs": 15.0, "steps": 12.0,
-                       "activity": "resting", "news2": round(7 * k), "news2_partial": setting == "home",
-                       "context": setting})
-    daily = [{"day": NOW - timedelta(days=d), "windows": 2000, "hr_mean": 76.0, "hr_min": 58.0, "hr_max": 110.0,
-              "spo2_mean": 96.5, "spo2_min": 93.0, "rr_max": 20.0, "temp_max": 37.1, "hrv_mean": 34.0,
-              "steps": 3000.0, "news2_max": 2, "news2_mean": 0.6} for d in range(6, -1, -1)]
-    return {"now": NOW, "patient_id": "p-test", "care_setting": setting, "vitals": vitals,
-            "daily": daily if rows else [], "labs": [],
+                       "spo2": 97 - 9 * k, "resp_rate": (16 + 10 * k) if i % 10 == 0 else None,
+                       "sbp": (122.0 - 30 * k) if i % 15 == 0 else None, "dbp": None,
+                       "temp": (36.9 + 1.5 * k) if i % 10 == 0 else None, "skin_temp": 33.0, "gcs": None,
+                       "steps": None, "activity": "resting", "news2": round(7 * k), "news2_partial": True,
+                       "context": setting, "source": "simulator"})
+    return {"now": NOW, "patient_id": "p-test", "care_setting": setting, "vitals": vitals, "daily": [], "labs": [],
+            "record": dict(RECORD) if record else {}, "last_recorded": dict(LAST) if record else {},
+            "discharge_vitals": dict(DISCHARGE),
             "profile": {"patient_id": "p-test", "age": 71, "sex": "F", "primary_condition": "CHF",
                         "care_setting": setting, "discharge_at": NOW - timedelta(days=3), "icu_admit_at": None,
                         "los_days": 5.0, "prior_admissions_12m": 1, "drg_severity": 3,
@@ -41,34 +46,44 @@ def context(setting: str, rows: int = 120, deteriorating: bool = False) -> dict:
             "hours_in_icu": 30.0 if setting == "icu" else None}
 
 
-@pytest.mark.parametrize("path", FITTED, ids=lambda p: f"{p.parent.name}-{p.name}")
+@pytest.mark.parametrize("path", PLUGINS, ids=lambda p: f"{p.parent.name}-{p.name}")
 def test_plugin_follows_the_contract(path: Path) -> None:
     plugin = ModelPlugin(path)
     assert plugin.name == path.parent.name and plugin.version == path.name
     for setting in plugin.meta["care_settings"]:
         for ctx in (context(setting), context(setting, deteriorating=True), context(setting, rows=0)):
             features = plugin.build(ctx)
-            assert list(features) == plugin.features
+            assert list(features) == plugin.features and all(math.isfinite(v) for v in features.values())
             pred = plugin.predict(features)
             assert 0.0 <= pred.probability <= 1.0 and pred.band in ("low", "medium", "high")
     json.dumps(plugin.describe())
 
 
-def test_deterioration_scores_higher_when_vitals_worsen() -> None:
+def test_registry_serves_the_teams_three_models() -> None:
     registry = PluginRegistry(ROOT)
-    plugin = registry.models["early_deterioration"]
-    calm = plugin.predict(plugin.build(context("icu"))).probability
-    worse = plugin.predict(plugin.build(context("icu", deteriorating=True)))
-    assert worse.probability > calm and worse.top_factors
-
-
-def test_registry_serves_the_three_models_and_respects_triggers() -> None:
-    registry = PluginRegistry(ROOT)
-    assert {"early_deterioration", "readmission_risk", "recovery_monitoring"} <= set(registry.models)
     assert not registry.errors
-    readmit = registry.models["readmission_risk"]
-    assert readmit.applies("discharge", "home") and not readmit.applies("vitals", "home")
-    assert not readmit.applies("discharge", "icu") and readmit.applies("on_demand", "home")
+    assert {(m.name, m.meta["owner"]) for m in registry.models.values()} == {
+        ("early_deterioration", "Harnoor"), ("readmission_risk", "Tiya"), ("recovery_monitoring", "Navya")}
+    assert all(m.version == "1.0.0" and m._booster is not None for m in registry.models.values())
+
+
+def test_models_trained_on_patients_with_a_hospital_record_need_one() -> None:
+    registry = PluginRegistry(ROOT)
+    with_record, without = context("home"), context("home", record=False)
+    for name in ("readmission_risk", "early_deterioration"):
+        m = registry.models[name]
+        assert m.applies("on_demand", "home", with_record) and not m.applies("on_demand", "home", without)
+        assert not m.applies("on_demand", "icu", with_record)              # trained after discharge only
+    recovery = registry.models["recovery_monitoring"]
+    assert recovery.applies("vitals", "home", without) and not recovery.applies("discharge", "home", without)
+
+
+def test_recovery_scores_higher_when_vitals_worsen_and_explains_why() -> None:
+    plugin = PluginRegistry(ROOT).models["recovery_monitoring"]
+    calm = plugin.predict(plugin.build(context("home"))).probability
+    worse = plugin.predict(plugin.build(context("home", deteriorating=True)))
+    assert worse.probability > calm and worse.top_factors
+    assert {"feature", "value", "contribution"} <= set(worse.top_factors[0])
 
 
 def test_broken_plugin_is_rejected_with_a_clear_reason(tmp_path: Path) -> None:
@@ -78,3 +93,14 @@ def test_broken_plugin_is_rejected_with_a_clear_reason(tmp_path: Path) -> None:
     with pytest.raises(ContractError, match="lacks"):
         ModelPlugin(pkg)
     assert "bad" in PluginRegistry(tmp_path).errors
+
+
+def test_a_lightgbm_model_fitted_on_other_features_is_rejected(tmp_path: Path) -> None:
+    src = ROOT / "readmission_risk" / "1.0.0"
+    pkg = tmp_path / "readmission_risk" / "9.0.0"
+    pkg.mkdir(parents=True)
+    for f in ("metadata.json", "model.txt"):
+        (pkg / f).write_bytes((src / f).read_bytes())
+    (pkg / "features.py").write_text("FEATURES = ['age', 'hours_since_discharge']\ndef build(ctx):\n    return {}\n")
+    with pytest.raises(ContractError, match="different features"):
+        ModelPlugin(pkg)

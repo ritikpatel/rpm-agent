@@ -1,4 +1,6 @@
-"""Model plug-ins: <root>/<name>/<semver>/{model.joblib | model.onnx, features.py, metadata.json, model_card.md}.
+"""Model plug-ins: <root>/<name>/<semver>/{model.txt | model.joblib | model.onnx, features.py, metadata.json,
+model_card.md}. model.txt is a LightGBM booster in LightGBM's own text format (portable across versions, and unlike
+a pickle it cannot run code when loaded).
 
 A plug-in is everything a data scientist hands over for one model: the fitted model, the code that builds its
 features from the patient context, and its description. The newest version of each model is served. The contract is
@@ -69,8 +71,18 @@ class ModelPlugin:
         self.features: list[str] = list(module.FEATURES)
         self._build = module.build
         self.means: dict[str, float] = self.meta.get("feature_means") or {}
+        self.requires: list[str] = list(self.meta.get("requires") or [])
+        self._booster = None
 
-        if (path / "model.joblib").exists():
+        if (path / "model.txt").exists():
+            import lightgbm as lgb
+
+            self._model, self._onnx = None, None
+            self._booster = lgb.Booster(model_file=str(path / "model.txt"))
+            if self._booster.feature_name() != self.features:
+                raise ContractError(f"{self.name}: model.txt was fitted on different features than FEATURES "
+                                    f"(first difference near {self._first_diff(self._booster.feature_name())})")
+        elif (path / "model.joblib").exists():
             import joblib
 
             self._model, self._onnx = joblib.load(path / "model.joblib"), None
@@ -85,10 +97,20 @@ class ModelPlugin:
             outs = [o.name for o in self._onnx.get_outputs()]
             self._output = "probabilities" if "probabilities" in outs else outs[-1]
         else:
-            raise ContractError(f"{self.name}: model.joblib or model.onnx missing")
+            raise ContractError(f"{self.name}: model.txt, model.joblib or model.onnx missing")
+
+    def _first_diff(self, names: list[str]) -> str:
+        for a, b in zip(names, self.features, strict=False):
+            if a != b:
+                return f"{a!r} vs {b!r}"
+        return f"{len(names)} vs {len(self.features)} features"
 
     # ------------------------------------------------------------------ contract
-    def applies(self, trigger: str, care_setting: str) -> bool:
+    def applies(self, trigger: str, care_setting: str, ctx: dict | None = None) -> bool:
+        """`requires` lists parts of the context the model cannot do without (for example `record`: a model
+        trained only on patients with a hospital record is not run for patients who have none)."""
+        if ctx is not None and any(not ctx.get(k) for k in self.requires):
+            return False
         return care_setting in self.meta["care_settings"] and \
             (trigger == "on_demand" or trigger in self.meta["triggers"])
 
@@ -113,6 +135,10 @@ class ModelPlugin:
         return out
 
     def _proba(self, rows: np.ndarray) -> np.ndarray:
+        if self._booster is not None:
+            import pandas as pd
+
+            return np.asarray(self._booster.predict(pd.DataFrame(rows, columns=self.features)))
         if self._onnx is not None:
             return self._onnx.run([self._output], {self._input: rows.astype(np.float32)})[0][:, 1]
         import pandas as pd
@@ -125,6 +151,8 @@ class ModelPlugin:
 
     def predict(self, features: dict[str, float], top_k: int = 5) -> Prediction:
         x = np.array([[features[f] for f in self.features]], dtype=np.float64)
+        if self._booster is not None and not self.means:
+            return self._predict_lightgbm(x, features, top_k)
         refs = [f for f in self.features if f in self.means]
         # Occlusion attribution (works for any model): replace one feature at a time with its reference value.
         batch = np.repeat(x, len(refs) + 1, axis=0)
@@ -138,9 +166,22 @@ class ModelPlugin:
         return Prediction(round(p, 4), self.band(p), [c for c in contrib[:top_k] if c["contribution"] != 0],
                           features)
 
+    def _predict_lightgbm(self, x: np.ndarray, features: dict[str, float], top_k: int) -> Prediction:
+        """LightGBM explains its own predictions: each feature's contribution to this score (in log-odds; the
+        console shows the direction). Used when the plug-in gives no `feature_means` for occlusion."""
+        import pandas as pd
+
+        frame = pd.DataFrame(x, columns=self.features)
+        p = float(self._booster.predict(frame)[0])
+        contrib = self._booster.predict(frame, pred_contrib=True)[0][:-1]   # the last entry is the bias
+        order = np.argsort(-np.abs(contrib))
+        top = [{"feature": self.features[i], "value": round(float(x[0, i]), 3),
+                "contribution": round(float(contrib[i]), 4)} for i in order[:top_k] if abs(contrib[i]) >= 1e-4]
+        return Prediction(round(p, 4), self.band(p), top, features)
+
     def describe(self) -> dict:
         keys = ("name", "version", "title", "outcome", "owner", "triggers", "care_settings", "bands", "metrics",
-                "validated", "min_interval_s", "limitations", "trained_at", "libraries")
+                "validated", "min_interval_s", "limitations", "trained_at", "libraries", "requires")
         return {**{k: self.meta.get(k) for k in keys}, "validated": bool(self.meta.get("validated")),
                 "features": self.features}
 

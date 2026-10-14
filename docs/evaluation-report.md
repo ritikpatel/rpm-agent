@@ -17,24 +17,26 @@ data. The raw outputs are in [eval/](eval). Every number here can be regenerated
 | How many alerts does a team get? | 0.61 per patient per day at home, 0.75 in ICU | `eval/replay.json` |
 | Are the agents' citations real? | 96 of 96 citations checked resolve to a retrieved passage | `eval/agents.json` |
 | Do the guardrails hold? | 13 of 13 red-team cases held | `eval/guardrails.json` |
-| How accurate are the risk models? | Not established: the three models are placeholders | `eval/models.json` |
+| How accurate are the risk models? | Recovery monitoring: held-out AUROC 0.91. Readmission: 0.97 on 16 admissions (3 events). Early deterioration: chance level on the shared data | model cards, `services/risk-service/tests/test_team_models.py` |
 
 ## 1. Prediction accuracy
 
-The three models in `models/plugins/` are placeholders so the platform runs end to end. Their numbers say nothing
-about the models the team is training.
+The three models are the team's, handed over on 2026-10-14 and served unchanged from their LightGBM files. The first
+column is each owner's held-out result; the next two were measured on the platform from the shared training data.
 
-| Model | Owner of the real model | Placeholder | Cross-validated AUROC |
+| Model | Owner's held-out result | Platform rebuilds the inputs it was trained on | Scored through the platform's feature path |
 |---|---|---|---|
-| Early deterioration | Harnoor | Logistic model with hand-set weights | none (not fitted) |
-| Readmission risk | Tiya | Logistic regression on the 63 MIMIC patients, 10 readmitted | 0.70 |
-| Recovery monitoring | Navya | Logistic model with hand-set weights | none (not fitted) |
+| Recovery monitoring (Navya) | AUROC 0.91, AUPRC 0.84 (330 snapshots, 86 events); 5-fold CV AUROC 0.87 | Yes: matches her training table to 6 decimal places | AUROC 0.99 (training data, optimistic) |
+| Readmission risk (Tiya) | AUROC 0.97 on 16 admissions, 3 readmissions | Yes: all 63 labelled admissions score identically | AUROC above 0.9 (training data, optimistic) |
+| Early deterioration, 6 h (Harnoor) | AUROC 0.92, AUPRC 0.63, on a 300-patient file not in the hand-over | Partly: the platform has no activity, steps or patient-reported scores, so those are carried forward from the record | AUROC 0.51 on the shared data with its own columns; 0.75 on the MIMIC snapshots through the platform's features |
 
-An AUROC of 0.70 from 63 discharges with 10 readmissions is too little evidence to act on, so every placeholder is
-marked `validated: false` whatever it scores. An unvalidated model is labelled as weak evidence in the console and
-to the agents, and cannot page anyone.
+Recovery monitoring has held-out evidence on the data the platform runs on, so it is marked validated: a high score
+can raise an alert. Readmission risk has too few events (ten readmissions in all) and early deterioration does not
+hold up on the shared data, so both are marked `validated: false`: labelled as weak evidence in the console and to
+the agents, and they cannot page anyone. What would make early deterioration usable is retraining on the shared file
+with only the inputs the platform can supply (its `features.py` lists them).
 
-Two cautions for the real models:
+Two cautions:
 
 - The platform monitors the same patients the models were trained on. What the console shows for them is not a
   test of accuracy; report accuracy from a held-out split in the plug-in's `metrics`.

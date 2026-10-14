@@ -140,7 +140,7 @@ cmd_data() {
   need_login
   local bucket; bucket="$(out ArtifactsBucket)"
   [[ -f "$DATA_DIR/rpm_training_sample.csv" ]] || die "the training data is not in '$DATA_DIR'"
-  ls models/plugins/*/*/model.* >/dev/null 2>&1 || die "no fitted models: run 'make models' first"
+  ls models/plugins/*/*/model.* >/dev/null 2>&1 || die "no model files under models/plugins"
   say "Uploading the training data, model plug-ins and protocols to s3://$bucket (private, encrypted)"
   aws s3 sync "$DATA_DIR" "s3://$bucket/training/" --delete --exclude '*' --include '*.csv' --only-show-errors
   aws s3 sync models/plugins "s3://$bucket/models/plugins/" --delete --exclude '*__pycache__*' --only-show-errors

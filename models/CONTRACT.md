@@ -4,11 +4,17 @@ This is what Harnoor, Tiya and Navya hand over, and what the risk service expect
 
 ```
 models/plugins/<name>/<version>/
-  model.joblib      the fitted model (anything with predict_proba), or model.onnx
+  model.txt         a LightGBM booster in LightGBM's text format (preferred), or
+  model.joblib      a fitted model with predict_proba, or model.onnx
   features.py       FEATURES = [...]  and  build(ctx) -> {feature: number}
   metadata.json     what the model is, when it runs, its thresholds and metrics
   model_card.md     a short human description
 ```
+
+`model.txt` is what `booster.save_model("model.txt")` writes. It loads with any LightGBM 4.x and, unlike a pickle,
+cannot run code when it is loaded. Its feature names must equal `FEATURES`, in order, or the plug-in is rejected.
+For a LightGBM model the console and the agents get LightGBM's own explanation of each score (its feature
+contributions); for other formats, give `feature_means` in the metadata.
 
 Drop the folder in, run `make model-check`, and the risk service serves the newest version of each model. No
 platform code changes.
@@ -26,6 +32,8 @@ def build(ctx: dict) -> dict:           # one row of features for one patient, r
 Rules:
 
 - Return every name in `FEATURES`, as finite numbers. Impute missing values inside `build`; NaN is rejected.
+  This matters for LightGBM: a feature that was never missing in training turns a missing value into 0 at
+  prediction time, which reads as "no steps" or "no medicines", not "unknown".
 - Import only the Python standard library, numpy and pandas. Do not import platform code, and do not read files or
   call the network: `ctx` is the only input.
 - Use this same file to build the training table. That is what keeps training and serving identical.
@@ -41,6 +49,9 @@ Rules:
 | `daily` | One row per day for the last 7 days, oldest first: `day`, `windows`, `hr_mean`, `hr_min`, `hr_max`, `spo2_mean`, `spo2_min`, `rr_max`, `temp_max`, `hrv_mean`, `steps`, `news2_max`, `news2_mean`. |
 | `labs` | Lab results from the last 7 days, oldest first: `ts`, `code`, `name`, `value`, `unit`, `flag`. |
 | `hours_since_discharge` | For home patients, otherwise `None`. |
+| `record` | Facts from the hospital record, by their names in the training data: `age`, `anchor_age`, admissions in the last 90 and 365 days, hospital and ICU length of stay, comorbidity and chronic-condition counts, high-risk medicines, discharge medicine counts, `BMI`, DRG, the vital signs charted before discharge (`heart_rate`, `respiratory_rate`, `O2_saturation_pulseoxymetry`, `non_invasive_bp_systolic`, `non_invasive_bp_diastolic`, `temperature`) and the labs (`creatinine`, `BUN`, `bun_creatinine_ratio`, `PTT`, `pCO2`, `pO2`, `eGFR` and the rest). Empty for synthetic patients, who have no hospital record. The list is `RECORD_FACTS` in `libs/rpm_core/src/rpm_core/cohort/training.py`. |
+| `last_recorded` | Values the platform does not stream, at the patient's last recorded snapshot: `step_count`, `active_minutes`, `latest_activity_level`, `activity_change_from_discharge`, `activity_std_*`, `latest_pain_score`, `latest_symptom_score`, `symptom_score_change_from_discharge`, `wearable_adherence`, `wearable_data_completness`. Empty for synthetic patients. |
+| `discharge_vitals` | `heart_rate`, `resp_rate`, `spo2`, `sbp`, `temp` at discharge: charted in the ICU for MIMIC patients, the first point of the wearable stream for synthetic ones. |
 | `hours_in_icu` | For ICU patients, otherwise `None`. |
 
 `pd.DataFrame(ctx["vitals"])` gives a table if you prefer pandas. If your model needs something that is not here,
@@ -75,6 +86,8 @@ say so: adding a field to the context is a small change on the platform side.
   clinical event; only a validated model can page the care team.
 - `validated`: set `true` only with evidence in `metrics`. Unvalidated models are labelled as weak evidence in the
   console and to the agents.
+- `requires`: parts of the context the model cannot do without, for example `["record"]` for a model trained only
+  on patients with a hospital record. The model is not run for a patient who lacks them.
 - `feature_means`: reference values used to explain a score (each feature is swapped for its reference to see how
   much it moved the prediction). Leave a feature out and it is simply not explained.
 - `libraries`: the versions the model was fitted with. A pickled model only loads reliably with the same library
@@ -93,12 +106,13 @@ The label columns (`deterioration_next_*`, `trajectory_type`, `readmit_*`, `even
 
 | Model | Owner | Runs on | For |
 |---|---|---|---|
-| `early_deterioration` | Harnoor | new vitals, new labs | ICU and home patients |
-| `readmission_risk` | Tiya | discharge, daily | home patients |
+| `early_deterioration` | Harnoor | new vitals, new labs | home patients with a hospital record |
+| `readmission_risk` | Tiya | discharge, hourly on new vitals, daily | home patients with a hospital record |
 | `recovery_monitoring` | Navya | new vitals (every 15 minutes), daily | home patients |
 
-The folders under `models/plugins/` today are placeholders with these names. Replace one by adding a higher version
-folder next to it (for example `1.0.0`); the placeholder stops being served.
+The team handed these over on 2026-10-14; they are version `1.0.0` of each. Replace one by adding a higher version
+folder next to it (for example `1.1.0`); the older one stops being served. Each folder's `model_card.md` gives the
+evidence and the limits, and `source_metadata.json` keeps the owner's own metadata.
 
 ## Checking a plug-in
 
@@ -108,4 +122,6 @@ make model-check
 
 It loads every plug-in, builds features for sample ICU and home patients (including one with no data at all),
 checks that every feature is present and finite, and scores them. Fitted model files are not committed to git;
-`make models` rebuilds the placeholders, and deployment publishes the folder to S3.
+It also checks that the platform builds the same inputs each model was trained on, from the shared training data
+(`services/risk-service/tests/test_team_models.py`). Model files are committed; deployment publishes the folder
+to S3.

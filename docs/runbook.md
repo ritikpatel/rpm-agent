@@ -4,7 +4,7 @@
 
 | Task | Command |
 |---|---|
-| First-time set-up | `make setup && make models` |
+| First-time set-up | `make setup` |
 | Start | `make up` (offline agents, local inbox), `make up LLM=bedrock` (Claude on Amazon Bedrock), add `MAIL=ses` for real e-mail |
 | Load the cohort | `make seed` (30 of the patients in `Training Data/`; loads their recorded readings as history and restarts each patient where that data ends) |
 | Start / stop the simulated devices | `make sim` / `make sim-stop` |

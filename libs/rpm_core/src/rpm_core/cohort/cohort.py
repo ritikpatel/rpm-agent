@@ -81,6 +81,10 @@ class CohortMember:
     points: tuple = ()                # ((hours since discharge, {vital: value}), ...): the recorded readings
     last: dict[str, float] = field(default_factory=dict)       # the last recorded reading: new ones start here
     well: dict[str, float] = field(default_factory=dict)       # the patient's own settled values: recovery heads here
+    # what the team's models read besides live readings (see training.RECORD_FACTS and LAST_RECORDED)
+    record_facts: dict[str, float] = field(default_factory=dict)
+    last_recorded: dict[str, float] = field(default_factory=dict)
+    discharge_state: dict[str, float] = field(default_factory=dict)   # vital signs at discharge
     live_from_h: float = 0.0          # hours after discharge at which live monitoring takes over from the record
     los_days: float = 0.0
     prior_admissions_12m: int = 0
@@ -142,7 +146,8 @@ def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str, replay:
         age=p.age, condition=condition, diagnosis=p.text("primary_diagnosis"), origin=p.origin, care_setting=setting,
         device_id=sim_device_id(p.patient_id, setting), discharge_at=discharge_at, icu_admit_at=icu_admit_at,
         hypercapnic=condition == "COPD", baseline=baseline, points=points, last=last, well=_well(p, points, last),
-        live_from_h=offset_h, los_days=los,
+        live_from_h=offset_h, record_facts=p.record_facts, last_recorded=p.last_recorded,
+        discharge_state=p.discharge_state, los_days=los,
         prior_admissions_12m=int(p.value("prior_admission_count_365d") or 0),
         drg_severity=int(v) if (v := p.value("drg_severity")) is not None else None,
         discharge_disposition=None if setting == "icu" else p.text("discharge_location"), record=p)
@@ -198,3 +203,10 @@ def profile_for_models(m: CohortMember) -> Mapping:
             "drg_severity": m.drg_severity, "discharge_disposition": m.discharge_disposition,
             "discharge_at": m.discharge_at, "icu_admit_at": m.icu_admit_at,
             "hypercapnic_resp_failure": m.hypercapnic, "on_supplemental_o2": False}
+
+
+def model_inputs(m: CohortMember) -> dict:
+    """The parts of a model's context that come from the patient's record rather than the live readings, as the
+    risk service builds them from the registry: `record`, `last_recorded` and `discharge_vitals`."""
+    return {"record": dict(m.record_facts), "last_recorded": dict(m.last_recorded),
+            "discharge_vitals": dict(m.discharge_state)}

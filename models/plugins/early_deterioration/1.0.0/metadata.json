@@ -1,0 +1,42 @@
+{
+  "name": "early_deterioration",
+  "version": "1.0.0",
+  "title": "Early deterioration",
+  "outcome": "Deterioration (a vital-sign danger rule sustained for 30 minutes) within the next 6 hours",
+  "owner": "Harnoor",
+  "triggers": [
+    "vitals",
+    "lab"
+  ],
+  "care_settings": [
+    "home"
+  ],
+  "min_interval_s": 300,
+  "requires": [
+    "record"
+  ],
+  "bands": {
+    "medium": 0.00895,
+    "high": 0.272
+  },
+  "validated": false,
+  "metrics": {
+    "reported_auroc": 0.9194,
+    "reported_auprc": 0.6253,
+    "reported_on": "Harnoor's own test split of a 300-patient, 7,200-row file that is not in the hand-over",
+    "auroc_on_shared_training_data": 0.514,
+    "auprc_on_shared_training_data": 0.137,
+    "auroc_on_shared_training_data_mimic_rows": 0.644,
+    "note": "Checked on the platform. Scored with the model's own columns on the shared training data it ranks patients no better than chance (AUROC 0.51; 0.64 on the MIMIC rows). Through the platform's feature builder, which fills the gaps it never saw in training, AUROC is 0.75 on the MIMIC snapshots (23 events in 315): weak, and two thirds of snapshots fall in the medium band.",
+    "auroc_through_platform_features_mimic_snapshots": 0.748,
+    "auprc_through_platform_features_mimic_snapshots": 0.212,
+    "events_mimic_snapshots": 23,
+    "rows_mimic_snapshots": 315
+  },
+  "libraries": {
+    "lightgbm": "4.7.0"
+  },
+  "trained_on": "A 300-patient, 7,200-row version of the training data (rpm_training_sample_test.csv), not the shared file",
+  "limitations": "On the shared training data the model performs at chance level, so it is not validated and cannot page anyone or start agent work. It never saw a missing value in training, while the platform cannot supply activity, steps or patient-reported scores live: those are carried forward from the last recorded snapshot and other gaps are filled with training medians. Trained on post-discharge snapshots, so it runs for patients at home with a hospital record only; ICU patients rely on the NEWS2 rules. Harnoor's 'red' threshold (90% recall, 0.009) is lower than his 'yellow' one (70% recall, 0.272); the platform uses them as the medium and high bands.",
+  "source": "Early deterioration model/deployment/artifacts (hand-over of 2026-10-14); the 3-hour model is not served"
+}
