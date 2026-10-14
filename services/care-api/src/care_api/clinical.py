@@ -14,6 +14,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
+from rpm_core.cohort import sim_device_id
 from rpm_core.contracts import AgentTask
 from rpm_core.live import publish
 
@@ -254,21 +255,23 @@ class DeviceAssignIn(BaseModel):
 
 @router.post("/patients/{patient_id}/device")
 def assign_device(patient_id: str, body: DeviceAssignIn, request: Request, user: Actor) -> dict:
-    """Give a home patient a real watch: it replaces whatever wearable was assigned before."""
+    """Give a home patient a real watch: it replaces whatever wearable was assigned before. Assigning the simulator's
+    own device id (sim-<patient>) hands the patient back to the simulator."""
     rows = _rows("SELECT care_setting FROM patients WHERE patient_id=%s", (patient_id,))
     if not rows:
         raise HTTPException(404, "patient not found")
     if rows[0]["care_setting"] != "home":
         raise HTTPException(409, "watches are assigned to home patients")
+    kind = "simulator" if body.device_id == sim_device_id(patient_id, "home") else "watch"
     with STATE["pool"].connection() as conn, conn.transaction():
         conn.execute("UPDATE device_assignments SET active_to = now() WHERE active_to IS NULL "
                      "AND (device_id = %s OR (patient_id = %s AND device_kind IN ('watch', 'simulator')))",
                      (body.device_id, patient_id))
-        conn.execute("INSERT INTO device_assignments (device_id, patient_id, device_kind) VALUES (%s, %s, 'watch')",
-                     (body.device_id, patient_id))
+        conn.execute("INSERT INTO device_assignments (device_id, patient_id, device_kind) VALUES (%s, %s, %s)",
+                     (body.device_id, patient_id, kind))
         conn.execute("UPDATE patient_status SET device_id = %s, latest = '{}'::jsonb, last_seen = NULL "
                      "WHERE patient_id = %s", (body.device_id, patient_id))
-    audit(request, user, "update", "Device", body.device_id, patient_id, {"op": "assign"})
+    audit(request, user, "update", "Device", body.device_id, patient_id, {"op": "assign", "kind": kind})
     return {"device_id": body.device_id, "patient_id": patient_id}
 
 

@@ -10,6 +10,7 @@
 #   user <username> <email> "<groups>"      create a console account (groups: physician nurse admin presenter)
 #   device <id> [--sim]                     create a device certificate in .secrets/devices/<id>/
 #   sim <rpm-sim arguments>                 run the simulator CLI on this machine against AWS IoT Core
+#   assign <patient> <device>               give a home patient a real or emulated watch (as the console does)
 #   e2e       the end-to-end check against the deployment
 #   down      delete everything (needs CONFIRM=rpm)
 #
@@ -350,23 +351,41 @@ cmd_sim() {
   RPM_MQTT_TLS_KEY="$SECRETS/devices/sim-mac/key.pem" RPM_DATA_DIR="$DATA_DIR" uv run rpm-sim "$@"
 }
 
-cmd_e2e() {  # signs in as a throw-away account that exists only for the length of the run
-  need_login
-  local pool client user=e2e.runner pw token
+temp_token() {  # a throw-away account that exists only for the length of the command; sets TOKEN
+  local user="$1" pool client pw
   pool="$(out UserPoolId)"; client="$(out ClientId)"
   pw="$(openssl rand -hex 16)Aa1"
   aws cognito-idp admin-delete-user --user-pool-id "$pool" --username "$user" 2>/dev/null || true
   trap "aws cognito-idp admin-delete-user --user-pool-id '$pool' --username '$user' 2>/dev/null; rm -rf '$WORK'" EXIT
   aws cognito-idp admin-create-user --user-pool-id "$pool" --username "$user" --message-action SUPPRESS \
-    --user-attributes Name=email,Value=e2e@rpm.invalid Name=email_verified,Value=true >/dev/null
+    --user-attributes "Name=email,Value=$user@rpm.invalid" Name=email_verified,Value=true >/dev/null
   aws cognito-idp admin-set-user-password --user-pool-id "$pool" --username "$user" --password "$pw" --permanent
   for g in physician presenter admin; do
     aws cognito-idp admin-add-user-to-group --user-pool-id "$pool" --username "$user" --group-name "$g"
   done
-  token="$(aws cognito-idp admin-initiate-auth --user-pool-id "$pool" --client-id "$client" \
+  TOKEN="$(aws cognito-idp admin-initiate-auth --user-pool-id "$pool" --client-id "$client" \
            --auth-flow ADMIN_USER_PASSWORD_AUTH --auth-parameters "USERNAME=$user,PASSWORD=$pw" \
            --query AuthenticationResult.AccessToken --output text)"
-  python3 scripts/e2e.py --api "$(out ConsoleUrl)" --fhir "" --mailpit "" --token "$token" "$@"
+}
+
+cmd_e2e() {
+  need_login
+  temp_token e2e.runner
+  python3 scripts/e2e.py --api "$(out ConsoleUrl)" --fhir "" --mailpit "" --token "$TOKEN" "$@"
+}
+
+cmd_assign() {  # what the console's "Assign watch" does, from the command line (audited as device.setup)
+  need_login
+  local patient="${1:?patient id, for example SYN-000063}" device="${2:?device id, for example wear-emu-01}"
+  temp_token device.setup
+  curl -sf -X POST "$(out ConsoleUrl)/api/patients/$patient/device" -H "authorization: Bearer $TOKEN" \
+    -H 'content-type: application/json' -d "{\"device_id\": \"$device\"}" || die "assignment refused"
+  echo
+  if [[ "$device" == sim-* ]]; then
+    echo "$patient is back on the simulator (its readings resume within 15 seconds)"
+  else
+    echo "$device now reports for $patient (the simulator stops for that patient within 15 seconds)"
+  fi
 }
 
 # ---------------------------------------------------------------------------------------------- down
@@ -428,6 +447,7 @@ case "$cmd" in
   device) cmd_device "$@" ;;
   sim) cmd_sim "$@" ;;
   e2e) cmd_e2e "$@" ;;
+  assign) cmd_assign "$@" ;;
   down) cmd_down ;;
   *) sed -n '2,16p' "$0"; exit 2 ;;
 esac

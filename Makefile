@@ -16,7 +16,7 @@ CLOUD := AWS_PROFILE=$(AWS_PROFILE) DATA="$(DATA)" infra/scripts/cloud.sh
 
 .PHONY: help setup test lint model-check build up seed sim sim-stop scenario clear scenarios cohort \
         discharge send stats logs ps down reset e2e mail-status cloud-up cloud-deploy cloud-seed cloud-status \
-        cloud-logs cloud-fhir cloud-stop cloud-start cloud-down cloud-user cloud-device cloud-e2e sim-cloud \
+        cloud-logs cloud-fhir cloud-stop cloud-start cloud-down cloud-user cloud-device cloud-assign cloud-e2e sim-cloud \
         cloud-sim-pause cloud-sim-resume
 
 help:            ## list targets
@@ -144,6 +144,9 @@ cloud-user:      ## create a console account: make cloud-user U=ritik.patel E=yo
 
 cloud-device:    ## create a real device's certificate in AWS IoT Core: make cloud-device D=gw-demo-01
 	$(CLOUD) device $(D)
+
+cloud-assign:    ## give a home patient a watch (as the console's Assign watch): make cloud-assign P=SYN-000063 D=wear-emu-01
+	$(CLOUD) assign $(P) $(D)
 
 sim-cloud:       ## the simulator CLI from this machine against AWS: make sim-cloud ARGS="send --target SYN-000160 --event SOS"
 	@$(CLOUD) sim $(ARGS)

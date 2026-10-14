@@ -56,6 +56,9 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
   const [labs, setLabs] = useState<LabRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
+  // an on-demand review in progress: the runs that existed when it was asked for, and when (the agent service
+  // records a run only once it has finished, so the first run not in `known` is this review's result)
+  const [review, setReview] = useState<{ known: Set<string>; since: number } | null>(null);
   const [text, setText] = useState("");
   const [watch, setWatch] = useState("");
   const [lab, setLab] = useState({ name: "Lactate", value: "4.2", unit: "mmol/L", flag: "H" });
@@ -104,6 +107,37 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
     }
   }, [live]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => { setReview(null); }, [id]);
+  useEffect(() => {  // the review's run has arrived
+    if (!review) return;
+    const fresh = runs.find((r) => !review.known.has(r.run_id));
+    if (!fresh) return;
+    setReview(null);
+    setMsg(fresh.status === "failed" ? `The review failed: ${fresh.error ?? "see the agent service log"}` : null);
+  }, [runs, review]);
+  useEffect(() => {  // the live feed normally announces the run; poll as well in case a message was missed
+    if (!review) return;
+    const t = window.setInterval(() => {
+      if (Date.now() - review.since > 180_000) {
+        setReview(null);
+        setMsg("The review is taking longer than usual; the summary will appear here when it is ready");
+      } else void loadSide();
+    }, 8000);
+    return () => window.clearInterval(t);
+  }, [review, loadSide]);
+
+  const askReview = async () => {
+    setMsg(null);
+    setReview({ known: new Set(runs.map((r) => r.run_id)), since: Date.now() });
+    try {
+      const r = await api.agentReview(id);
+      if (!r.queued) {
+        setReview(null);
+        setMsg("The review was not started: the agents may have reached their daily limit. Try again later.");
+      }
+    } catch (e) { setReview(null); setMsg(`Failed: ${(e as Error).message}`); }
+  };
+
   const act = async (fn: () => Promise<unknown>, done: string) => {
     setMsg(null);
     try { await fn(); setMsg(done); await loadAlert(); await loadSide(); }
@@ -147,9 +181,16 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
             {!alert && <div className="body">
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <span className="muted">No active alert for this patient.</span>
-                {canAct && <button className="btn" onClick={() => act(() => api.agentReview(id),
-                  "Agent review requested; the summary appears here when it is ready")}>Ask the agents for a review</button>}
+                {canAct && <button className="btn" onClick={() => void askReview()} disabled={!!review}
+                  aria-busy={!!review}>{review ? <><span className="spinner" aria-hidden="true" />Reviewing…</>
+                  : "Ask the agents for a review"}</button>}
               </div>
+              {review && <div className="working" role="status">
+                <span className="spinner" aria-hidden="true" />
+                <span>The agents are reviewing this patient's vitals, risk scores, labs and record and writing a
+                  summary. This usually takes under a minute
+                  ({Math.max(0, Math.round((now - review.since) / 1000))} s so far).</span>
+              </div>}
               {msg && <div className="muted small" style={{ marginTop: 6 }}>{msg}</div>}
               {lastRun?.brief && <>
                 <h3 style={{ marginTop: 14 }}>Latest agent summary <span className="muted small">
@@ -178,7 +219,8 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
               </div>}
 
               <h3 style={{ marginTop: 16 }}>Agent summary (SBAR)</h3>
-              {!brief && <div className="muted">The agents are working on it…</div>}
+              {!brief && <div className="working" role="status"><span className="spinner" aria-hidden="true" />
+                <span>The agents are working on it…</span></div>}
               {brief && <>
                 <BriefView brief={brief} cite={cite} />
                 {evidence && <Evidence chunk={evidence} onClose={() => setEvidence(null)} />}
