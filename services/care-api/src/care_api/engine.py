@@ -57,8 +57,10 @@ TRIGGER_RANK = {"alert": 3, "reply": 2, "discharge": 2, "monitor": 1}
 
 class AgentThrottle:
     """Bounds what the agents cost. Per patient: one run per window unless severity rose, with a longer window for
-    runs that no alert started (a rising score, a risk band). Overall: an optional ceiling on automatic runs in any
-    24 hours. A clinician's on-demand review and a patient's reply always pass, and nothing here delays a page."""
+    runs that no alert started (a rising score, a risk band). A newly opened alert always gets its run: the window only
+    stops repeat runs, and a new alert minutes after the last one closed is not a repeat. Overall: an optional ceiling
+    on automatic runs in any 24 hours. A clinician's on-demand review and a patient's reply always pass, and nothing
+    here delays a page."""
 
     AUTOMATIC = ("alert", "monitor", "discharge")
 
@@ -76,7 +78,7 @@ class AgentThrottle:
             self._count = (now, int(self.runs_last_24h()))
         return self._count[1]
 
-    def admit(self, trigger: str, patient_id: str, rank: int = 0) -> str:
+    def admit(self, trigger: str, patient_id: str, rank: int = 0, new_alert: bool = False) -> str:
         """"queued", "debounced" or "capped"."""
         if trigger not in self.AUTOMATIC:
             return "queued"
@@ -85,7 +87,7 @@ class AgentThrottle:
             if trigger != "discharge":
                 prev = self._last.get(patient_id)
                 window = self.monitor_interval_s if trigger == "monitor" else self.debounce_s
-                if prev and now - prev[1] < window and rank <= prev[0]:
+                if prev and now - prev[1] < window and rank <= prev[0] and not new_alert:
                     return "debounced"
             if self.daily_limit and self._runs(now) >= self.daily_limit:
                 return "capped"
@@ -135,6 +137,7 @@ class AlertEngine:
         patient gets at most one agent task per trigger, on the most severe event."""
         opened = attached = 0
         tasks: dict[tuple[str, str], AgentTask] = {}
+        new_alerts: set[str] = set()
         for ev in events:
             trigger, alert_id = TRIGGER_FOR.get(ev.type), None
             if ev.requires_alert:
@@ -151,6 +154,8 @@ class AlertEngine:
                     RAISED.inc()
                 self.changed(res.alert_id)
                 alert_id = str(res.alert_id)
+                if res.created:
+                    new_alerts.add(alert_id)
                 trigger = "alert" if res.created or res.severity_raised else None
             elif ev.type == "CHECKIN_REPLY":
                 self._record_reply(ev)
@@ -171,7 +176,7 @@ class AlertEngine:
         for (patient_id, trigger), task in tasks.items():
             if trigger == "monitor" and (patient_id, "alert") in tasks:
                 continue  # the alert run covers it
-            queued += self.enqueue(task)
+            queued += self.enqueue(task, new_alert=task.alert_id in new_alerts)
         return {"opened": opened, "attached": attached, "agent_tasks": queued}
 
     def _record_reply(self, ev: ClinicalEvent) -> None:
@@ -188,11 +193,15 @@ class AlertEngine:
             return conn.execute("SELECT count(*) FROM agent_runs WHERE started_at > now() - interval '24 hours' "
                                 "AND trigger = ANY(%s)", (list(AgentThrottle.AUTOMATIC),)).fetchone()[0]
 
-    def enqueue(self, task: AgentTask) -> int:
+    def enqueue(self, task: AgentTask, new_alert: bool = False) -> int:
         """Queue agent work. Failures are logged, never raised: alerts must not depend on the agents."""
         rank = SEVERITY_RANK.get(clamp_severity((task.event or {}).get("severity", "medium")), 0) \
             if task.trigger == "alert" else 0
-        outcome = self.throttle.admit(task.trigger, task.patient_id, rank)
+        outcome = self.throttle.admit(task.trigger, task.patient_id, rank, new_alert)
+        if outcome != "queued" and new_alert:
+            self._not_summarised(task.alert_id, f"the daily limit of {self.cfg.agent_daily_limit} automatic agent runs "
+                                                "is reached" if outcome == "capped" else "the agents reviewed this "
+                                                "patient moments ago")
         if outcome != "queued":
             AGENT_TASKS.labels(task.trigger, outcome).inc()
             if outcome == "capped" and time.monotonic() - self._capped_logged > 600:
@@ -209,7 +218,22 @@ class AlertEngine:
         except Exception as exc:  # noqa: BLE001
             AGENT_TASKS.labels(task.trigger, "failed").inc()
             log.warning("agent task not queued", extra={"patient_id": task.patient_id, "error": str(exc)[:200]})
+            if new_alert:
+                self._not_summarised(task.alert_id, "the agent queue could not be reached")
             return 0
+
+    def _not_summarised(self, alert_id: str | None, why: str) -> None:
+        """A new alert whose agent run was not started: say so on the alert, instead of a summary that never comes."""
+        if not alert_id:
+            return
+        try:
+            self.store.attach_brief(alert_id, None, "skipped", None, "care-api")
+            self.store.add_timeline(alert_id, "agent_brief", "system",
+                                    f"No agent summary was started: {why}. Ask the agents for a review.")
+            self.changed(alert_id)
+        except Exception as exc:  # noqa: BLE001 - the alert itself is already open and paging
+            log.warning("could not mark the alert as not summarised", extra={"alert_id": alert_id,
+                                                                            "error": str(exc)[:200]})
 
     # ------------------------------------------------------------------ timers + outbox
     def _send(self, alert_row: dict, tier: int) -> list[dict]:

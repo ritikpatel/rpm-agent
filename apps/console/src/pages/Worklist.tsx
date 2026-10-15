@@ -121,7 +121,7 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
                   {a.status === "escalated" ? " · escalated" : ""}</div>
                 <div className="brief">{a.brief_headline
                   ? <>Brief: {a.brief_headline} {a.brief_status === "offline" && <span className="tag">offline rules</span>}</>
-                  : <span className="muted">Agent brief pending…</span>}</div>
+                  : <span className="muted">{a.brief_status === "skipped" ? "No agent summary (see the alert)" : "Agent brief pending…"}</span>}</div>
               </div>
             ))}
           </div>

@@ -257,8 +257,19 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
               </div>}
 
               <h3 style={{ marginTop: 16 }}>Agent summary (SBAR)</h3>
-              {!brief && <div className="working" role="status"><span className="spinner" aria-hidden="true" />
-                <span>The agents are working on it…</span></div>}
+              {!brief && (review
+                ? <div className="working" role="status"><span className="spinner" aria-hidden="true" />
+                    <span>The agents are reviewing this patient and writing a summary for this alert
+                      ({Math.max(0, Math.round((now - review.since) / 1000))} s so far).</span></div>
+                : <>
+                  {alert.brief_status === "skipped"
+                    ? <div className="muted">No agent summary was started for this alert (the timeline says why).</div>
+                    : <div className="working" role="status"><span className="spinner" aria-hidden="true" />
+                        <span>The agents are working on it…</span></div>}
+                  {canAct && <div className="row" style={{ marginTop: 8 }}>
+                    <button className="btn" onClick={() => void askReview()}>Ask the agents for a review</button>
+                    <span className="muted small">writes a summary for this alert</span></div>}
+                </>)}
               {brief && <>
                 <BriefView brief={brief} cite={cite} />
                 {evidence && <Evidence chunk={evidence} onClose={() => setEvidence(null)} />}

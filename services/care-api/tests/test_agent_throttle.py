@@ -45,3 +45,13 @@ def test_daily_ceiling_stops_automatic_runs_but_not_people():
 def test_no_ceiling_by_default():
     t, _ = make(daily_limit=0, recorded=10_000)
     assert t.admit("alert", "p", rank=1) == "queued"
+
+
+def test_a_new_alert_always_gets_its_run_within_the_window_but_not_past_the_daily_ceiling():
+    t, clock = make()
+    assert t.admit("alert", "p1", rank=3) == "queued"
+    clock.t += 240                                            # that alert was resolved; a milder one opens
+    assert t.admit("alert", "p1", rank=2) == "debounced"      # the same alert again: a repeat
+    assert t.admit("alert", "p1", rank=2, new_alert=True) == "queued"
+    capped, _ = make(daily_limit=1, recorded=1)
+    assert capped.admit("alert", "p1", rank=2, new_alert=True) == "capped"
