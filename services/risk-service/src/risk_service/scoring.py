@@ -84,6 +84,8 @@ class Scorer:
             res = {"model": name, "version": plugin.version, "title": plugin.meta["title"],
                    "outcome": plugin.meta["outcome"], "probability": pred.probability, "band": pred.band,
                    "top_factors": pred.top_factors, "validated": bool(plugin.meta.get("validated")),
+                   "confirms_alerts": bool(plugin.meta.get("confirms_alerts")),
+                   "alert_threshold": plugin.meta["bands"]["high"],
                    "output": output, "trigger": trigger, "computed_at": utcnow().isoformat()}
             if persist:
                 with self.pool.connection() as conn:

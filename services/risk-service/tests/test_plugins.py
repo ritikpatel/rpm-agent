@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -70,15 +71,48 @@ def test_registry_serves_the_teams_three_models() -> None:
     assert all(m.version == "1.0.0" and m._booster is not None for m in registry.models.values())
 
 
-def test_models_trained_on_patients_with_a_hospital_record_need_one() -> None:
+def test_every_home_patient_is_scored_and_a_missing_record_is_marked_estimated() -> None:
     registry = PluginRegistry(ROOT)
     with_record, without = context("home"), context("home", record=False)
     for name in ("readmission_risk", "early_deterioration"):
         m = registry.models[name]
-        assert m.applies("on_demand", "home", with_record) and not m.applies("on_demand", "home", without)
+        assert m.applies("on_demand", "home", with_record) and m.applies("on_demand", "home", without)
         assert not m.applies("on_demand", "icu", with_record)              # trained after discharge only
+        features = m.build(without)                                         # gaps filled: no NaN reaches LightGBM
+        assert all(math.isfinite(v) for v in features.values())
+        out = m.explain(without, m.predict(features))
+        assert out["values"]["estimated"] and any(d.startswith("Estimated without a hospital record")
+                                                  for d in out["details"])
+        out = m.explain(with_record, m.predict(m.build(with_record)))
+        assert not out["values"]["estimated"]
+    assert registry.models["early_deterioration"].build(without)["anchor_age"] == 71.0   # the registered age
     recovery = registry.models["recovery_monitoring"]
     assert recovery.applies("vitals", "home", without) and not recovery.applies("discharge", "home", without)
+
+
+def test_only_the_confirming_models_answer_a_confirmation() -> None:
+    models = PluginRegistry(ROOT).models
+    confirming = {n for n, m in models.items() if m.applies("confirm", "home", context("home", record=False))}
+    assert confirming == {"early_deterioration", "recovery_monitoring"}     # readmission is a 30-day outcome
+    assert not any(m.applies("confirm", "icu", context("icu")) for m in models.values())
+
+
+def test_below_the_alert_threshold_reads_as_good_not_as_a_warning() -> None:
+    for name, m in PluginRegistry(ROOT).models.items():
+        high = m.meta["bands"]["high"]
+        assert m.band(high) == "high" and m.band(high * 0.99) == "low"      # no warning band under the threshold
+        if name == "recovery_monitoring":
+            continue   # its colour follows the recovery score (Good, Moderate, Poor), as the model defines it
+        ctx = context("home")
+        for p, tone in ((high * 0.9, "good"), (high, "bad")):
+            assert m.explain(ctx, replace(m.predict(m.build(ctx)), probability=p))["headline"]["tone"] == tone
+
+
+def test_no_person_is_named_in_what_the_console_shows() -> None:
+    for m in PluginRegistry(ROOT).models.values():
+        for ctx in (context("home"), context("home", deteriorating=True), context("home", record=False)):
+            shown = json.dumps(m.explain(ctx, m.predict(m.build(ctx))))
+            assert not any(n in shown for n in ("Harnoor", "Tiya", "Navya", "Abhinav")), m.name
 
 
 def test_recovery_scores_higher_when_vitals_worsen_and_explains_why() -> None:

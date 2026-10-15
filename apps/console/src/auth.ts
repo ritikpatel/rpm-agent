@@ -7,7 +7,7 @@ export interface AuthConfig {
   roles?: string[];
   client_id?: string; authorize_url?: string; token_url?: string; logout_url?: string; scope?: string;
 }
-export interface Me { username: string; role: string; roles: string[]; can: { read: boolean; act: boolean; demo: boolean; audit: boolean };
+export interface Me { username: string; title?: string; role: string; roles: string[]; can: { read: boolean; act: boolean; demo: boolean; audit: boolean };
   demo_controls?: boolean }
 interface Session { access_token: string; refresh_token?: string; expires_at: number }
 

@@ -81,7 +81,7 @@ def _unwell(members):
 def test_unwell_patients_recover_gradually_towards_their_own_settled_values(cohort_and_series):
     members, _ = cohort_and_series
     unwell = _unwell(members)
-    assert len(unwell) == 8                                   # of the 24 at home in the default cohort
+    assert len(unwell) == 9                                   # of the 24 at home in the default cohort
     sim = Simulator(unwell, lambda *_: None)                  # default: the gap to well halves every two hours
     for m in unwell:
         gen = sim.devices[m.device_id].gen
@@ -91,7 +91,8 @@ def test_unwell_patients_recover_gradually_towards_their_own_settled_values(coho
             now = gen.centre(gen.t0 + hours * 3600)
             for k in ("spo2", "heart_rate", "resp_rate"):
                 assert now[k] == pytest.approx(m.well[k] + (m.last[k] - m.well[k]) * left, abs=0.05)
-        assert gen.centre(gen.t0 + 1800)["spo2"] < 92         # still unwell after half an hour: no sudden cure
+        half_hour = gen.centre(gen.t0 + 1800)["spo2"]         # no sudden cure: under a fifth of the way after 30 min
+        assert half_hour - m.last["spo2"] < 0.2 * (m.well["spo2"] - m.last["spo2"])
         assert gen.settled(gen.t0 + 24 * 3600)
     stable = next(m for m in members if m.care_setting == "home" and m.origin == "synthetic" and m not in unwell)
     gen = Simulator([stable], lambda *_: None).devices[stable.device_id].gen

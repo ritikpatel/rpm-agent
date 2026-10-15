@@ -103,7 +103,7 @@ class PatientContext:
             m = meta.get(r["model"], {})
             r.update(title=m.get("title"), outcome=m.get("outcome"), label=m.get("label"),
                      short_label=m.get("short_label"), validated=bool(m.get("validated")),
-                     metrics=m.get("metrics"), owner=m.get("owner"))
+                     metrics=m.get("metrics"), horizon=m.get("horizon") or "short")
         return {"risk_models": rows}
 
     def record(self, patient_id: str) -> dict:

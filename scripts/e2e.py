@@ -92,8 +92,9 @@ def main() -> None:
         p for p in api.call("GET", "/api/patients", clin) if p["care_setting"] == "icu" and p["last_seen"]] or None,
         120)
     # an earlier run of this check may have ended early and left its alert open: close those, and only those
-    for x in api.call("GET", "/api/alerts", clin):
-        if (x.get("acknowledged_by") or "").startswith("e2e."):
+    for x in api.call("GET", "/api/alerts", clin):   # the console records roles, not names: find its "e2e" note
+        if x.get("acknowledged_by") and any(t["kind"] == "acknowledged" and t["summary"].endswith(": e2e") for t in
+                                            api.call("GET", f"/api/alerts/{x['alert_id']}", clin)["timeline"]):
             api.call("POST", f"/api/alerts/{x['alert_id']}/resolve", clin, {"resolution": "left by an earlier e2e run"})
     all_patients = api.call("GET", "/api/patients", clin)
     icu = [p for p in all_patients if p["care_setting"] == "icu" and p["last_seen"]]
@@ -127,14 +128,14 @@ def main() -> None:
     hrisk, _ = wait("recovery score for a home patient", lambda: [
         r for r in api.call("GET", f"/api/patients/{chatty['patient_id']}/risk", clin)
         if r["model"] == "recovery_monitoring"], 180)
-    step("Navya's recovery monitoring model scored a home patient", True,
+    step("the recovery monitoring model scored a home patient", True,
          f"{chatty['patient_id']}: {hrisk[0]['probability']:.2f} ({hrisk[0]['band']}), version {hrisk[0]['version']}")
     recorded = next((p for p in home if p.get("data_origin") == "mimic_real"), None)
     step("a home patient with a hospital record is available", recorded is not None)
     rrisk, _ = wait("readmission and early-deterioration scores", lambda: (lambda rs: rs if {
         "readmission_risk", "early_deterioration"} <= {r["model"] for r in rs} else None)(
         api.call("GET", f"/api/patients/{recorded['patient_id']}/risk", clin)), 240)
-    step("Tiya's readmission and Harnoor's early-deterioration models scored a patient with a hospital record", True,
+    step("the readmission and early-deterioration models scored a patient with a hospital record", True,
          f"{recorded['patient_id']}: " + ", ".join(f"{r['model']} {r['probability']:.2f} ({r['band']})" for r in rrisk))
 
     print("3. Deterioration -> alert -> page -> agents")
@@ -237,8 +238,9 @@ def main() -> None:
     print("8. Audit trail and latency")
     audit = api.call("GET", "/api/audit?limit=500", admin)
     actors = {r["actor"] for r in audit}
-    step("clinician, service and agent actions are all audited",
-         any(x.startswith("e2e.") for x in actors) and any(x.startswith("agent:") for x in actors),
+    step("clinician, service and agent actions are all audited (people by role in the console)",
+         any(r["actor_role"] in ("physician", "nurse") and r["actor"] in ("Physician", "RPM nurse") for r in audit)
+         and any(x.startswith("agent:") for x in actors),
          f"{len(audit)} entries; agents seen: {sorted(x for x in actors if x.startswith('agent:'))}")
     api.call("POST", f"/api/alerts/{alert['alert_id']}/resolve", clin, {"resolution": "e2e check finished"})
     step("clinician resolved the alert, so the patient is free for the next run",

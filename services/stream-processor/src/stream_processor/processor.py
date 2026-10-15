@@ -62,6 +62,13 @@ DEVICE_EVENT_POLICY: dict[str, tuple[str, bool, int]] = {
 }
 SUPPRESS_S: dict[str, int] = {"DATA_GAP": 1800, "NEWS2_RISING": 1800, "DEVICE_SILENT": 3600, "RISK_HIGH": 3600,
                               "ADMITTED": 0, "DISCHARGED": 0, "LAB_RESULT": 0}
+# For a patient at home these medium findings (a partial NEWS2 from a wearable, one vital sign past a limit) page only
+# when a confirming risk model (metadata "confirms_alerts") is at or above its alert threshold. Until then they are
+# recorded, not alerted. A high NEWS2, critical SpO2, SOS and fall always page; ICU patients are not gated (no model
+# covers them).
+CONFIRM_FIRST = frozenset({"NEWS2_MEDIUM", "NEWS2_RED_PARAM", "SPO2_LOW", "HR_SUSTAINED_HIGH", "HR_SUSTAINED_LOW",
+                           "EDGE_ALERT"})
+AWAITING = " (alerts only if the risk models agree)"
 # A record that waited longer than this between IoT ingest and processing belongs to a backlog. The ingest queue
 # does not hand a backlog out in order, so "sequence numbers are missing" proves nothing until it has drained.
 CATCH_UP_S = 5.0
@@ -77,6 +84,7 @@ class Batch:
     claimed: list[tuple[str, str]] = field(default_factory=list)  # suppression slots taken by this batch
     ehr: list[dict] = field(default_factory=list)                 # admissions, discharges and lab results
     score: dict[str, str] = field(default_factory=dict)           # patient -> risk scoring trigger
+    confirm: list[dict] = field(default_factory=list)              # findings waiting for the confirming models
     moved: dict[str, str] = field(default_factory=dict)           # patient -> care setting changed in this batch
 
 
@@ -102,12 +110,14 @@ def _secs(a: datetime | None, b: datetime | None) -> float | None:
 class Processor:
     def __init__(self, registry: DeviceRegistry, state: LocalState, pg: PostgresSink, emitter: Emitter, *,
                  min_quality: float = 0.6, suppress_s: int = 900, gap_tolerance: int = 3,
-                 clock: Callable[[], datetime] = utcnow, request_scores: Callable[[str, str], None] | None = None):
+                 clock: Callable[[], datetime] = utcnow, request_scores: Callable[[str, str], None] | None = None,
+                 request_confirm: Callable[[str, dict], None] | None = None):
         self.registry = registry
         self.state = state
         self.pg = pg
         self.emitter = emitter
         self.request_scores = request_scores or (lambda _patient_id, _trigger: None)
+        self.request_confirm = request_confirm   # None: every finding pages on its own (no model confirmation)
         self.min_quality = min_quality
         self.suppress_s = suppress_s
         self.gap_tolerance = gap_tolerance
@@ -162,6 +172,8 @@ class Processor:
         self.state.publish_live(b.live)
         for patient_id, trigger in b.score.items():
             self.request_scores(patient_id, trigger)  # asynchronous: scoring never delays the rules path
+        for pending in b.confirm:
+            self.request_confirm(pending["patient_id"], pending)  # type: ignore[misc]
         M.BATCH_SECONDS.observe(time.perf_counter() - t0)
 
     # ------------------------------------------------------------------ EHR events
@@ -343,15 +355,25 @@ class Processor:
 
     # ------------------------------------------------------------------ emit
     def _emit(self, b: Batch, ref: PatientRef, device_id: str | None, f: Finding, occurred: datetime,
-              trace: dict | None, news2: dict | None, context: str | None = "") -> None:
+              trace: dict | None, news2: dict | None, context: str | None = "", confirmed: bool = False) -> None:
         ttl = DEVICE_EVENT_POLICY.get(f.type, (None, None, SUPPRESS_S.get(f.type, self.suppress_s)))[2]
-        if not self.state.should_emit(ref.patient_id, f.type, SEVERITY_RANK[f.severity], ttl):
+        # a confirmed finding was already let through (and recorded) once, waiting for the models: it is not a repeat
+        if not confirmed and not self.state.should_emit(ref.patient_id, f.type, SEVERITY_RANK[f.severity], ttl):
             M.SUPPRESSED.labels(f.type).inc()
             return
-        if ttl > 0:
+        if ttl > 0 and not confirmed:
             b.claimed.append((ref.patient_id, f.type))
-        ev = ClinicalEvent(patient_id=ref.patient_id, device_id=device_id,
-                           context=ref.context if context == "" else context, type=f.type,
+        ctx = ref.context if context == "" else context
+        if (f.requires_alert and ctx == "home" and f.type in CONFIRM_FIRST and self.request_confirm is not None
+                and not confirmed):
+            b.confirm.append({"patient_id": ref.patient_id, "device_id": device_id, "type": f.type,
+                              "severity": f.severity, "rule_id": f.rule_id, "summary": f.summary,
+                              "evidence": f.evidence, "occurred": occurred.isoformat(), "trace": trace,
+                              "news2": news2, "context": ctx})
+            f = Finding(f.type, f.severity, f.rule_id, f.summary + AWAITING, False,
+                        {**f.evidence, "awaiting_models": True})
+            M.AWAITING_MODELS.labels(f.type).inc()
+        ev = ClinicalEvent(patient_id=ref.patient_id, device_id=device_id, context=ctx, type=f.type,
                            severity=f.severity, occurred_at=occurred, detected_at=self.clock(), rule_id=f.rule_id,
                            summary=f.summary, requires_alert=f.requires_alert, evidence=f.evidence, news2=news2,
                            trace=trace)
@@ -361,10 +383,12 @@ class Processor:
         log.info("clinical event", extra={"patient_id": ref.patient_id, "type": f.type, "severity": f.severity,
                                           "summary": f.summary})
 
-    def raise_finding(self, ref: PatientRef, device_id: str | None, f: Finding, occurred: datetime) -> bool:
-        """Emit a finding raised outside a telemetry batch (risk scores, silent devices). True if it went out."""
+    def raise_finding(self, ref: PatientRef, device_id: str | None, f: Finding, occurred: datetime,
+                      trace: dict | None = None, news2: dict | None = None, confirmed: bool = False) -> bool:
+        """Emit a finding raised outside a telemetry batch (risk scores, silent devices, findings the models
+        confirmed). True if it went out."""
         b = Batch()
-        self._emit(b, ref, device_id, f, occurred, None, None)
+        self._emit(b, ref, device_id, f, occurred, trace, news2, confirmed=confirmed)
         if not b.events:
             return False
         try:
@@ -411,6 +435,24 @@ def risk_finding(score: dict) -> Finding:
                     "band": score["band"], "top_factors": score.get("top_factors", [])[:5], "validated": validated})
 
 
+def confirmed_finding(pending: dict, score: dict | None) -> Finding:
+    """A finding that waited for the risk models, now an alert: confirmed by `score`, or (score None) raised on the
+    rule alone because no confirming model could give an answer, so a model outage never hides a deterioration."""
+    if score is None:
+        why = "risk models unavailable: alerting on the rule alone"
+        by = None
+    else:
+        head = (score.get("output") or {}).get("headline")
+        said = (f"{head['label']} {head['value']}{(' ' + head['suffix']) if head.get('suffix') else ''}"
+                if head else f"{round(float(score['probability']) * 100)}%")
+        title = score.get("title", score["model"])
+        why = f"confirmed by {title} ({said}" + ("" if score.get("validated") else ", unvalidated model") + ")"
+        by = {"model": score["model"], "version": score.get("version"), "probability": score["probability"],
+              "alert_threshold": score.get("alert_threshold"), "validated": bool(score.get("validated"))}
+    return Finding(pending["type"], pending["severity"], pending["rule_id"], f"{pending['summary']}; {why}", True,
+                   {**pending["evidence"], "confirmed_by": by})
+
+
 def silent_device_finding(context: str, device_id: str, minutes: float, alerting: bool = False) -> Finding:
     """A device that has stopped reporting. It is always recorded; it is an alert only for an ICU patient, and only
     when silent-device alerts are switched on (RPM_SILENT_DEVICE_ALERTS)."""
@@ -419,4 +461,4 @@ def silent_device_finding(context: str, device_id: str, minutes: float, alerting
                    f"No data from {device_id} for {minutes:.0f} min", alert, {"silent_minutes": round(minutes, 1)})
 
 
-__all__ = ["Processor", "risk_finding", "silent_device_finding", "STALE_S"]
+__all__ = ["Processor", "confirmed_finding", "risk_finding", "silent_device_finding", "CONFIRM_FIRST", "STALE_S"]

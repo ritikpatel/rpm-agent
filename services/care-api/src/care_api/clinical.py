@@ -19,7 +19,7 @@ from rpm_core.contracts import AgentTask
 from rpm_core.live import publish
 
 from .alerts import ACTIVE
-from .auth import Actor, Auditor, Presenter, Reader, User
+from .auth import ROLE_TITLES, Actor, Auditor, Presenter, Reader, User
 
 router = APIRouter(prefix="/api")
 STATE: dict = {}  # filled by main.lifespan: pool, store, engine, ctx, commander, settings
@@ -87,7 +87,7 @@ class EscalateIn(BaseModel):
 
 @router.post("/alerts/{alert_id}/ack")
 def ack(alert_id: str, body: AckIn, request: Request, user: Actor) -> dict:
-    row = STATE["store"].acknowledge(alert_id, user.username, body.note)
+    row = STATE["store"].acknowledge(alert_id, user.title, body.note)
     if not row:
         raise HTTPException(409, "alert is not open")
     audit(request, user, "update", "Alert", alert_id, row["patient_id"], {"op": "acknowledge"})
@@ -97,7 +97,7 @@ def ack(alert_id: str, body: AckIn, request: Request, user: Actor) -> dict:
 
 @router.post("/alerts/{alert_id}/escalate")
 def escalate(alert_id: str, body: EscalateIn, request: Request, user: Actor) -> dict:
-    row = STATE["store"].escalate(alert_id, f"user:{user.username}", body.reason)
+    row = STATE["store"].escalate(alert_id, f"user:{user.title}", body.reason)
     if not row:
         raise HTTPException(409, "alert is not active")
     audit(request, user, "update", "Alert", alert_id, row["patient_id"], {"op": "escalate"})
@@ -107,7 +107,7 @@ def escalate(alert_id: str, body: EscalateIn, request: Request, user: Actor) -> 
 
 @router.post("/alerts/{alert_id}/resolve")
 def resolve(alert_id: str, body: ResolveIn, request: Request, user: Actor) -> dict:
-    row = STATE["store"].resolve(alert_id, user.username, body.resolution)
+    row = STATE["store"].resolve(alert_id, user.title, body.resolution)
     if not row:
         raise HTTPException(409, "alert is not active")
     audit(request, user, "update", "Alert", alert_id, row["patient_id"], {"op": "resolve"})
@@ -169,7 +169,7 @@ def agent_review(patient_id: str, request: Request, user: Actor) -> dict:
     if STATE["ctx"].profile(patient_id) is None:
         raise HTTPException(404, "patient not found")
     active = STATE["store"].active_for_patient(patient_id)
-    task = AgentTask(trigger="on_demand", patient_id=patient_id, requested_by=f"user:{user.username}",
+    task = AgentTask(trigger="on_demand", patient_id=patient_id, requested_by=f"user:{user.title}",
                      alert_id=str(active["alert_id"]) if active else None)
     queued = STATE["engine"].enqueue(task)
     audit(request, user, "create", "Task", str(task.task_id), patient_id, {"op": "agent_review"})
@@ -179,10 +179,15 @@ def agent_review(patient_id: str, request: Request, user: Actor) -> dict:
 @router.get("/audit")
 def audit_trail(user: Auditor, limit: Annotated[int, Query(ge=1, le=500)] = 100,
                 patient_id: str | None = None) -> list[dict]:
-    """Who read or changed what: clinicians, services and each agent by name."""
-    return _rows("SELECT id, at, actor, actor_role, action, resource_type, resource_id, patient_id, outcome "
+    """Who read or changed what: services and each agent by name, people by their role. The person's account stays
+    in the audit log itself (and in its hourly export); the console does not show names."""
+    rows = _rows("SELECT id, at, actor, actor_role, action, resource_type, resource_id, patient_id, outcome "
                  "FROM audit_log WHERE (%(pid)s::text IS NULL OR patient_id = %(pid)s) ORDER BY id DESC "
                  "LIMIT %(limit)s", {"pid": patient_id, "limit": limit})
+    for r in rows:
+        if r["actor_role"] in ROLE_TITLES:
+            r["actor"] = ROLE_TITLES[r["actor_role"]]
+    return rows
 
 
 # ------------------------------------------------------------------ the patient's device
@@ -217,9 +222,9 @@ def command(patient_id: str, body: CommandIn, request: Request, user: Actor) -> 
         {"profile": body.profile or "elevated"} if body.cmd == "SET_PROFILE" else \
         {"question_id": f"{body.topic or 'breathless'}-clin", "text": CHECKIN_TEXT[body.topic or "breathless"],
          "options": ["Yes", "No"]}
-    cmd = STATE["commander"].send(dev["device_id"], body.cmd, args, f"user:{user.username}")
+    cmd = STATE["commander"].send(dev["device_id"], body.cmd, args, f"user:{user.title}")
     if body.cmd == "CHECKIN":
-        _message(patient_id, "checkin", args["text"], f"user:{user.username}", dev["device_id"], cmd.cmd_id)
+        _message(patient_id, "checkin", args["text"], f"user:{user.title}", dev["device_id"], cmd.cmd_id)
     audit(request, user, "create", "DeviceRequest", str(cmd.cmd_id), patient_id, {"cmd": body.cmd})
     return {"cmd_id": str(cmd.cmd_id), "device_id": dev["device_id"]}
 
@@ -243,8 +248,8 @@ def send_message(patient_id: str, body: MessageIn, request: Request, user: Actor
         raise HTTPException(409, "messages go to home patients' watches")
     cmd = STATE["commander"].send(dev["device_id"], "NOTIFY", {"title": "Message from your care team",
                                                                "text": body.text, "priority": "normal"},
-                                  f"user:{user.username}", ttl_s=1800)
-    _message(patient_id, "message", body.text, f"user:{user.username}", dev["device_id"], cmd.cmd_id)
+                                  f"user:{user.title}", ttl_s=1800)
+    _message(patient_id, "message", body.text, f"user:{user.title}", dev["device_id"], cmd.cmd_id)
     audit(request, user, "create", "Communication", str(cmd.cmd_id), patient_id)
     return {"cmd_id": str(cmd.cmd_id), "device_id": dev["device_id"]}
 

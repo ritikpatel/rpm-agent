@@ -42,7 +42,7 @@ How the platform uses them:
 - **Live readings are new.** The simulated wearable generates them from the patient's last recorded values: each
   vital sign wanders slowly and is pulled back, with sensor noise on top. The size of the wander is taken from the
   recorded streams. No recorded reading is ever sent as if it were new.
-- **Unwell patients recover gradually.** A patient whose record ended with them unwell (8 of the default 24 at
+- **Unwell patients recover gradually.** A patient whose record ended with them unwell (9 of the default 24 at
   home) alerts as soon as monitoring starts, then moves towards their own settled values: the gap halves every
   two hours. The settled values come from the data: the home baseline it gives for MIMIC patients, and for
   synthetic patients the median of their recorded readings outside their deterioration episodes. Recovery runs
@@ -85,8 +85,8 @@ Source: [architecture-simple.mmd](architecture-simple.mmd).
 | ① | A device publishes a reading to AWS IoT Core over MQTT with TLS. EHR and lab records enter through the FHIR server. |
 | ② | Both land on one SQS queue, `patient-events`, in one envelope. The IoT rule stamps the device and arrival time; FHIR changes arrive through a subscription to the Care API, which queues them. |
 | ③ | The stream processor validates the event, stores it and computes the NEWS2 score. |
-| ④ | It asks the risk service for scores in the background: early deterioration on new vitals and labs, readmission at discharge and daily, recovery every 15 minutes for patients at home. |
-| ⑤ | If NEWS2 or a rule crosses its threshold, the processor hands a clinical event to the Care API. A validated model entering its high band does the same. |
+| ④ | It asks the risk service for scores in the background, for every patient at home: early deterioration on new vitals and labs, readmission at discharge and daily, recovery every 15 minutes. A patient without a hospital record is scored with typical values for the missing record data, and the result is marked as estimated. |
+| ⑤ | A high NEWS2 (7 or more), SpO2 below the critical limit, SOS and a fall page at once. For a patient at home, a medium finding (NEWS2 5 to 6 or a single red parameter, which a wearable can only measure in part; SpO2 below 90%; heart rate high or low for minutes; an on-watch alert) is recorded and then confirmed by the models: recovery monitoring and early deterioration are scored at once, and the finding pages only if one of them is at or above its alert threshold. If neither can answer, it pages on the rule alone. ICU patients are not gated, since no model covers them. A validated model entering its high band also pages. |
 | ⑥ | The Care API opens (or updates) the patient's alert, pushes it to the console and e-mails the on-call tier. An unacknowledged alert escalates to the next tier on a timer. A clinician resolves an alert, and its Flag in the hospital record is ended. A device that stops reporting is recorded but raises no alert, because in this simulated demonstration devices are stopped on purpose; with real monitors `RPM_SILENT_DEVICE_ALERTS=true` makes a silent ICU monitor an alert, which then closes by itself when the monitor reports again. |
 | ⑦ | The Care API queues one agent task per alert. |
 | ⑧ | Monitoring, Risk, Escalation and Summary agents run in a fixed chain on Amazon Bedrock. |
@@ -157,6 +157,7 @@ The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 |---|---|---|
 | One queue for every source | One consumer, one event format, one place to reason about ordering and duplicates | Device and EHR events share a backlog |
 | Rules page, agents advise | Safety and latency must not depend on a language model | Agents cannot stop a false alert; a clinician resolves it |
+| Models confirm medium findings at home | A partial NEWS2 from a wearable or one vital sign past a limit pages too often on its own; the models look at the whole picture first | A medium finding pages a few seconds later, and only if a model agrees; one of the two confirming models is unvalidated, so a real deterioration it misses waits for the critical rules |
 | Agents behind Care API tools | Audited, least-privilege access; the agent service holds no data | An extra network hop per tool call |
 | Fixed chain of four agents | Easy to explain, test and bound in cost | Less flexible than a free-form planner |
 | Models as plug-ins with their own feature code | The data team ships a folder; training and serving share one feature file | Feature code runs inside the risk service, so it is trusted code |

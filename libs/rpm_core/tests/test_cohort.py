@@ -38,6 +38,19 @@ def test_only_real_patients_are_shown_in_icu_and_everyone_else_is_home(data):
     assert {m.origin for m in home} == {"mimic_real", "synthetic"}
 
 
+def test_the_showcase_patients_are_always_monitored_at_home(data):
+    """The patients whose outcomes show how the three risk models relate are in every census, at home."""
+    from rpm_core.cohort.cohort import SHOWCASE
+
+    home = {m.patient_id for m in build_cohort(data, ANCHOR) if m.care_setting == "home"}
+    assert set(SHOWCASE) <= home
+    for pid in SHOWCASE[:3]:     # all three outcomes in the record: poor recovery, deterioration, readmission
+        rows = data.patients[pid].snapshots
+        assert any(float(r["deterioration_next_6h"] or 0) for r in rows) and data.patients[pid].flag("readmit_30d_flag")
+    assert data.patients[SHOWCASE[3]].flag("readmit_30d_flag")     # readmitted ...
+    assert data.patients[SHOWCASE[3]].trajectory != "declining"    # ... after a good recovery
+
+
 def test_monitoring_starts_where_each_patients_recorded_data_ends(data):
     members = build_cohort(data, ANCHOR)
     for m in members:

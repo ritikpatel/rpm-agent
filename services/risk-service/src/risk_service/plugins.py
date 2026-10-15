@@ -58,8 +58,8 @@ class ModelPlugin:
         bad = set(self.meta["triggers"]) - TRIGGERS
         if bad:
             raise ContractError(f"{self.name}: unknown triggers {sorted(bad)}")
-        if not {"medium", "high"} <= set(self.meta["bands"]):
-            raise ContractError(f"{self.name}: bands needs 'medium' and 'high' thresholds")
+        if "high" not in self.meta["bands"]:
+            raise ContractError(f"{self.name}: bands needs a 'high' threshold (the alert threshold)")
 
         spec = importlib.util.spec_from_file_location(f"rpm_plugin_{self.name}_{self.version.replace('.', '_')}",
                                                       path / "features.py")
@@ -110,9 +110,12 @@ class ModelPlugin:
     # ------------------------------------------------------------------ contract
     def applies(self, trigger: str, care_setting: str, ctx: dict | None = None) -> bool:
         """`requires` lists parts of the context the model cannot do without (for example `record`: a model
-        trained only on patients with a hospital record is not run for patients who have none)."""
+        trained only on patients with a hospital record is not run for patients who have none). The `confirm`
+        trigger runs only the models that may confirm a finding into an alert (`confirms_alerts`)."""
         if ctx is not None and any(not ctx.get(k) for k in self.requires):
             return False
+        if trigger == "confirm":
+            return care_setting in self.meta["care_settings"] and bool(self.meta.get("confirms_alerts"))
         return care_setting in self.meta["care_settings"] and \
             (trigger == "on_demand" or trigger in self.meta["triggers"])
 
@@ -148,8 +151,9 @@ class ModelPlugin:
         return np.asarray(self._model.predict_proba(pd.DataFrame(rows, columns=self.features)))[:, 1]
 
     def band(self, p: float) -> str:
+        """"high" at or above the alert threshold; "medium" only for a model that declares a band below it."""
         b = self.meta["bands"]
-        return "high" if p >= b["high"] else "medium" if p >= b["medium"] else "low"
+        return "high" if p >= b["high"] else "medium" if "medium" in b and p >= b["medium"] else "low"
 
     def predict(self, features: dict[str, float], top_k: int = 5) -> Prediction:
         x = np.array([[features[f] for f in self.features]], dtype=np.float64)
@@ -197,7 +201,7 @@ class ModelPlugin:
     def describe(self) -> dict:
         keys = ("name", "version", "title", "outcome", "owner", "triggers", "care_settings", "bands", "metrics",
                 "validated", "min_interval_s", "limitations", "trained_at", "libraries", "requires", "label",
-                "short_label", "headline")
+                "short_label", "headline", "confirms_alerts", "horizon")
         return {**{k: self.meta.get(k) for k in keys}, "validated": bool(self.meta.get("validated")),
                 "features": self.features}
 

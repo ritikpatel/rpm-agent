@@ -10,7 +10,8 @@ export interface PatientRow {
   care_setting: "home" | "icu"; discharge_at: string | null; device_id: string | null; last_seen: string | null;
   news2: number | null; news2_band: string | null; news2_partial: boolean | null; latest: Latest | null;
   alerts_24h: number;
-  risk: Record<string, { probability: number; band: string; badge?: string | null; tone?: string | null }> | null;
+  risk: Record<string, { probability: number; band: string; badge?: string | null; tone?: string | null;
+    short_label?: string | null; validated?: boolean; horizon?: string }> | null;
 }
 
 export interface VitalRow {
@@ -59,11 +60,11 @@ export interface RiskOutput {
 }
 
 export interface RiskRow {
-  model: string; version: string; title: string | null; outcome: string | null; owner: string | null;
+  model: string; version: string; title: string | null; outcome: string | null;
   label: string | null; short_label: string | null; output: RiskOutput | null;
   probability: number; band: string; computed_at: string;
   top_factors: { feature: string; value: number; contribution: number }[]; validated: boolean | null;
-  metrics: Record<string, number | string> | null;
+  metrics: Record<string, number | string> | null; horizon?: string;
 }
 
 export interface MessageRow { at: string; direction: "to_patient" | "from_patient"; kind: string; text: string; sender: string }

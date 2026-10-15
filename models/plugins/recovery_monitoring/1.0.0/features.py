@@ -1,11 +1,12 @@
-"""Navya's Recovery Monitoring Score model (1.0.0): features and the reading of the result.
+"""The Recovery Monitoring Score model (1.0.0): features and the reading of the result.
 
-A port of her recovery_model.py to the platform's patient context.
+A port of the author's recovery_model.py to the platform's patient context.
 
 - `build` (features_from_readings, assemble_features): the five vital signs at discharge, the latest reading of each,
-  the worst values of the last six hours, the change since discharge, and her rule-based recovery score. Gaps are
-  filled her way: a missing latest value takes the discharge value, a missing six-hour value takes the latest.
-- `explain` (RecoveryModel.score): what the care team sees. Her model gives two numbers, in this order:
+  the worst values of the last six hours, the change since discharge, and the author's rule-based recovery score.
+  Gaps are filled the author's way: a missing latest value takes the discharge value, a missing six-hour value takes
+  the latest.
+- `explain` (RecoveryModel.score): what the care team sees. The model gives two numbers, in this order:
   1. the recovery score, 0 to 100: 100 means the vital signs are normal and no worse than at discharge, lower is
      worse; Good recovery from 75, Moderate from 50, Poor below 50; with a trend over 3 hours;
   2. the chance of a deterioration episode within the next 72 hours (the LightGBM model), alert from 0.348.
@@ -50,7 +51,7 @@ def _worsening(vital, value, baseline):
 
 
 def recovery_score(latest, baseline):
-    """0-100: 100 - 70 x weighted abnormality - 30 x weighted worsening since discharge (her formula)."""
+    """0-100: 100 - 70 x weighted abnormality - 30 x weighted worsening since discharge (the author's formula)."""
     abn = sum(WEIGHTS[v] * _abnormality(v, latest[v]) for v in VITALS)
     wor = sum(WEIGHTS[v] * _worsening(v, latest[v], baseline[v]) for v in VITALS)
     return round(_clip(100 - ABNORMAL_POINTS * abn - WORSENING_POINTS * wor, 0.0, 100.0), 1)
@@ -85,7 +86,7 @@ def build(ctx):
     return out
 
 
-# ---------------------------------------------------------------------------------------------- the result, her way
+# ------------------------------------------------------------------------------------ the result, the author's way
 ALERT_THRESHOLD = 0.348
 STATUS_BANDS = ((75, "Good recovery", "good"), (50, "Moderate recovery", "warn"), (0, "Poor recovery", "bad"))
 NAMES = {"hr": "heart rate", "rr": "respiratory rate", "spo2": "oxygen saturation", "sbp": "blood pressure",

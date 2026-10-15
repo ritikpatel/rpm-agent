@@ -287,3 +287,76 @@ def test_a_silent_device_is_recorded_but_alerts_only_when_switched_on_and_only_i
     real = silent_device_finding("icu", "monitor-7", 12.0, alerting=True)      # real monitors
     assert real.requires_alert and real.severity == "medium"
     assert not silent_device_finding("home", "gw-1", 12.0, alerting=True).requires_alert   # a watch taken off
+
+
+# ------------------------------------------------------------------ model-confirmed alerts (patients at home)
+@pytest.fixture
+def gated():
+    reg = FakeRegistry({"sim-1": HOME, "sim-icu-2": ICU})
+    st, pg, sqs, held = FakeState(), FakePg(), FakeSqs(), []
+    proc = Processor(reg, st, pg, sqs, clock=lambda: NOW + timedelta(seconds=1),
+                     request_confirm=lambda pid, pending: held.append(pending))
+    return proc, pg, sqs, held
+
+
+def test_a_medium_home_finding_is_recorded_and_waits_for_the_models(gated):
+    proc, pg, sqs, held = gated
+    proc.handle_batch([telemetry(metrics={"spo2": {"value": 87, "quality": 0.9}})])
+    assert [e.type for e in pg.events] == ["SPO2_LOW"] and not sqs.alert              # recorded, not paged
+    assert pg.events[0].summary.endswith("(alerts only if the risk models agree)")
+    assert pg.events[0].evidence["awaiting_models"]
+    assert [(h["patient_id"], h["type"]) for h in held] == [("p-1", "SPO2_LOW")]
+    assert "risk models" not in held[0]["summary"]                                      # the rule's own words
+
+
+def test_icu_and_critical_findings_page_without_waiting(gated):
+    proc, _, sqs, held = gated
+    proc.handle_batch([telemetry("sim-icu-2", metrics={"spo2": {"value": 87, "quality": 0.9}}, context="icu"),
+                       telemetry(metrics={"spo2": {"value": 80, "quality": 0.9}})])
+    assert sorted(e.type for e in sqs.alert) == ["SPO2_CRITICAL", "SPO2_LOW"] and not held
+
+
+def test_a_confirmed_finding_pages_although_its_type_was_just_recorded(gated):
+    from stream_processor.processor import confirmed_finding
+
+    proc, _, sqs, held = gated
+    proc.handle_batch([telemetry(metrics={"spo2": {"value": 87, "quality": 0.9}})])
+    score = {"model": "recovery_monitoring", "title": "Recovery monitoring", "probability": 0.41, "validated": True,
+             "alert_threshold": 0.348, "output": {"headline": {"label": "Recovery score", "value": 38.2,
+                                                               "suffix": "/ 100"}}}
+    f = confirmed_finding(held[0], score)
+    assert proc.raise_finding(HOME, "sim-1", f, NOW, confirmed=True)
+    assert [e.type for e in sqs.alert] == ["SPO2_LOW"]
+    assert sqs.alert[0].summary.endswith("confirmed by Recovery monitoring (Recovery score 38.2 / 100)")
+    assert sqs.alert[0].evidence["confirmed_by"]["model"] == "recovery_monitoring"
+    unanswered = confirmed_finding(held[0], None)                       # no model could answer: the rule pages
+    assert unanswered.requires_alert and "risk models unavailable" in unanswered.summary
+
+
+def test_the_scorer_confirms_only_when_a_confirming_model_is_at_its_threshold():
+    from stream_processor.risk import RiskScorer
+
+    def scorer(answer):
+        confirmed, high = [], []
+        s = RiskScorer("http://risk", "t", lambda pid, score: high.append(score["model"]),
+                       on_confirmed=lambda pid, pending, score: confirmed.append(score and score["model"]))
+        s._post = answer   # type: ignore[method-assign]
+        s.confirm("p-1", {"type": "NEWS2_MEDIUM"})
+        s._confirm_now("p-1")
+        return confirmed, high
+
+    def scores(det, rec):
+        return lambda pid, trigger: [
+            {"model": "early_deterioration", "band": det, "probability": 0.3, "validated": False,
+             "confirms_alerts": True},
+            {"model": "recovery_monitoring", "band": rec, "probability": 0.4, "validated": True,
+             "confirms_alerts": True},
+            {"model": "readmission_risk", "band": "high", "probability": 0.5, "confirms_alerts": False}]
+
+    assert scorer(scores("high", "high")) == (["recovery_monitoring"], [])      # validated first; no double alert
+    assert scorer(scores("high", "low")) == (["early_deterioration"], [])
+    assert scorer(scores("low", "low")) == ([], [])                             # readmission never confirms
+
+    def down(pid, trigger):
+        raise ConnectionError("risk service down")
+    assert scorer(down) == ([None], [])                                          # pages on the rule alone

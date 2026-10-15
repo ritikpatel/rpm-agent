@@ -1,6 +1,6 @@
-"""Features for Tiya's 30-day readmission model (1.0.0).
+"""Features for the 30-day readmission model (1.0.0).
 
-Her model reads one post-discharge snapshot of 20 columns from the training data. This builds the same 20 from the
+The model reads one post-discharge snapshot of 20 columns from the training data. This builds the same 20 from the
 platform's patient context:
 
 - from the hospital record (`ctx["record"]`): age, prior admissions, length of stay, ICU stay, comorbidities,
@@ -11,8 +11,9 @@ platform's patient context:
   activity since discharge and the watch's wear pattern. The platform receives no activity data, so these are the
   values the record ends with.
 
-The model was fitted on the 63 MIMIC patients only (the only ones with a readmission label), so it runs only for
-patients with a hospital record (metadata "requires": ["record"]). Every gap is filled: the model turns a missing
+The model was fitted on the 63 MIMIC patients only (the only ones with a readmission label). A patient without a
+hospital record gets the age and sex they were registered with and the training medians for the record's history; the
+result is marked as estimated. Every gap is filled: the model turns a missing
 value into zero for most of its inputs, which would read as "no medicines" or "no steps". Standard library only.
 """
 
@@ -74,9 +75,9 @@ def build(ctx):
     return out
 
 
-# ---------------------------------------------------------------------------------------------- the result, her way
-# Tiya's API (deployment/app.py): the 30-day readmission probability, her exploratory alert threshold and a
-# research-only warning. Her own cross-validation (results/cv_summary.csv) is the honest measure of it.
+# ------------------------------------------------------------------------------------ the result, the author's way
+# The author's API (deployment/app.py): the 30-day readmission probability, the exploratory alert threshold and a
+# research-only warning. The author's cross-validation (results/cv_summary.csv) is the honest measure of it.
 ALERT_THRESHOLD = 0.329
 LABELS = {
     "hours_since_discharge": ("Time since discharge", "h"), "age": ("Age", "yrs"), "gender_male": ("Sex (male)", ""),
@@ -104,13 +105,15 @@ def explain(ctx, features, probability, contributions):
     above = probability >= ALERT_THRESHOLD
     return {"headline": {"label": "30-day readmission probability", "value": f"{probability:.0%}", "suffix": "",
                          "status": "Above the exploratory alert threshold" if above else "Below the alert threshold",
-                         "tone": "bad" if above else "warn" if probability >= 0.15 else "good"},
+                         "tone": "bad" if above else "good"},
             "badge": f"Readmission {probability:.0%}",
             "details": [f"Exploratory alert threshold: {ALERT_THRESHOLD:.0%}.",
                         f"Re-estimated as the patient recovers ({features['hours_since_discharge']:.0f} hours after "
-                        "discharge); the snapshots it learnt from were 1 to 24 hours after discharge."],
+                        "discharge); the snapshots it learnt from were 1 to 24 hours after discharge."]
+                       + ([] if ctx.get("record") else ["Estimated without a hospital record: past admissions, length "
+                                                        "of stay, comorbidities and medicines set to typical values."]),
             "concerns": [described(f) for f in up], "reassurances": [described(f) for f in down],
             "note": "Research prototype, not for patient-care decisions: 63 labelled admissions, 10 readmissions. In "
-                    "Tiya's cross-validation the AUROC averaged 0.42 (range 0.12 to 0.75).",
+                    "cross-validation the AUROC averaged 0.42 (range 0.12 to 0.75).",
             "values": {"readmission_probability": round(probability, 4), "exploratory_alert_threshold": ALERT_THRESHOLD,
-                       "alert": above}}
+                       "alert": above, "estimated": not ctx.get("record")}}

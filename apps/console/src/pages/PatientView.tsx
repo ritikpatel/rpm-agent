@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { api, type AgentRun, type AlertDetail, type Brief, type Chunk, type EventRow, type LabRow, type LiveMessage,
          type MessageRow, type RiskRow, type VitalRow } from "../api";
 import VitalsPanels from "../components/VitalsPanels";
-import { ago, Badge, bandStatus, fmt, hhmm, News2Badge, severityStatus, toneStatus } from "../components/ui";
+import { agreement, ago, Badge, bandStatus, fmt, hhmm, News2Badge, severityStatus, toneStatus } from "../components/ui";
 
 const TIER = ["", "RPM nurse", "On-call physician", "Rapid response team"];
 export const SCENARIOS = ["sepsis", "chf_decompensation", "copd_exacerbation", "hypoxia", "af_rvr", "bradycardia",
@@ -149,6 +149,44 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
   const brief = alert?.brief;
   const lastRun = runs.find((r) => r.brief) ?? null;   // newest agent summary, shown when no alert is open
   const home = p.care_setting === "home";
+  const shortTerm = risk.filter((r) => r.horizon !== "long");
+  const longTerm = risk.filter((r) => r.horizon === "long");
+  const agree = agreement(shortTerm.map((r) => ({ name: r.short_label ?? r.model, band: r.band, validated: r.validated })));
+  const riskCard = (r: RiskRow) => {
+    const o = r.output;
+    const tag = r.validated ? <span className="tag">validated</span>
+      : <span className="tag">not validated: weak evidence</span>;
+    if (!o) {   // a model without its own explanation: the probability of the outcome it names
+      return (
+        <div key={r.model} style={{ marginBottom: 12 }}>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <b>{r.label ?? r.title ?? r.model}</b>
+            <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band}</Badge>
+          </div>
+          <div className="muted small">{r.outcome}</div>
+          <div className="muted small">v{r.version} · {ago(r.computed_at, now)} {tag}</div>
+        </div>);
+    }
+    // The model's own reading, as its owner defined it (recovery score, readmission probability, ...).
+    return (
+    <div key={r.model} style={{ marginBottom: 14 }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+        <b title={r.outcome ?? undefined}>{r.label ?? r.title}</b>
+        <Badge status={toneStatus(o.headline.tone)}>{o.headline.status}</Badge>
+      </div>
+      <div style={{ fontSize: "1.25em", margin: "2px 0" }}>
+        {o.headline.label}: <b>{o.headline.value ?? "–"}</b>{o.headline.suffix ? ` ${o.headline.suffix}` : ""}
+        {o.headline.trend && <span className="small muted"> · {o.headline.trend}</span>}
+      </div>
+      {(o.details ?? []).map((d) => <div key={d} className="small">{d}</div>)}
+      {(o.concerns ?? []).length > 0 &&
+        <div className="small">Concerns: {(o.concerns ?? []).join(" · ")}</div>}
+      {(o.reassurances ?? []).length > 0 &&
+        <div className="small muted">Reassuring: {(o.reassurances ?? []).join(" · ")}</div>}
+      {o.note && <div className="small muted" style={{ fontStyle: "italic" }}>{o.note}</div>}
+      <div className="muted small">{r.title} v{r.version} · {ago(r.computed_at, now)} {tag}</div>
+    </div>);
+  };
   const nextEsc = alert?.next_escalation_at ? Math.max(0, (new Date(alert.next_escalation_at).getTime() - now) / 1000) : null;
 
   return (
@@ -242,7 +280,7 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
               <ul className="timeline">
                 {alert.timeline.map((t, i) => (
                   <li key={i}><span className="muted small">{hhmm(t.at)}</span>
-                    <div><div>{t.summary}</div><div className="actor">{t.kind.replace("_", " ")} · {t.actor}</div></div>
+                    <div><div>{t.summary}</div><div className="actor">{t.kind.replace("_", " ")} · {t.actor.replace(/^user:/, "")}</div></div>
                   </li>))}
               </ul>
               <h3 style={{ marginTop: 16 }}>Notifications</h3>
@@ -321,7 +359,7 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
                 {messages.slice(0, 8).map((m, i) => (
                   <li key={i}><span className="muted small">{hhmm(m.at)}</span>
                     <div><div>{m.direction === "from_patient" ? "Patient: " : ""}{m.text}</div>
-                      <div className="actor">{m.kind} · {m.sender}</div></div></li>))}
+                      <div className="actor">{m.kind} · {m.sender.replace(/^user:/, "")}</div></div></li>))}
               </ul>
             </div>
           </section>}
@@ -329,42 +367,23 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
           <section className="card" aria-labelledby="risk-h">
             <header><h2 id="risk-h">Risk models</h2><span className="muted small">decision support only</span></header>
             <div className="body">
-              {risk.length === 0 && <div className="muted">Not scored yet (scores follow the first readings).</div>}
-              {risk.map((r) => {
-                const o = r.output;
-                const tag = r.validated ? <span className="tag">validated</span>
-                  : <span className="tag" title={`Metrics: ${JSON.stringify(r.metrics)}`}>not validated: weak evidence</span>;
-                if (!o) {   // a model without its own explanation: the probability of the outcome it names
-                  return (
-                    <div key={r.model} style={{ marginBottom: 12 }}>
-                      <div className="row" style={{ justifyContent: "space-between" }}>
-                        <b>{r.label ?? r.title ?? r.model}</b>
-                        <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band}</Badge>
-                      </div>
-                      <div className="muted small">{r.outcome}</div>
-                      <div className="muted small">v{r.version} · {ago(r.computed_at, now)} {tag}</div>
-                    </div>);
-                }
-                // The model's own reading, as its owner defined it (recovery score, readmission probability, ...).
-                return (
-                <div key={r.model} style={{ marginBottom: 14 }}>
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-                    <b title={r.outcome ?? undefined}>{r.label ?? r.title}</b>
-                    <Badge status={toneStatus(o.headline.tone)}>{o.headline.status}</Badge>
-                  </div>
-                  <div style={{ fontSize: "1.25em", margin: "2px 0" }}>
-                    {o.headline.label}: <b>{o.headline.value ?? "–"}</b>{o.headline.suffix ? ` ${o.headline.suffix}` : ""}
-                    {o.headline.trend && <span className="small muted"> · {o.headline.trend}</span>}
-                  </div>
-                  {(o.details ?? []).map((d) => <div key={d} className="small">{d}</div>)}
-                  {(o.concerns ?? []).length > 0 &&
-                    <div className="small">Concerns: {(o.concerns ?? []).join(" · ")}</div>}
-                  {(o.reassurances ?? []).length > 0 &&
-                    <div className="small muted">Reassuring: {(o.reassurances ?? []).join(" · ")}</div>}
-                  {o.note && <div className="small muted" style={{ fontStyle: "italic" }}>{o.note}</div>}
-                  <div className="muted small">{r.title} v{r.version} ({r.owner ?? "team"}) · {ago(r.computed_at, now)} {tag}</div>
-                </div>);
-              })}
+              {risk.length === 0 && <div className="muted">{home
+                ? "Not scored yet (scores follow the first readings)."
+                : "The team's three models were trained on patients after discharge, so they score patients at home. "
+                  + "In the ICU, the NEWS2 and vital-sign rules watch this patient; the models start at discharge."}</div>}
+              {shortTerm.length > 0 && <>
+                <h3 className="risk-group">Next hours to days</h3>
+                {agree && <div className="agree"><Badge status={agree.status}>{agree.label}</Badge>
+                  <span className="small">{agree.text}</span></div>}
+                {shortTerm.map(riskCard)}
+              </>}
+              {longTerm.length > 0 && <>
+                <h3 className="risk-group">Next 30 days</h3>
+                <div className="muted small" style={{ marginBottom: 8 }}>A research model that answers a different,
+                  slower question: in the training data, readmission did not follow recovery or deterioration. It never
+                  raises or confirms an alert.</div>
+                {longTerm.map(riskCard)}
+              </>}
             </div>
           </section>
 

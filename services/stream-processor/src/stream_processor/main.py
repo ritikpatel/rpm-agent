@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import signal
 import threading
+from datetime import datetime
 
 import httpx
 from prometheus_client import start_http_server
@@ -15,7 +16,7 @@ from rpm_core.settings import BaseServiceSettings
 from rpm_core.sqs import SqsReader
 
 from .consumer import SqsConsumer, depth_loop
-from .processor import Processor, risk_finding
+from .processor import Processor, confirmed_finding, risk_finding
 from .registry import DeviceRegistry
 from .risk import RiskScorer
 from .sinks import CareApiEmitter, PostgresSink
@@ -36,6 +37,8 @@ class ProcessorSettings(BaseServiceSettings):
     silent_after_s: int = 600
     watchdog_interval_s: int = 60
     risk_min_interval_s: float = 60  # per patient, for scores triggered by vitals
+    # home patients: medium NEWS2 and vital-sign findings page only when a confirming risk model agrees
+    model_confirmed_alerts: bool = True
     run_migrations: bool = True
 
 
@@ -55,10 +58,19 @@ def main() -> None:
         if ref is not None:
             processor.raise_finding(ref, None, risk_finding(score), utcnow())
 
-    scorer = RiskScorer(cfg.risk_service_url, cfg.service_token, on_high, min_interval_s=cfg.risk_min_interval_s)
+    def on_confirmed(patient_id: str, pending: dict, score: dict | None) -> None:
+        ref = registry.patient(patient_id)
+        if ref is not None:
+            processor.raise_finding(ref, pending["device_id"], confirmed_finding(pending, score),
+                                    datetime.fromisoformat(pending["occurred"]), pending.get("trace"),
+                                    pending.get("news2"), confirmed=True)
+
+    scorer = RiskScorer(cfg.risk_service_url, cfg.service_token, on_high, on_confirmed=on_confirmed,
+                        min_interval_s=cfg.risk_min_interval_s)
     processor = Processor(registry, LocalState(pool), PostgresSink(pool),
                           CareApiEmitter(cfg.care_api_url, cfg.service_token), min_quality=cfg.min_quality,
-                          suppress_s=cfg.suppress_s, gap_tolerance=cfg.gap_tolerance, request_scores=scorer.request)
+                          suppress_s=cfg.suppress_s, gap_tolerance=cfg.gap_tolerance, request_scores=scorer.request,
+                          request_confirm=scorer.confirm if cfg.model_confirmed_alerts else None)
 
     def healthy() -> bool:
         try:

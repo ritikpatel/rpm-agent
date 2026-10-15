@@ -177,7 +177,7 @@ def dev_token(body: DevLoginIn) -> dict:
 
 @app.get("/api/auth/me")
 def me(user: Annotated[User, Depends(current_user)]) -> dict:
-    return {"username": user.username, "role": user.role, "roles": sorted(user.roles),
+    return {"username": user.username, "title": user.title, "role": user.role, "roles": sorted(user.roles),
             "can": {p: user.can(p) for p in ("read", "act", "demo", "audit")},
             "demo_controls": settings.demo_controls}
 
@@ -211,7 +211,9 @@ def list_patients(user: Reader,
     )
     for row in rows:   # what each probability means, for the worklist badge
         for name, r in (row["risk"] or {}).items():
-            r.update(label=meta.get(name, {}).get("label"), short_label=meta.get(name, {}).get("short_label"))
+            m = meta.get(name, {})
+            r.update(label=m.get("label"), short_label=m.get("short_label"), validated=bool(m.get("validated")),
+                     horizon=m.get("horizon") or "short")
     return rows
 
 

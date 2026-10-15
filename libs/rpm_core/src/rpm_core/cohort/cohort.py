@@ -153,6 +153,12 @@ def _member(p: PatientRecord, setting: str, anchor: datetime, seed: str, replay:
         discharge_disposition=None if setting == "icu" else p.text("discharge_location"), record=p)
 
 
+# MIMIC patients always monitored at home because their outcomes show how the risk models relate: the three whose
+# record has all three outcomes (poor recovery, deterioration within 6 hours, readmission within 30 days), and one
+# readmitted after a good recovery (readmission is independent of the other two in the training data).
+SHOWCASE = ("RPM-10007795", "RPM-10014354", "RPM-10027602", "RPM-10001217")
+
+
 def build_cohort(data: TrainingData, anchor: datetime, icu: int = 6, home: int = 24, seed: str = "rpm-v1",
                  replay: bool = False) -> list[CohortMember]:
     """`icu` real patients shown as admitted, and `home` patients on wearables (0 = everyone else in the data).
@@ -160,14 +166,19 @@ def build_cohort(data: TrainingData, anchor: datetime, icu: int = 6, home: int =
 
     The choice is deterministic, so the seed tool, the simulator and the evaluation agree. Home patients are a third
     real MIMIC patients (they carry the richest record) and two thirds synthetic ones (they carry the full 72-hour
-    wearable stream)."""
+    wearable stream). The SHOWCASE patients present in the data are always among the real patients at home."""
     def ranked(group: list[PatientRecord], tag: str) -> list[PatientRecord]:
         return sorted(group, key=lambda p: _h(seed, f"{tag}:{p.patient_id}"))
 
-    real = ranked([p for p in data.patients.values() if p.real and p.discharge_vitals], "icu")
+    showcase = [data.patients[pid] for pid in SHOWCASE
+                if pid in data.patients and data.patients[pid].real and data.patients[pid].trajectory_points()]
+    pinned = {p.patient_id for p in showcase}
+    real = ranked([p for p in data.patients.values() if p.real and p.discharge_vitals
+                   and p.patient_id not in pinned], "icu")
     admitted = real[:max(0, icu)]
     taken = {p.patient_id for p in admitted}
-    rest_real = ranked([p for p in data.patients.values() if p.real and p.patient_id not in taken], "home")
+    rest_real = showcase + ranked([p for p in data.patients.values()
+                                   if p.real and p.patient_id not in taken | pinned], "home")
     synthetic = ranked([p for p in data.patients.values() if not p.real], "home")
     usable = [p for p in rest_real if p.trajectory_points()], [p for p in synthetic if p.trajectory_points()]
     if home:

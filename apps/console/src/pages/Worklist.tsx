@@ -1,21 +1,31 @@
 // Worklist: stat tiles, the alert inbox (what needs a human now) and the patient census (everyone, risk-sorted).
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { api, type AlertRow, type PatientRow, type Stats } from "../api";
-import { ago, Badge, bandStatus, fmt, News2Badge, severityStatus, Sparkline, toneStatus } from "../components/ui";
+import { agreement, ago, Badge, bandStatus, fmt, News2Badge, severityStatus, Sparkline, toneStatus } from "../components/ui";
 
 const TIER = ["", "RPM nurse", "Physician", "Rapid response"];
-const BAND_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 };
 
-/** The most concerning risk model for a patient, as a compact badge. */
-function topRisk(p: PatientRow) {
-  const entries = Object.entries(p.risk ?? {});
-  if (entries.length === 0) return <span className="muted small">–</span>;
-  const [model, r] = entries.sort((a, b) => (BAND_RANK[b[1].band] ?? 0) - (BAND_RANK[a[1].band] ?? 0)
-    || b[1].probability - a[1].probability)[0];
-  // Each model's own short form ("Recovery 62 · Moderate", "Readmission 28%"), coloured by its own reading.
+/** The short-term models (recovery, deterioration): whether they agree, each one's own reading in the tooltip. */
+function nextDays(p: PatientRow) {
+  const models = Object.entries(p.risk ?? {}).filter(([, r]) => r.horizon !== "long");
+  if (models.length === 0) return <span className="muted small">–</span>;
+  const tip = models.map(([m, r]) => r.badge ?? `${m.replace(/_/g, " ")} ${(r.probability * 100).toFixed(0)}%`).join("\n");
+  const agree = agreement(models.map(([m, r]) => ({ name: r.short_label ?? m, band: r.band, validated: r.validated })));
+  if (!agree) {   // one model so far: its own short form
+    const [m, r] = models[0];
+    return <Badge status={r.tone ? toneStatus(r.tone) : bandStatus(r.band)} title={tip}>
+      {r.badge ?? `${m.split("_")[0]} ${(r.probability * 100).toFixed(0)}%`}</Badge>;
+  }
+  return <Badge status={agree.status} title={`${tip}\n\n${agree.text}`}>{agree.label}</Badge>;
+}
+
+/** The 30-day readmission model, in its own short form ("Readmission 28%"). */
+function thirtyDays(p: PatientRow) {
+  const r = Object.values(p.risk ?? {}).find((x) => x.horizon === "long");
+  if (!r) return <span className="muted small">–</span>;
   return <Badge status={r.tone ? toneStatus(r.tone) : bandStatus(r.band)}
-    title={entries.map(([m, x]) => x.badge ?? `${m.replace(/_/g, " ")} ${(x.probability * 100).toFixed(0)}%`).join("\n")}>
-    {r.badge ?? `${model.split("_")[0]} ${(r.probability * 100).toFixed(0)}%`}</Badge>;
+    title="Research model: readmission within 30 days. It never raises or confirms an alert.">
+    {r.badge ?? `${(r.probability * 100).toFixed(0)}%`}</Badge>;
 }
 
 export default function Worklist({ patients, alerts, stats, trends, flashed, now, onChange, canAct }: {
@@ -25,6 +35,12 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
   const [setting, setSetting] = useState<"all" | "home" | "icu">("all");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [severity, setSeverity] = useState<"all" | "critical">("all");   // set from the alert tiles
+  const inbox = useRef<HTMLElement>(null);
+  const showAlerts = (which: "all" | "critical") => {
+    setSeverity(which);
+    inbox.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const rows = useMemo(() => patients
     .filter((p) => setting === "all" || p.care_setting === setting)
@@ -32,7 +48,8 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
       .includes(query.toLowerCase()))
     .sort((a, b) => (b.news2 ?? -1) - (a.news2 ?? -1) || a.patient_id.localeCompare(b.patient_id)),
   [patients, setting, query]);
-  const visibleAlerts = alerts.filter((a) => setting === "all" || a.care_setting === setting);
+  const visibleAlerts = alerts.filter((a) => (setting === "all" || a.care_setting === setting)
+    && (severity === "all" || a.severity === "critical"));
 
   const ack = async (a: AlertRow) => {
     setBusy(a.alert_id);
@@ -48,12 +65,14 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
         <div className="card tile"><div className="label">Patients monitored</div>
           <div className="value">{stats?.patients ?? "–"}</div>
           <div className="sub">{stats?.icu ?? "–"} in ICU · {stats?.home ?? "–"} at home · {stats?.streaming ?? "–"} streaming</div></div>
-        <div className="card tile"><div className="label">Active alerts</div>
+        <button className="card tile link" onClick={() => showAlerts("all")}
+                title="Show every active alert in the inbox"><div className="label">Active alerts</div>
           <div className="value">{alerts.length}</div>
-          <div className="sub">{unacked.length} awaiting acknowledgement</div></div>
-        <div className="card tile"><div className="label">Critical alerts</div>
+          <div className="sub">{unacked.length} awaiting acknowledgement</div></button>
+        <button className="card tile link" onClick={() => showAlerts("critical")} aria-pressed={severity === "critical"}
+                title="Show only the critical alerts in the inbox"><div className="label">Critical alerts</div>
           <div className="value">{alerts.filter((a) => a.severity === "critical").length}</div>
-          <div className="sub">{alerts.filter((a) => a.severity === "high").length} high</div></div>
+          <div className="sub">{alerts.filter((a) => a.severity === "high").length} high</div></button>
         <div className="card tile"><div className="label">Sensor → page, p95</div>
           <div className="value">{stats?.page_p95_s != null ? `${stats.page_p95_s.toFixed(2)} s` : "–"}</div>
           <div className="sub">{stats?.pages_1h ?? 0} pages · {alertsHour} rule events, last hour</div></div>
@@ -75,10 +94,15 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
       </div>
 
       <div className="grid-2">
-        <section className="card" aria-labelledby="inbox-h">
-          <header><h2 id="inbox-h">Alert inbox</h2><span className="muted small">{visibleAlerts.length} active</span></header>
+        <section className="card" aria-labelledby="inbox-h" ref={inbox} style={{ scrollMarginTop: 12 }}>
+          <header><h2 id="inbox-h">Alert inbox</h2>
+            {severity === "critical"
+              ? <span className="row small">critical only · {visibleAlerts.length}
+                  <button className="btn" onClick={() => setSeverity("all")}>Show all</button></span>
+              : <span className="muted small">{visibleAlerts.length} active</span>}</header>
           <div className="scroll">
-            {visibleAlerts.length === 0 && <div className="empty">No active alerts.</div>}
+            {visibleAlerts.length === 0 && <div className="empty">
+              {severity === "critical" ? "No critical alerts." : "No active alerts."}</div>}
             {visibleAlerts.map((a) => (
               <div className="alert-item" key={a.alert_id} role="link" tabIndex={0}
                    onClick={() => { location.hash = `#/patients/${a.patient_id}`; }}
@@ -108,7 +132,8 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
             sorted by NEWS2</span></header>
           <div className="scroll">
             <table>
-              <thead><tr><th>Patient</th><th>Status</th><th title="Highest band among the risk models">Risk</th>
+              <thead><tr><th>Patient</th><th>Status</th><th title="Recovery and deterioration: whether they are at or above their alert thresholds">Next days</th>
+                <th title="Readmission within 30 days (research model)">30 days</th>
                 <th>HR trend</th><th className="num">HR</th><th className="num">SpO₂</th><th>Last seen</th></tr></thead>
               <tbody>
                 {rows.map((p) => {
@@ -121,7 +146,8 @@ export default function Worklist({ patients, alerts, stats, trends, flashed, now
                         {" "}{p.care_setting === "icu" ? "ICU" : "home"}
                         {p.primary_diagnosis ? ` · ${p.primary_diagnosis.slice(0, 44)}` : ""}</div></td>
                       <td><News2Badge score={p.news2} band={p.news2_band} partial={p.news2_partial} /></td>
-                      <td>{topRisk(p)}</td>
+                      <td>{nextDays(p)}</td>
+                      <td>{thirtyDays(p)}</td>
                       <td><Sparkline values={trends[p.patient_id] ?? []} label={`${p.display_name} heart rate`} /></td>
                       <td className="num">{fmt(L.heart_rate?.v)}</td>
                       <td className="num">{fmt(L.spo2?.v)}</td>

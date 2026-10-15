@@ -26,8 +26,9 @@ class FakeSes:
 def test_everyone_on_the_tier_gets_their_own_message_without_clinical_details():
     ses = FakeSes()
     ch = EmailChannel("ses", "alerts@example.org", ses=ses)
-    to, ref, note = ch.send(ALERT, "Physician on call", {"email": ["a@example.org", "b@example.org"]}, "https://c/x")
-    assert to == "a@example.org, b@example.org" and ref == "m-1" and note is None
+    to, ref, note = ch.send(ALERT, "physician", {"name": "Physician on call",
+                                                 "email": ["a@example.org", "b@example.org"]}, "https://c/x")
+    assert to == "Physician on call (2 people)" and ref == "m-1" and note is None   # the role, never addresses
     assert [m["Destination"]["ToAddresses"] for m in ses.sent] == [["a@example.org"], ["b@example.org"]]
     msg = ses.sent[0]
     assert msg["FromEmailAddress"] == "alerts@example.org"
@@ -39,7 +40,8 @@ def test_one_unverified_address_does_not_block_the_others():
     ses = FakeSes(reject={"new@example.org"})
     to, _, _ = EmailChannel("ses", "s@example.org", ses=ses).send(
         ALERT, "RPM nurse", {"email": ["new@example.org", "ok@example.org"]}, "https://c/x")
-    assert to == "ok@example.org (not delivered: new@example.org: address not verified in Amazon SES)"
+    assert to == "RPM nurse (1 person); 1 not delivered: address not verified in Amazon SES"
+    assert "@" not in to
     assert len(ses.sent) == 1
     with pytest.raises(RuntimeError, match="not verified"):
         EmailChannel("ses", "s@example.org", ses=FakeSes(reject={"new@example.org"})).send(

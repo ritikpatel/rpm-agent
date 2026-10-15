@@ -83,10 +83,11 @@ probability, its band and the top factors.
   "version": "1.0.0",
   "title": "Early deterioration",
   "outcome": "Clinical deterioration needing escalation within about 6 hours",
-  "owner": "Harnoor",
+  "owner": "Model author",
   "triggers": ["vitals", "lab"],
   "care_settings": ["icu", "home"],
-  "bands": {"medium": 0.2, "high": 0.5},
+  "bands": {"high": 0.5},
+  "confirms_alerts": true,
   "min_interval_s": 60,
   "validated": true,
   "metrics": {"auroc": 0.84, "auprc": 0.41, "n": 5200, "positives": 310},
@@ -102,8 +103,15 @@ probability, its band and the top factors.
   new lab result), `discharge` (the patient was just discharged), `daily` (a scheduled run for every home patient).
   Any model can also be run on demand.
 - `care_settings`: which patients it applies to.
-- `bands`: probability thresholds for the medium and high bands. A model entering its high band raises a
-  clinical event; only a validated model can page the care team.
+- `bands`: `high` is the alert threshold. A model entering its high band raises a clinical event; only a validated
+  model can page the care team on its own. Below the threshold the result is low (shown as reassuring, not as a
+  warning); a model may add a `medium` threshold if its author defines one.
+- `horizon`: `short` (hours to days, such as deterioration or recovery) or `long` (weeks, such as 30-day
+  readmission). The console and the agents keep the two apart; nothing combines or averages models.
+- `confirms_alerts`: the model may turn a home patient's medium finding (NEWS2 5 to 6, a single red parameter, low
+  SpO2, sustained heart-rate change, an on-watch alert) into an alert. Such models are scored at once with the
+  `confirm` trigger; the finding pages when any of them is at or above its alert threshold.
+- `owner`: who maintains the model. It is kept for governance and is never shown in the console.
 - `validated`: set `true` only with evidence in `metrics`. Unvalidated models are labelled as weak evidence in the
   console and to the agents.
 - `requires`: parts of the context the model cannot do without, for example `["record"]` for a model trained only

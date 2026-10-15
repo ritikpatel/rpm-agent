@@ -26,6 +26,8 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     "demo": frozenset({"presenter", "admin"}),            # scenario, discharge and lab controls for demonstrations
     "audit": frozenset({"admin"}),                        # who read or changed which patient's data
 }
+# What the console shows for a person: their role, never their name or address (the audit log keeps who it was).
+ROLE_TITLES = {"physician": "Physician", "nurse": "RPM nurse", "admin": "Administrator", "presenter": "Presenter"}
 LEEWAY_S = 30
 
 
@@ -42,6 +44,10 @@ class User:
     @property
     def role(self) -> str:
         return next((r for r in ROLES if r in self.roles), "none")
+
+    @property
+    def title(self) -> str:
+        return ROLE_TITLES.get(self.role, "Care team")
 
     def can(self, permission: str) -> bool:
         return bool(self.roles & PERMISSIONS[permission])

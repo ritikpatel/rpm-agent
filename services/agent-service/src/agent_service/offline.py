@@ -59,7 +59,10 @@ def assess(ctx: dict, event: dict) -> dict:
                     f"({h['status']}; {'validated' if m.get('validated') else 'not validated'})")
         return (f"{m.get('label') or m['model']} {m['probability']:.0%} ({m['band']}, "
                 f"{'validated' if m.get('validated') else 'not validated'})")
-    models = ", ".join(described(m) for m in ctx["risk"])
+    short = [described(m) for m in ctx["risk"] if m.get("horizon", "short") != "long"]
+    later = [described(m) for m in ctx["risk"] if m.get("horizon") == "long"]
+    models = "; ".join(x for x in (f"short term: {', '.join(short)}" if short else "",
+                                   f"next 30 days (research): {', '.join(later)}" if later else "") if x)
     return {
         "signal_quality": quality, "concern_level": concern,
         "clinical_picture": (f"{p['display_name']} ({p['age']}{p['sex']}, {p['primary_condition']}, "

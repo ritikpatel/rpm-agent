@@ -100,11 +100,16 @@ class EmailChannel:
                 sent.append(address)
             except Exception as exc:  # noqa: BLE001
                 why = "address not verified in Amazon SES" if "not verified" in str(exc) else str(exc)[:120]
-                failed.append(f"{address}: {why}")
+                failed.append(why)
                 log.warning("alert e-mail not delivered", extra={"to": address, "error": str(exc)[:200]})
+        # what the console shows: the role on call and how many were reached, never names or addresses
+        who = contact.get("name") or tier_name
         if not sent:
-            raise RuntimeError("; ".join(failed))
-        return (", ".join(sent) + (f" (not delivered: {'; '.join(failed)})" if failed else ""), refs[0], None)
+            raise RuntimeError(f"{who}: none of {len(to)} delivered ({'; '.join(sorted(set(failed)))})")
+        reached = f"{who} ({len(sent)} {'person' if len(sent) == 1 else 'people'})"
+        if failed:
+            reached += f"; {len(failed)} not delivered: {'; '.join(sorted(set(failed)))}"
+        return (reached, refs[0], None)
 
 
 class WebhookChannel:
@@ -118,7 +123,7 @@ class WebhookChannel:
                    "patient_ref": minimal_ref(alert), "tier": tier_name, "link": link}
         r = httpx.post(url, json=payload, timeout=5)
         r.raise_for_status()
-        return (url, str(r.status_code), None)
+        return (f"{contact.get('name') or tier_name} (pager)", str(r.status_code), None)
 
 
 class WatchChannel:

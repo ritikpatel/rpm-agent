@@ -155,6 +155,9 @@ select, input[type="search"], input[type="text"], input[type="number"] { border:
 /* ---------- stat tiles ---------- */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tile { padding: 12px 14px; }
+.tile.link { text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.tile.link:hover { background: var(--hover); }
+.tile.link[aria-pressed="true"] { border-color: var(--accent); }
 .tile .label { color: var(--ink-2); font-size: 12px; }
 .tile .value { font-size: 24px; font-weight: 600; margin-top: 2px; }
 .tile .sub { font-size: 12px; color: var(--ink-muted); }
@@ -227,3 +230,10 @@ tr.flash td { animation: flash 0.9s ease-out; }
 .working { display: flex; align-items: flex-start; gap: 4px; margin-top: 8px; padding: 8px 10px; border-radius: 8px;
   background: var(--surface-2); border: 1px solid var(--border); font-size: 0.9em; }
 .working .spinner { margin-top: 2px; }
+
+/* risk models grouped by the time they look ahead */
+.risk-group { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2);
+  margin: 4px 0 8px; }
+.risk-group:not(:first-child) { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.agree { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; }
+.agree .badge { flex: none; }

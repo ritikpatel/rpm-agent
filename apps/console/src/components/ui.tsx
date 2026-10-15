@@ -31,6 +31,24 @@ export const bandStatus = (band: string | null | undefined): Status =>
 export const toneStatus = (tone: string | null | undefined): Status =>
   tone === "bad" ? "critical" : tone === "warn" ? "warning" : tone === "good" ? "good" : "neutral";
 
+/** Whether the short-term models (recovery, deterioration) agree. "Concerned" means at or above the model's own alert
+ *  threshold, the same test that confirms an alert. Scores are never combined: this only says whether they agree. */
+export function agreement(models: { name: string; band: string; validated?: boolean | null }[]):
+    { status: Status; label: string; text: string } | null {
+  if (models.length < 2) return null;
+  const up = models.filter((m) => m.band === "high");
+  const down = models.filter((m) => m.band !== "high");
+  if (down.length === 0) return { status: "critical", label: `Concern ${up.length}/${models.length}`,
+    text: "Both short-term models are at or above their alert thresholds." };
+  if (up.length === 0) return { status: "good", label: "No concern",
+    text: "Both short-term models are below their alert thresholds." };
+  const weak = models.filter((m) => !m.validated).map((m) => m.name);
+  return { status: "warning", label: `Concern ${up.length}/${models.length}`,
+    text: `The models disagree: ${up.map((m) => m.name).join(", ")} at or above the alert threshold, `
+      + `${down.map((m) => m.name).join(", ")} below it. Check the vital signs`
+      + (weak.length ? ` (${weak.join(", ")} not validated).` : ".") };
+}
+
 export const severityStatus = (s: string): Status =>
   s === "critical" ? "critical" : s === "high" ? "serious" : s === "medium" ? "warning" : "neutral";
 

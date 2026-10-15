@@ -44,7 +44,7 @@ export default function App() {
 
 function UserMenu({ me }: { me: Me }) {
   return (
-    <span className="small muted">{me.username} · {me.role}{" "}
+    <span className="small muted">{me.title ?? "Care team"}{" "}
       <button className="btn" onClick={() => { void signOut(); }}>Sign out</button></span>
   );
 }

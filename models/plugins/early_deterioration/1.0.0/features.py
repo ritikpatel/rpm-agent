@@ -1,4 +1,4 @@
-"""Features for Harnoor's early-deterioration model, 6-hour horizon (1.0.0).
+"""Features for the early-deterioration model, 6-hour horizon (1.0.0).
 
 His model reads 40 columns of the training data. They were computed by the data generator (rpm_synth
 feature_windows.py) from a minute-by-minute simulated watch feed, so this file computes each one the same way from
@@ -9,7 +9,8 @@ the platform's readings:
 - change since discharge against the vital signs charted before discharge (`ctx["discharge_vitals"]`);
 - the generator's hourly recovery score (modified NEWS2 plus drift from the discharge values) for
   `score_change_1h` and `sudden_score_drop_flag`;
-- from the hospital record (`ctx["record"]`): age, the heart rate and blood pressure charted in the ICU, and labs;
+- from the hospital record (`ctx["record"]`): age, the heart rate and blood pressure charted in the ICU, and labs
+  (a patient without one gets the age they were registered with and the training medians for the rest);
 - carried forward from the last recorded snapshot (`ctx["last_recorded"]`): steps, active minutes, activity and
   patient-reported scores, which the platform does not stream.
 
@@ -138,6 +139,8 @@ def build(ctx):
                 "mean": lambda v: sum(v) / len(v)}[how](vals)
 
     out = {k: float(rec.get(k, MEDIAN[k])) for k in RECORD}
+    if "anchor_age" not in rec and ctx.get("profile", {}).get("age") is not None:
+        out["anchor_age"] = float(ctx["profile"]["age"])
     out.update({k: float(last.get(k, MEDIAN[k])) for k in CARRIED})
     out["hours_since_discharge"] = float(ctx.get("hours_since_discharge") or 0.0)
     for w in (6, 12):
@@ -180,12 +183,12 @@ def build(ctx):
     return out
 
 
-# ---------------------------------------------------------------------------------------------- the result, his way
-# Harnoor's inference.py: the probability of deterioration in the next 6 hours, an alert level from his two
-# thresholds, and up to three named drivers (DRIVER_CANDIDATES), each shown with its value over the last 3 hours.
-# His "red" threshold (picked for 90% recall) came out lower than his "yellow" one (70% recall), so his own
-# alert_level would call nearly every patient RED; the levels below keep his thresholds in their natural order.
-HIGH, WATCH = 0.272, 0.00895
+# ------------------------------------------------------------------------------------ the result, the author's way
+# The author's inference.py: the probability of deterioration in the next 6 hours, an alert level, and up to three
+# named drivers (DRIVER_CANDIDATES), each shown with its value over the last 3 hours. The author's "red" threshold
+# (picked for 90% recall, 0.009) came out lower than the "yellow" one (70% recall), so it would call nearly every
+# patient RED; the platform alerts from the 0.272 threshold only and shows anything below it as low.
+HIGH = 0.272
 
 
 def _shock_index_max(s, now, hours=3):
@@ -232,15 +235,18 @@ def _drivers(ctx):
 
 
 def explain(ctx, features, probability, contributions):
-    level, tone = (("High", "bad") if probability >= HIGH else ("Watch", "warn") if probability >= WATCH
-                   else ("Low", "good"))
+    high = probability >= HIGH
+    level, tone = ("Above the alert threshold", "bad") if high else ("Below the alert threshold", "good")
     drivers = _drivers(ctx)
+    details = [f"Alert threshold: {HIGH:.0%} (caught 70% of deterioration events in training)."]
+    if not ctx.get("record"):
+        details.append("Estimated without a hospital record: labs and charted vital signs set to typical values.")
     return {"headline": {"label": "Deterioration in the next 6 hours", "value": f"{probability:.0%}", "suffix": "",
                          "status": level, "tone": tone},
             "badge": f"Deterioration {probability:.0%}",
-            "details": [f"Levels from Harnoor's thresholds: High from {HIGH:.0%} (70% of training events caught), "
-                        f"Watch from {WATCH:.1%} (90% caught)."],
+            "details": details,
             "concerns": drivers or ["No single driver stands out: check the full vital signs."], "reassurances": [],
             "note": "Not validated: on the shared training data this model ranks patients no better than chance "
                     "(AUROC 0.51); it was trained on a different 300-patient file.",
-            "values": {"predicted_probability": round(probability, 4), "level": level, "top_drivers": drivers}}
+            "values": {"predicted_probability": round(probability, 4), "alert": high, "top_drivers": drivers,
+                       "estimated": not ctx.get("record")}}

@@ -16,3 +16,7 @@ QUEUE_DEPTH = Gauge("rpm_ingest_queue_depth", "Approximate messages on the inges
 MESSAGES = Counter("rpm_ingest_messages_total", "SQS messages by outcome", ["outcome"])
 HELD = Gauge("rpm_ingest_reorder_held", "Records held back for reordering while catching up on a backlog")
 CLOCK_SKEW = Counter("rpm_clock_skew_total", "Negative hop durations observed (device clock ahead)", ["hop"])
+AWAITING_MODELS = Counter("rpm_findings_awaiting_models_total",
+                          "Medium findings for home patients held until a confirming risk model agrees", ["type"])
+CONFIRMATIONS = Counter("rpm_model_confirmations_total", "Held findings by outcome (confirmed, not_confirmed, "
+                        "unavailable: no model answered, so the rule alone pages)", ["outcome"])
