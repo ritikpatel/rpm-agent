@@ -1,0 +1,614 @@
+{
+ "hours": 24.0,
+ "patients": {
+  "home": 243,
+  "icu": 20
+ },
+ "windows_scored": 814995,
+ "sensitivity": {
+  "detected": 36,
+  "cases": 37,
+  "negative_scenarios_alerting": 0
+ },
+ "missed": [
+  {
+   "patient_id": "RPM-10027445",
+   "context": "icu",
+   "scenario": "af_rvr",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  }
+ ],
+ "alert_worthy_events": 10366,
+ "burden": {
+  "home": {
+   "alerts_per_patient_day": 0.601,
+   "steady_state_alerts_per_patient_day": 0.348,
+   "control_alerts_per_patient_day": 0.562,
+   "pages_per_patient_day": 0.778,
+   "alerts": 146,
+   "alerts_during_scenarios": 27,
+   "ppv": 0.185,
+   "control_alerts_by_first_rule": {
+    "SPO2_LOW": 47,
+    "NEWS2_HIGH": 45,
+    "NEWS2_MEDIUM": 13,
+    "NEWS2_RED_PARAM": 12
+   }
+  },
+  "icu": {
+   "alerts_per_patient_day": 0.75,
+   "steady_state_alerts_per_patient_day": 0.522,
+   "control_alerts_per_patient_day": 0.25,
+   "pages_per_patient_day": 1.1,
+   "alerts": 15,
+   "alerts_during_scenarios": 10,
+   "ppv": 0.667,
+   "control_alerts_by_first_rule": {
+    "NEWS2_RED_PARAM": 1,
+    "NEWS2_MEDIUM": 1
+   }
+  }
+ },
+ "against_training_data_labels": {
+  "deteriorated": {
+   "patients": 56,
+   "patients_alerted": 53,
+   "alerts": 57,
+   "alerts_per_patient_day": 1.018
+  },
+  "mild": {
+   "patients": 6,
+   "patients_alerted": 0,
+   "alerts": 0,
+   "alerts_per_patient_day": 0.0
+  },
+  "stable": {
+   "patients": 116,
+   "patients_alerted": 0,
+   "alerts": 0,
+   "alerts_per_patient_day": 0.0
+  },
+  "unlabelled": {
+   "patients": 37,
+   "patients_alerted": 19,
+   "alerts": 70,
+   "alerts_per_patient_day": 1.892
+  }
+ },
+ "model_confirmation": {
+  "confirmed": 95,
+  "confirmed_by:early_deterioration": 1,
+  "confirmed_by:recovery_monitoring": 94,
+  "held": 105,
+  "not_confirmed": 10
+ },
+ "scenarios": {
+  "home/af_rvr": {
+   "n": 3,
+   "detected": 3,
+   "paged": 3,
+   "median_time_to_detect_s": 107.6
+  },
+  "home/bradycardia": {
+   "n": 3,
+   "detected": 3,
+   "paged": 3,
+   "median_time_to_detect_s": 161.6
+  },
+  "home/chf_decompensation": {
+   "n": 3,
+   "detected": 3,
+   "paged": 3,
+   "median_time_to_detect_s": 672.4
+  },
+  "home/copd_exacerbation": {
+   "n": 3,
+   "detected": 3,
+   "paged": 3,
+   "median_time_to_detect_s": 446.3
+  },
+  "home/dataset_episode": {
+   "n": 7,
+   "detected": 7,
+   "paged": 7,
+   "median_time_to_detect_s": 1422.5
+  },
+  "home/device_offline": {
+   "n": 5,
+   "detected": 0,
+   "paged": 0,
+   "median_time_to_detect_s": null
+  },
+  "home/hypoxia": {
+   "n": 3,
+   "detected": 3,
+   "paged": 3,
+   "median_time_to_detect_s": 292.1
+  },
+  "home/motion_artifact": {
+   "n": 5,
+   "detected": 0,
+   "paged": 0,
+   "median_time_to_detect_s": null
+  },
+  "home/sepsis": {
+   "n": 3,
+   "detected": 3,
+   "paged": 3,
+   "median_time_to_detect_s": 404.1
+  },
+  "icu/af_rvr": {
+   "n": 2,
+   "detected": 1,
+   "paged": 1,
+   "median_time_to_detect_s": 571.9
+  },
+  "icu/bradycardia": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 119.6
+  },
+  "icu/chf_decompensation": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 274.2
+  },
+  "icu/copd_exacerbation": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 327.9
+  },
+  "icu/hypoxia": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 113.3
+  },
+  "icu/sepsis": {
+   "n": 2,
+   "detected": 2,
+   "paged": 2,
+   "median_time_to_detect_s": 329.0
+  }
+ },
+ "cases": [
+  {
+   "patient_id": "SYN-000029",
+   "context": "home",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 404.1,
+   "time_to_page_s": 404.1
+  },
+  {
+   "patient_id": "SYN-000136",
+   "context": "home",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 481.3,
+   "time_to_page_s": 481.3
+  },
+  {
+   "patient_id": "SYN-000049",
+   "context": "home",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 350.2,
+   "time_to_page_s": 350.2
+  },
+  {
+   "patient_id": "RPM-10005866",
+   "context": "icu",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 329.0,
+   "time_to_page_s": 329.0
+  },
+  {
+   "patient_id": "RPM-10025612",
+   "context": "icu",
+   "scenario": "sepsis",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 98.8,
+   "time_to_page_s": 458.8
+  },
+  {
+   "patient_id": "RPM-10022017",
+   "context": "home",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 1017.9,
+   "time_to_page_s": 1017.9
+  },
+  {
+   "patient_id": "SYN-000103",
+   "context": "home",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 672.4,
+   "time_to_page_s": 672.4
+  },
+  {
+   "patient_id": "SYN-000097",
+   "context": "home",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 503.4,
+   "time_to_page_s": 503.4
+  },
+  {
+   "patient_id": "RPM-10021487",
+   "context": "icu",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 274.2,
+   "time_to_page_s": 274.2
+  },
+  {
+   "patient_id": "RPM-10023239",
+   "context": "icu",
+   "scenario": "chf_decompensation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 230.4,
+   "time_to_page_s": 230.4
+  },
+  {
+   "patient_id": "SYN-000093",
+   "context": "home",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 391.8,
+   "time_to_page_s": 391.8
+  },
+  {
+   "patient_id": "SYN-000124",
+   "context": "home",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 446.3,
+   "time_to_page_s": 446.3
+  },
+  {
+   "patient_id": "SYN-000107",
+   "context": "home",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 483.7,
+   "time_to_page_s": 483.7
+  },
+  {
+   "patient_id": "RPM-10021118",
+   "context": "icu",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 327.9,
+   "time_to_page_s": 327.9
+  },
+  {
+   "patient_id": "RPM-10024043",
+   "context": "icu",
+   "scenario": "copd_exacerbation",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 294.1,
+   "time_to_page_s": 294.1
+  },
+  {
+   "patient_id": "SYN-000043",
+   "context": "home",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 170.6,
+   "time_to_page_s": 170.6
+  },
+  {
+   "patient_id": "RPM-10012552",
+   "context": "home",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 310.9,
+   "time_to_page_s": 310.9
+  },
+  {
+   "patient_id": "SYN-000151",
+   "context": "home",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 292.1,
+   "time_to_page_s": 292.1
+  },
+  {
+   "patient_id": "RPM-10016810",
+   "context": "icu",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 42.0,
+   "time_to_page_s": 42.0
+  },
+  {
+   "patient_id": "RPM-10039708",
+   "context": "icu",
+   "scenario": "hypoxia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 113.3,
+   "time_to_page_s": 113.3
+  },
+  {
+   "patient_id": "SYN-000028",
+   "context": "home",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 107.6,
+   "time_to_page_s": 107.6
+  },
+  {
+   "patient_id": "RPM-10016742",
+   "context": "home",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 107.1,
+   "time_to_page_s": 107.1
+  },
+  {
+   "patient_id": "SYN-000021",
+   "context": "home",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 133.5,
+   "time_to_page_s": 133.5
+  },
+  {
+   "patient_id": "RPM-10027445",
+   "context": "icu",
+   "scenario": "af_rvr",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "RPM-10018328",
+   "context": "icu",
+   "scenario": "af_rvr",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 571.9,
+   "time_to_page_s": 571.9
+  },
+  {
+   "patient_id": "SYN-000077",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 165.2,
+   "time_to_page_s": 165.2
+  },
+  {
+   "patient_id": "SYN-000086",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 161.6,
+   "time_to_page_s": 161.6
+  },
+  {
+   "patient_id": "SYN-000137",
+   "context": "home",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 155.7,
+   "time_to_page_s": 155.7
+  },
+  {
+   "patient_id": "RPM-10005348",
+   "context": "icu",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 119.6,
+   "time_to_page_s": 119.6
+  },
+  {
+   "patient_id": "RPM-10021312",
+   "context": "icu",
+   "scenario": "bradycardia",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 105.4,
+   "time_to_page_s": 105.4
+  },
+  {
+   "patient_id": "SYN-000179",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "RPM-10019385",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "SYN-000175",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "SYN-000102",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "SYN-000159",
+   "context": "home",
+   "scenario": "motion_artifact",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "SYN-000024",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "SYN-000196",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "RPM-10022041",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "RPM-10020640",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "SYN-000068",
+   "context": "home",
+   "scenario": "device_offline",
+   "detected": false,
+   "paged": false,
+   "time_to_detect_s": null,
+   "time_to_page_s": null
+  },
+  {
+   "patient_id": "SYN-000031",
+   "context": "home",
+   "scenario": "dataset_episode",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 752.9,
+   "time_to_page_s": 752.9
+  },
+  {
+   "patient_id": "SYN-000060",
+   "context": "home",
+   "scenario": "dataset_episode",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 326.7,
+   "time_to_page_s": 326.7
+  },
+  {
+   "patient_id": "SYN-000061",
+   "context": "home",
+   "scenario": "dataset_episode",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 1422.5,
+   "time_to_page_s": 1422.5
+  },
+  {
+   "patient_id": "SYN-000131",
+   "context": "home",
+   "scenario": "dataset_episode",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 1462.0,
+   "time_to_page_s": 1462.0
+  },
+  {
+   "patient_id": "SYN-000132",
+   "context": "home",
+   "scenario": "dataset_episode",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 1804.7,
+   "time_to_page_s": 1804.7
+  },
+  {
+   "patient_id": "SYN-000155",
+   "context": "home",
+   "scenario": "dataset_episode",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 309.4,
+   "time_to_page_s": 309.4
+  },
+  {
+   "patient_id": "SYN-000192",
+   "context": "home",
+   "scenario": "dataset_episode",
+   "detected": true,
+   "paged": true,
+   "time_to_detect_s": 2605.1,
+   "time_to_page_s": 2605.1
+  }
+ ],
+ "overrides": {},
+ "config": {
+  "hours": 24.0,
+  "seed": "rpm-v1",
+  "resolve_after_min": 30,
+  "label": "model confirmation of partial NEWS2 at home",
+  "model_confirmation": true,
+  "wall_s": 533.5
+ }
+}

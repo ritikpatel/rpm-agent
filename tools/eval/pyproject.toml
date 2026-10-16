@@ -8,6 +8,7 @@ dependencies = [
     "rpm-simulator",
     "stream-processor",
     "agent-service",
+    "risk-service",
 ]
 
 [project.scripts]
@@ -18,6 +19,7 @@ rpm-core = { workspace = true }
 rpm-simulator = { workspace = true }
 stream-processor = { workspace = true }
 agent-service = { workspace = true }
+risk-service = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

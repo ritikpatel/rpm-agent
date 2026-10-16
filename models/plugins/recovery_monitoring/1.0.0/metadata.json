@@ -42,7 +42,7 @@
     "pandas": "3.0.2"
   },
   "trained_on": "263 patients of the shared training data (MIMIC-IV-demo discharge state and the synthetic 72-hour wearable streams), scored at 1, 3, 6, 12 and 24 hours after discharge",
-  "limitations": "The outcome is defined by the data generator's danger rules, not observed clinical events. Trained on the first 24 hours after discharge; the platform scores patients later than that, where the model treats them like a 24-hour patient. The alert threshold is the author's (0.348); below it the 72-hour chance is shown as low. For a patient at home, a medium NEWS2 or vital-sign finding becomes an alert only when this model (or the other confirming model) is at or above its alert threshold.",
+  "limitations": "The outcome is defined by the data generator's danger rules, not observed clinical events. Trained on the first 24 hours after discharge; the platform scores patients later than that, where the model treats them like a 24-hour patient. The alert threshold is the author's (0.348); below it the 72-hour chance is shown as low. With model confirmation switched on (off by default), a home patient's medium NEWS2 becomes an alert only when this model or the other confirming model is at or above its alert threshold.",
   "source": "Recovery Monitoring Score - Model Files/recovery_score_model (hand-over of 2026-10-14)",
   "confirms_alerts": true
 }

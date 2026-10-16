@@ -299,34 +299,43 @@ def gated():
     return proc, pg, sqs, held
 
 
-def test_a_medium_home_finding_is_recorded_and_waits_for_the_models(gated):
+def partial_news2(proc, minutes=11):
+    """A wearable's breathing rate in the red (NEWS2 3 on one parameter), held for `minutes` at home."""
+    for m in (0, minutes):
+        vitals = {"heart_rate": {"mean": 80, "quality": 0.95}, "resp_rate": {"value": 26}}
+        proc.handle_batch([telemetry(end=NOW + timedelta(minutes=m), metrics=vitals)])
+
+
+def test_a_partial_news2_at_home_is_recorded_and_waits_for_the_models(gated):
     proc, pg, sqs, held = gated
-    proc.handle_batch([telemetry(metrics={"spo2": {"value": 87, "quality": 0.9}})])
-    assert [e.type for e in pg.events] == ["SPO2_LOW"] and not sqs.alert              # recorded, not paged
+    partial_news2(proc)
+    assert [e.type for e in pg.events] == ["NEWS2_RED_PARAM"] and not sqs.alert       # recorded, not paged
     assert pg.events[0].summary.endswith("(alerts only if the risk models agree)")
     assert pg.events[0].evidence["awaiting_models"]
-    assert [(h["patient_id"], h["type"]) for h in held] == [("p-1", "SPO2_LOW")]
+    assert [(h["patient_id"], h["type"]) for h in held] == [("p-1", "NEWS2_RED_PARAM")]
     assert "risk models" not in held[0]["summary"]                                      # the rule's own words
 
 
-def test_icu_and_critical_findings_page_without_waiting(gated):
+def test_single_vital_rules_icu_and_critical_findings_page_without_waiting(gated):
+    """Only a partial NEWS2 waits: gating one vital sign past its limit missed every slow-heart-rate case."""
     proc, _, sqs, held = gated
     proc.handle_batch([telemetry("sim-icu-2", metrics={"spo2": {"value": 87, "quality": 0.9}}, context="icu"),
-                       telemetry(metrics={"spo2": {"value": 80, "quality": 0.9}})])
-    assert sorted(e.type for e in sqs.alert) == ["SPO2_CRITICAL", "SPO2_LOW"] and not held
+                       telemetry(metrics={"spo2": {"value": 87, "quality": 0.9}})])
+    assert sorted((e.context, e.type) for e in sqs.alert) == [("home", "SPO2_LOW"), ("icu", "SPO2_LOW")]
+    assert not held
 
 
 def test_a_confirmed_finding_pages_although_its_type_was_just_recorded(gated):
     from stream_processor.processor import confirmed_finding
 
     proc, _, sqs, held = gated
-    proc.handle_batch([telemetry(metrics={"spo2": {"value": 87, "quality": 0.9}})])
+    partial_news2(proc)
     score = {"model": "recovery_monitoring", "title": "Recovery monitoring", "probability": 0.41, "validated": True,
              "alert_threshold": 0.348, "output": {"headline": {"label": "Recovery score", "value": 38.2,
                                                                "suffix": "/ 100"}}}
     f = confirmed_finding(held[0], score)
     assert proc.raise_finding(HOME, "sim-1", f, NOW, confirmed=True)
-    assert [e.type for e in sqs.alert] == ["SPO2_LOW"]
+    assert [e.type for e in sqs.alert] == ["NEWS2_RED_PARAM"]
     assert sqs.alert[0].summary.endswith("confirmed by Recovery monitoring (Recovery score 38.2 / 100)")
     assert sqs.alert[0].evidence["confirmed_by"]["model"] == "recovery_monitoring"
     unanswered = confirmed_finding(held[0], None)                       # no model could answer: the rule pages

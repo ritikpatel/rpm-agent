@@ -14,6 +14,7 @@ from datetime import datetime
 
 from pydantic import ValidationError
 
+from rpm_core import checkin
 from rpm_core.contracts import (
     SEVERITY_RANK,
     ClinicalEvent,
@@ -62,12 +63,13 @@ DEVICE_EVENT_POLICY: dict[str, tuple[str, bool, int]] = {
 }
 SUPPRESS_S: dict[str, int] = {"DATA_GAP": 1800, "NEWS2_RISING": 1800, "DEVICE_SILENT": 3600, "RISK_HIGH": 3600,
                               "ADMITTED": 0, "DISCHARGED": 0, "LAB_RESULT": 0}
-# For a patient at home these medium findings (a partial NEWS2 from a wearable, one vital sign past a limit) page only
-# when a confirming risk model (metadata "confirms_alerts") is at or above its alert threshold. Until then they are
-# recorded, not alerted. A high NEWS2, critical SpO2, SOS and fall always page; ICU patients are not gated (no model
-# covers them).
-CONFIRM_FIRST = frozenset({"NEWS2_MEDIUM", "NEWS2_RED_PARAM", "SPO2_LOW", "HR_SUSTAINED_HIGH", "HR_SUSTAINED_LOW",
-                           "EDGE_ALERT"})
+# When model confirmation is switched on (RPM_MODEL_CONFIRMED_ALERTS, off by default, see main.py): for a patient at
+# home a medium NEWS2 (5 to 6, or one red parameter), which a wearable can only measure in part, pages only when a
+# confirming risk model (metadata "confirms_alerts") is at or above its alert threshold; until then it is
+# recorded, not alerted. Every other finding pages on its own: one vital sign past its limit (low SpO2, sustained heart
+# rate) included, because the replay showed the models do not recognise, for example, bradycardia in an otherwise
+# stable patient (3 of 3 missed when gated, for 3% fewer alerts). ICU patients are not gated (no model covers them).
+CONFIRM_FIRST = frozenset({"NEWS2_MEDIUM", "NEWS2_RED_PARAM"})
 AWAITING = " (alerts only if the risk models agree)"
 # A record that waited longer than this between IoT ingest and processing belongs to a backlog. The ingest queue
 # does not hand a backlog out in order, so "sequence numbers are missing" proves nothing until it has drained.
@@ -340,7 +342,7 @@ class Processor:
             "SOS": "Patient pressed SOS on the watch",
             "FALL": "Fall detected by the watch",
             "EDGE_ALERT": f"On-device alert: {data.get('rule', 'unspecified')}",
-            "CHECKIN_REPLY": f"Check-in reply: {data.get('answer')!r} to {data.get('question_id')}",
+            "CHECKIN_REPLY": f"Patient answered {checkin.describe(data.get('answer'), data.get('question_id'))}",
             "DEVICE_STATUS": f"Device status: {data.get('reason', 'update')}",
         }[ev.type]
         processed_at = self.clock()

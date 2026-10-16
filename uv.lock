@@ -1633,6 +1633,7 @@ version = "0.2.0"
 source = { editable = "tools/eval" }
 dependencies = [
     { name = "agent-service" },
+    { name = "risk-service" },
     { name = "rpm-core" },
     { name = "rpm-simulator" },
     { name = "stream-processor" },
@@ -1641,6 +1642,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-service", editable = "services/agent-service" },
+    { name = "risk-service", editable = "services/risk-service" },
     { name = "rpm-core", editable = "libs/rpm_core" },
     { name = "rpm-simulator", editable = "simulator" },
     { name = "stream-processor", editable = "services/stream-processor" },

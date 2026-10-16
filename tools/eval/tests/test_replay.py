@@ -37,3 +37,23 @@ def test_guardrails_all_hold():
 
     broken = [c.name for c in cases() if not c.held]
     assert not broken
+
+
+def test_with_model_confirmation_a_partial_news2_waits_for_the_models():
+    from rpm_eval.cli import _cohort
+    from rpm_eval.replay import run
+    from stream_processor.processor import AWAITING, CONFIRM_FIRST
+
+    members = _cohort(str(DATA), "rpm-v1", 0, 0)
+    declining = [m for m in members if m.care_setting == "home" and m.record.trajectory == "declining"][:6]
+    result = run(declining, hours=1.5, confirm=True)
+    held = [e for e in result.events if e.summary.endswith(AWAITING)]
+    assert held and not any(e.requires_alert for e in held)                  # recorded, never paged on their own
+    for e in result.events:
+        if e.requires_alert and e.context == "home" and e.type in CONFIRM_FIRST:
+            assert "; confirmed by " in e.summary or "risk models unavailable" in e.summary
+            assert e.evidence["confirmed_by"] is None or e.evidence["confirmed_by"]["model"] in (
+                "recovery_monitoring", "early_deterioration")
+    c = result.confirmations
+    assert c["held"] == len(held) and c["held"] == c.get("confirmed", 0) + c.get("unanswered", 0) + c["not_confirmed"]
+    assert c.get("unanswered", 0) == 0                                        # the models answer in process

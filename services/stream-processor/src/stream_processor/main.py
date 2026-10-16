@@ -37,8 +37,10 @@ class ProcessorSettings(BaseServiceSettings):
     silent_after_s: int = 600
     watchdog_interval_s: int = 60
     risk_min_interval_s: float = 60  # per patient, for scores triggered by vitals
-    # home patients: medium NEWS2 and vital-sign findings page only when a confirming risk model agrees
-    model_confirmed_alerts: bool = True
+    # home patients: a medium (partial) NEWS2 pages only when a confirming risk model agrees. Off: on the team's data
+    # the rules raise no alert for a stable patient, so the models could only hold back real ones (replay, 16 Oct:
+    # 53 of 56 deteriorating patients alerted with it, 55 of 56 without). Worth re-measuring on data with false alarms.
+    model_confirmed_alerts: bool = False
     run_migrations: bool = True
 
 

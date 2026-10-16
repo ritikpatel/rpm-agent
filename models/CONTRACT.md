@@ -108,8 +108,8 @@ probability, its band and the top factors.
   warning); a model may add a `medium` threshold if its author defines one.
 - `horizon`: `short` (hours to days, such as deterioration or recovery) or `long` (weeks, such as 30-day
   readmission). The console and the agents keep the two apart; nothing combines or averages models.
-- `confirms_alerts`: the model may turn a home patient's medium finding (NEWS2 5 to 6, a single red parameter, low
-  SpO2, sustained heart-rate change, an on-watch alert) into an alert. Such models are scored at once with the
+- `confirms_alerts`: when model confirmation is switched on (`RPM_MODEL_CONFIRMED_ALERTS=true`; off by default),
+  the model may turn a home patient's medium NEWS2 (5 to 6, or a single red parameter) into an alert. Such models are scored at once with the
   `confirm` trigger; the finding pages when any of them is at or above its alert threshold.
 - `owner`: who maintains the model. It is kept for governance and is never shown in the console.
 - `validated`: set `true` only with evidence in `metrics`. Unvalidated models are labelled as weak evidence in the

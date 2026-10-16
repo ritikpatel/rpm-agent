@@ -12,24 +12,39 @@ and only a severity increase re-pages. A simulated clinician resolves an alert o
 alert-worthy event for `resolve_after_s`: an alert is not closed while the patient is still unwell, so one long
 deterioration counts as one alert. This is what turns raw rule findings into the alert and page counts a care team
 would experience.
+
+Model-confirmed alerts (`confirm=True`, as production with RPM_MODEL_CONFIRMED_ALERTS on; off by default, like
+production): a medium NEWS2 for a patient at home is held until the confirming risk models (recovery monitoring, early
+deterioration) are scored. The replay uses the stream processor's own RiskScorer
+with its call to the risk service replaced by the same model plug-ins scored in process, on the context the risk
+service would build: the patient's recorded readings before the replay, the readings produced during it, and the
+record facts.
 """
 
 from __future__ import annotations
 
 import json
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
-from rpm_core.cohort import CohortMember
+from rpm_core.cohort import CohortMember, model_inputs
+from rpm_core.cohort.cohort import profile_for_models
 from rpm_core.contracts import SEVERITY_RANK
 from rpm_simulator import engine as sim_engine
 from rpm_simulator.engine import CLINICAL_SCENARIOS, Simulator
 from rpm_simulator.scenarios import SCENARIOS
-from stream_processor.processor import Processor
+from stream_processor.processor import Processor, confirmed_finding
 from stream_processor.registry import PatientRef
+from stream_processor.risk import RiskScorer
 from stream_processor.state import LocalState
+
+PLUGINS = Path(__file__).resolve().parents[4] / "models" / "plugins"
+CONTEXT_H = 30                        # hours of readings the risk service gives a model (risk_service/scoring.py)
+_KEEP = ("ts", "source", "heart_rate", "hrv_rmssd", "spo2", "resp_rate", "sbp", "dbp", "temp", "skin_temp", "gcs",
+         "steps", "activity", "news2", "news2_partial")
 
 NEGATIVE_SCENARIOS = ("motion_artifact", "device_offline")  # must not alert
 DATASET_EPISODE = "dataset_episode"   # a deterioration that is in the patient's own training data
@@ -67,17 +82,80 @@ class Registry:
 
 
 class EventSink:
-    """Stands in for Postgres and care-api: keeps every emitted clinical event and counts the vitals rows."""
+    """Stands in for Postgres and care-api: keeps every emitted clinical event, counts the vitals rows and, for the
+    patients in `keep`, keeps their readings for the risk models."""
 
-    def __init__(self):
+    def __init__(self, keep: set[str] = frozenset()):
         self.events: list = []
         self.windows = 0
+        self.keep = keep
+        self.readings: dict[str, list[dict]] = defaultdict(list)
 
     def write(self, vitals, _status, _events, _rule_states=None, _ehr=None):
         self.windows += len(vitals)
+        for v in vitals:
+            if v["patient_id"] in self.keep and not v.get("late"):
+                self.readings[v["patient_id"]].append({k: v.get(k) for k in _KEEP})
 
     def emit(self, events):
         self.events.extend(events)
+
+
+class Confirmation:
+    """What the stream processor's RiskScorer does in production, with the risk service in process: the confirming
+    plug-ins are scored on the context the risk service would build, and the same selection decides."""
+
+    def __init__(self, members: list[CohortMember], sink: EventSink, clock: VirtualClock, refs: dict[str, PatientRef],
+                 plugins_dir: Path = PLUGINS):
+        from risk_service.plugins import PluginRegistry  # the eval needs the risk service only when it confirms
+
+        self.members = {m.patient_id: m for m in members}
+        self.sink, self.clock = sink, clock
+        self.refs = {r.patient_id: r for r in refs.values()}
+        self.models = PluginRegistry(plugins_dir).models
+        self.outcomes: Counter = Counter()
+        self.proc: Processor | None = None
+        self.scorer = RiskScorer("http://risk-service.invalid", "", lambda _p, _s: None, on_confirmed=self._confirmed)
+        self.scorer._post = self._score   # type: ignore[method-assign]
+
+    def __call__(self, patient_id: str, pending: dict) -> None:
+        self.outcomes["held"] += 1
+        self.scorer.confirm(patient_id, pending)
+        self.scorer._confirm_now(patient_id)
+
+    def _context(self, m: CohortMember) -> dict:
+        now = self.clock.utcnow()
+        discharge = m.discharge_at.replace(tzinfo=UTC) if m.discharge_at.tzinfo is None else m.discharge_at
+        # the recorded readings, as the seed tool loads them: vital signs only (the data's labels never reach a model)
+        history = [{"ts": discharge + timedelta(hours=h), "source": "record",
+                    **{k: v.get(k) for k in ("heart_rate", "resp_rate", "spo2", "sbp", "temp")}}
+                   for h, v in m.points if h <= m.live_from_h]
+        since = now - timedelta(hours=CONTEXT_H)
+        vitals = [r for r in history + self.sink.readings[m.patient_id] if since < r["ts"] <= now]
+        return {"now": now, "patient_id": m.patient_id, "care_setting": m.care_setting, "vitals": vitals,
+                "daily": [], "labs": [], "profile": dict(profile_for_models(m)), **model_inputs(m),
+                "hours_since_discharge": round((now - discharge).total_seconds() / 3600, 2), "hours_in_icu": None}
+
+    def _score(self, patient_id: str, trigger: str) -> list[dict]:
+        ctx = self._context(self.members[patient_id])
+        out = []
+        for name, p in self.models.items():
+            if not p.applies(trigger, ctx["care_setting"], ctx):
+                continue
+            pred = p.predict(p.build(ctx))
+            out.append({"model": name, "version": p.version, "title": p.meta["title"], "probability": pred.probability,
+                        "band": pred.band, "validated": bool(p.meta.get("validated")),
+                        "confirms_alerts": bool(p.meta.get("confirms_alerts")),
+                        "alert_threshold": p.meta["bands"]["high"], "output": p.explain(ctx, pred)})
+        return out
+
+    def _confirmed(self, patient_id: str, pending: dict, score: dict | None) -> None:
+        self.outcomes["confirmed" if score else "unanswered"] += 1
+        if score:
+            self.outcomes[f"confirmed_by:{score['model']}"] += 1
+        self.proc.raise_finding(self.refs[patient_id], pending["device_id"], confirmed_finding(pending, score),
+                                datetime.fromisoformat(pending["occurred"]), pending.get("trace"),
+                                pending.get("news2"), confirmed=True)
 
 
 def _record(topic: str, payload: str, clock: VirtualClock) -> dict:
@@ -218,6 +296,7 @@ class ReplayResult:
     windows: int
     start: datetime
     truth: dict[str, str] = field(default_factory=dict)   # home patient -> what their own data says (see below)
+    confirmations: dict[str, int] = field(default_factory=dict)   # held medium findings, by what the models said
 
 
 def apply_overrides(overrides: dict[str, str]) -> dict:
@@ -254,22 +333,27 @@ def restore_overrides(saved: dict) -> None:
 
 
 def run(members: list[CohortMember], *, hours: float = 24, seed: str = "rpm-v1", step_s: float = 5,
-        resolve_after_s: float = 1800, cases: list[Case] | None = None, progress=None) -> ReplayResult:
+        resolve_after_s: float = 1800, cases: list[Case] | None = None, progress=None,
+        confirm: bool = False) -> ReplayResult:
     start = datetime(2026, 10, 1, 0, 0, tzinfo=UTC)
     clock = VirtualClock(start)
     saved = (sim_engine.time, sim_engine.utcnow)   # the simulator reads time through these module globals
     sim_engine.time, sim_engine.utcnow = clock, clock.utcnow
     try:
-        return _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, progress)
+        return _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, progress, confirm)
     finally:
         sim_engine.time, sim_engine.utcnow = saved
 
 
-def _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, progress):
+def _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, progress, confirm):
     refs = {m.device_id: PatientRef(m.patient_id, m.care_setting, m.condition, m.hypercapnic, False, {})
             for m in members}
-    sink = EventSink()
-    proc = Processor(Registry(refs), LocalState(pool=None, clock=clock.time), sink, sink, clock=clock.utcnow)
+    sink = EventSink(keep={m.patient_id for m in members if m.care_setting == "home"} if confirm else set())
+    confirmation = Confirmation(members, sink, clock, refs) if confirm else None
+    proc = Processor(Registry(refs), LocalState(pool=None, clock=clock.time), sink, sink, clock=clock.utcnow,
+                     request_confirm=confirmation)
+    if confirmation:
+        confirmation.proc = proc
     records: list[dict] = []
 
     def publish(_key: str, topic: str, payload: str) -> None:
@@ -302,7 +386,15 @@ def _run(members, clock, start, hours, seed, step_s, resolve_after_s, cases, pro
     return ReplayResult(hours, {"home": sum(m.care_setting == "home" for m in members),
                                 "icu": sum(m.care_setting == "icu" for m in members)},
                         cases, sink.events, clinician.alerts, clinician.pages, sink.windows, start,
-                        dataset_truth(members, start, hours))
+                        dataset_truth(members, start, hours), _confirmations(confirmation))
+
+
+def _confirmations(c: Confirmation | None) -> dict[str, int]:
+    if c is None:
+        return {}
+    o = dict(c.outcomes)
+    o["not_confirmed"] = o.get("held", 0) - o.get("confirmed", 0) - o.get("unanswered", 0)
+    return dict(sorted(o.items()))
 
 
 # ---------------------------------------------------------------------- metrics
@@ -383,5 +475,6 @@ def metrics(r: ReplayResult) -> dict:
             "missed": [x for x in detected if not x["detected"]],
             "alert_worthy_events": sum(1 for e in r.events if e.requires_alert),
             "burden": burden, "against_training_data_labels": by_truth,
+            "model_confirmation": r.confirmations or "off (rules alone)",
             "scenarios": {f"{ctx}/{s}": summarise(rows) for (ctx, s), rows in sorted(by_type.items())},
             "cases": case_rows}

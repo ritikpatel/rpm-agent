@@ -95,6 +95,7 @@ Set these in the shell before `make up` (the `RPM_SIM_*` ones before `make sim`)
 
 ```bash
 uv run rpm-eval replay --hours 24 --out docs/eval/replay.json   # alert quality on all 263 patients, no stack needed
+uv run rpm-eval replay --hours 24 --model-confirmation --out docs/eval/replay-model-confirmation-news2.json
 uv run rpm-eval latency --out docs/eval/latency.json            # from the running stack
 uv run rpm-eval agents --out docs/eval/agents.json              # audit of recorded agent runs
 uv run rpm-eval guardrails --out docs/eval/guardrails.json      # red-team of the policy gate

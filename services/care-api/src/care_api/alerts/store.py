@@ -25,6 +25,7 @@ EVENT_LABELS = {
     "HR_SUSTAINED_HIGH": "Sustained tachycardia", "HR_SUSTAINED_LOW": "Sustained bradycardia",
     "SPO2_LOW": "Low SpO2", "SPO2_CRITICAL": "Critical SpO2", "SOS": "SOS pressed", "FALL": "Fall detected",
     "EDGE_ALERT": "On-device alert", "DEVICE_SILENT": "Monitor silent", "AGENT_ESCALATION": "Agent escalation",
+    "CHECKIN_REPLY": "Symptoms reported", "RISK_HIGH": "Risk model", "NEWS2_RISING": "NEWS2 rising",
 }
 
 
@@ -41,7 +42,9 @@ def _cause(actor: str) -> str:
 
 
 def _title(event_type: str, summary: str) -> str:
-    return f"{EVENT_LABELS.get(event_type, event_type)} — {summary}"[:240]
+    """What the console shows for an alert: words, never an internal event code."""
+    label = EVENT_LABELS.get(event_type) or event_type.replace("_", " ").capitalize()
+    return f"{label} — {summary}"[:240]
 
 
 class AlertStore:

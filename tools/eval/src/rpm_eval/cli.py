@@ -40,12 +40,13 @@ def cmd_replay(a: argparse.Namespace) -> None:
     saved = apply_overrides(overrides)
     try:
         result = run(members, hours=a.hours, seed=a.seed, resolve_after_s=a.resolve_after_min * 60,
-                     progress=progress)
+                     progress=progress, confirm=a.model_confirmation)
     finally:
         restore_overrides(saved)
     m = metrics(result)
     m["overrides"] = overrides
     m["config"] = {"hours": a.hours, "seed": a.seed, "resolve_after_min": a.resolve_after_min, "label": a.label,
+                   "model_confirmation": a.model_confirmation,
                    "wall_s": round(time.monotonic() - t0, 1)}
     _write(a.out, m)
     print(json.dumps({k: v for k, v in m.items() if k != "cases"}, indent=1, default=str))
@@ -114,6 +115,8 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--resolve-after-min", type=float, default=30, help="simulated clinician resolves alerts after")
     r.add_argument("--set", action="append", metavar="KNOB=VALUE",
                    help="rule knob for a sweep, e.g. BASELINE_STEP=3 or home.news2_persist_s=600")
+    r.add_argument("--model-confirmation", action="store_true",
+                   help="hold a home patient's medium NEWS2 until a risk model agrees (RPM_MODEL_CONFIRMED_ALERTS)")
     r.add_argument("--label", default="")
     r.add_argument("--out")
     r.set_defaults(fn=cmd_replay)

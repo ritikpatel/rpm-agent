@@ -1,7 +1,7 @@
 # Evaluation report
 
 Measured on 10 October 2026 on the local stack (Docker on a MacBook, 8 GB) with the patients in the team's training
-data. The raw outputs are in [eval/](eval). Every number here can be regenerated with the commands in the
+data; the alert-quality replay was re-run on 16 October with the current rules and models, with the same results. The raw outputs are in [eval/](eval). Every number here can be regenerated with the commands in the
 [runbook](runbook.md).
 
 ## Summary
@@ -14,6 +14,7 @@ data. The raw outputs are in [eval/](eval). Every number here can be regenerated
 | Do stable patients alert? | 0 of the 116 patients whose data is stable throughout | `eval/replay.json` |
 | Are injected deteriorations caught? | 29 of 30; the miss is one fast-heart-rhythm case in ICU | `eval/replay.json` |
 | Do harmless events alert? | 0 of 10 motion-artefact and connectivity-loss cases | `eval/replay.json` |
+| Should the risk models confirm alerts? | Not on this data: holding a partial NEWS2 until a model agrees missed 2 of the 55 deteriorating patients and saved only those 2 alerts; also gating single vital-sign rules missed every slow-heart-rate case. Switched off (`RPM_MODEL_CONFIRMED_ALERTS`) | `eval/replay-model-confirmation-*.json` |
 | How many alerts does a team get? | 0.61 per patient per day at home, 0.75 in ICU | `eval/replay.json` |
 | Are the agents' citations real? | 96 of 96 citations checked resolve to a retrieved passage | `eval/agents.json` |
 | Do the guardrails hold? | 13 of 13 red-team cases held | `eval/guardrails.json` |
@@ -108,6 +109,27 @@ own data is stable, ICU scenarios into admitted patients.
 
 Time to detect is measured from the start of a gradual onset, so it includes the time the illness takes to develop.
 The one miss is a fast atrial fibrillation in an ICU patient whose heart rate stayed under the ICU threshold.
+
+### Should the risk models confirm alerts?
+
+A wearable measures only part of NEWS2, so we tried holding a home patient's medium finding until a risk model
+agreed (recovery monitoring or early deterioration at or above its alert threshold), scoring the models in the
+replay exactly as the risk service does. Same patients, same day, three ways:
+
+| | Rules alone (deployed) | Models confirm a partial NEWS2 | Models confirm every medium finding |
+|---|---|---|---|
+| Patients whose data deteriorates, alerted | 55 of 56 | 53 of 56 | 53 of 56 |
+| Injected deteriorations detected | 36 of 37 | 36 of 37 | 33 of 37 |
+| Home bradycardia detected | 3 of 3 | 3 of 3 | 0 of 3 |
+| Stable patients alerted | 0 of 116 | 0 of 116 | 0 of 116 |
+| Home alerts in the day | 148 | 146 | 143 |
+| Findings held for the models / confirmed | | 105 / 95 | 5,998 / 5,985 |
+
+On this data the rules raise no alert for a stable patient, so there are no false alarms for the models to filter:
+all confirmation removed was real alerts. Gating single vital-sign rules was worse, because the models do not
+recognise a slow heart rate in an otherwise stable patient. Model confirmation is therefore switched off
+(`RPM_MODEL_CONFIRMED_ALERTS=false`); the models inform the clinicians and the agents. It is worth measuring again on
+data that has false alarms. Reproduce with `rpm-eval replay --model-confirmation`.
 
 ### Alert burden
 

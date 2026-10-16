@@ -78,6 +78,7 @@
    "alerts_per_patient_day": 1.892
   }
  },
+ "model_confirmation": "off (rules alone)",
  "scenarios": {
   "home/af_rvr": {
    "n": 3,
@@ -600,7 +601,8 @@
   "hours": 24.0,
   "seed": "rpm-v1",
   "resolve_after_min": 30,
-  "label": "",
-  "wall_s": 515.6
+  "label": "rules alone, same cohort",
+  "model_confirmation": false,
+  "wall_s": 517.4
  }
 }

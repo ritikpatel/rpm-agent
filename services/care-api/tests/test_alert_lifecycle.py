@@ -232,3 +232,12 @@ def test_minimum_necessary_phi_in_messages():
 
     ref = minimal_ref({"display_name": "Daniel Haddad", "patient_id": "p-90000006"})
     assert ref == "D.H. (…0006)"
+
+
+def test_alert_titles_are_words_not_event_codes():
+    from care_api.alerts.store import _title
+
+    assert _title("CHECKIN_REPLY", "Patient answered Yes to “more short of breath than usual”").startswith(
+        "Symptoms reported — ")
+    assert _title("RISK_HIGH", "Recovery monitoring: Recovery score 30.1 / 100").startswith("Risk model — ")
+    assert _title("SOME_NEW_TYPE", "x") == "Some new type — x"

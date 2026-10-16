@@ -28,6 +28,7 @@ from typing import Annotated, TypedDict
 from langgraph.graph import END, StateGraph
 from pydantic import ValidationError
 
+from rpm_core import checkin
 from rpm_core.contracts import AgentTask, utcnow, uuid7
 from rpm_core.rag import Hit
 
@@ -386,7 +387,8 @@ class AgentGraph:
         alert_id = str(alert["alert_id"]) if alert else None
         symptom = answer == "yes" and not qid.startswith("readings")
         if alert_id:
-            api.timeline(alert_id, "escalation", "patient_reply", f"Answered '{answer}' to {qid}", ev.get("evidence"))
+            api.timeline(alert_id, "escalation", "patient_reply", f"Patient answered {checkin.describe(answer, qid)}",
+                         ev.get("evidence"))
             nxt = {"medium": "high", "high": "critical"}.get(alert["severity"])
             if symptom and nxt:
                 api.raise_severity(alert_id, "escalation", nxt, "patient reports symptoms on check-in")

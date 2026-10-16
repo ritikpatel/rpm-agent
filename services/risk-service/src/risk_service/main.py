@@ -69,7 +69,7 @@ def models(_: Service) -> list[dict]:
 
 class ScoreIn(BaseModel):
     patient_id: str
-    # confirm: a home patient's medium NEWS2 or vital-sign finding is waiting for the confirming models (scored now)
+    # confirm: a home patient's medium NEWS2 is waiting for the confirming models (scored now)
     trigger: Literal["vitals", "lab", "discharge", "daily", "on_demand", "confirm"] = "on_demand"
 
 

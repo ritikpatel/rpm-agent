@@ -13,6 +13,7 @@ from dataclasses import replace
 
 from prometheus_client import Counter, Histogram
 
+from rpm_core import checkin
 from rpm_core.contracts import AgentTask, ClinicalEvent
 from rpm_core.devices import DeviceCommander
 from rpm_core.live import publish
@@ -184,7 +185,7 @@ class AlertEngine:
         with self.pool.connection() as conn:
             conn.execute("INSERT INTO messages (patient_id, direction, kind, text, sender, device_id) "
                          "VALUES (%s, 'from_patient', 'reply', %s, 'patient', %s)",
-                         (ev.patient_id, f"{data.get('answer')} (to {data.get('question_id')})", ev.device_id))
+                         (ev.patient_id, checkin.describe(data.get("answer"), data.get("question_id")), ev.device_id))
         publish(self.pool, {"type": "message", "patient_id": ev.patient_id})
 
     # ------------------------------------------------------------------ agent queue
