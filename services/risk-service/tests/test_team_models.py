@@ -150,3 +150,28 @@ def test_no_label_reaches_a_model(data):
               "recovery_score", "icu_to_discharge_days", "severity"}
     for p in data.patients.values():
         assert not labels & (set(p.record_facts) | set(p.last_recorded) | set(p.discharge_state))
+
+
+def test_early_deterioration_1_1_is_the_retrained_model_with_live_inputs_only(models):
+    """1.1.0 reads what the platform can supply live, and its threshold and evidence are the training script's."""
+    import importlib.util
+
+    plugin = models["early_deterioration"]
+    assert plugin.version == "1.1.0" and not plugin.meta["validated"]       # informs; cannot page on its own
+    spec = importlib.util.spec_from_file_location("ed_train", REPO / "models/training/early_deterioration/train.py")
+    train = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(train)
+    fb = train.builder()
+    assert plugin.features == [f for f in fb.FEATURES if f not in fb.CARRIED and f not in train.TIME]
+    assert "hours_since_discharge" not in plugin.features
+    assert plugin.meta["bands"]["high"] == plugin.meta["metrics"]["alert_threshold"]
+    assert plugin.meta["metrics"]["cv_auroc_mean"] >= 0.75 and plugin.meta["metrics"]["cv_auroc_mimic_rows"] >= 0.75
+
+
+def test_retrained_early_deterioration_is_not_a_clock(data, models):
+    """Without the hours since discharge, the same physiology scores the same at 6 and at 72 hours."""
+    plugin = models["early_deterioration"]
+    p = next(p for p in data.patients.values() if not p.real and p.stream)
+    early, late = ctx_at(p, 6.0, p.stream), ctx_at(p, 6.0, p.stream)
+    late["hours_since_discharge"] = 72.0
+    assert plugin.predict(plugin.build(early)).probability == plugin.predict(plugin.build(late)).probability

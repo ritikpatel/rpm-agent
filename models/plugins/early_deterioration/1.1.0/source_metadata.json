@@ -1,0 +1,40 @@
+{
+  "training_script": "models/training/early_deterioration/train.py",
+  "training_metrics": {
+    "rows": 1315,
+    "patients": 263,
+    "events": 163,
+    "features": 33,
+    "cv": "5-fold, patients grouped, 3 seeds; trees chosen by an inner grouped 4-fold CV on each training fold",
+    "cv_auroc_mean": 0.98,
+    "cv_auroc_by_seed": [
+      0.98,
+      0.981,
+      0.98
+    ],
+    "cv_auprc": 0.945,
+    "cv_auroc_mimic_rows": 0.79,
+    "cv_auroc_synthetic_rows": 0.998,
+    "cv_brier": 0.0218,
+    "event_rate": 0.124,
+    "alert_threshold": 0.8431,
+    "threshold_rule": "caught 70% of deteriorations in CV",
+    "at_threshold": {
+      "recall": 0.706,
+      "specificity": 1.0,
+      "ppv": 1.0,
+      "share_of_snapshots_above": 0.087,
+      "stable_snapshots_above": 0.0,
+      "declining_snapshots_above": 0.053
+    },
+    "mean_probability_by_course": {
+      "stable": 0.013,
+      "recovering": 0.315,
+      "declining": 0.119
+    },
+    "same_rows_v1_0_0_auroc": 0.73,
+    "same_rows_news2_auroc": 0.875,
+    "agreement_with_recovery_spearman": 0.202,
+    "trees": 274
+  }
+}

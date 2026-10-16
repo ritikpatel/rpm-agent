@@ -1,0 +1,61 @@
+{
+  "name": "early_deterioration",
+  "version": "1.1.0",
+  "title": "Early deterioration",
+  "outcome": "Deterioration (a vital-sign danger rule sustained for 30 minutes) within the next 6 hours",
+  "horizon": "short",
+  "label": "Deterioration in the next 6 hours",
+  "short_label": "Deterioration",
+  "owner": "Harnoor",
+  "triggers": [
+    "vitals",
+    "lab"
+  ],
+  "care_settings": [
+    "home"
+  ],
+  "min_interval_s": 300,
+  "bands": {
+    "high": 0.8431
+  },
+  "validated": false,
+  "metrics": {
+    "rows": 1315,
+    "patients": 263,
+    "events": 163,
+    "features": 33,
+    "cv": "5-fold, patients grouped, 3 seeds; trees chosen by an inner grouped 4-fold CV on each training fold",
+    "cv_auroc_mean": 0.98,
+    "cv_auroc_by_seed": [
+      0.98,
+      0.981,
+      0.98
+    ],
+    "cv_auprc": 0.945,
+    "cv_auroc_mimic_rows": 0.79,
+    "cv_auroc_synthetic_rows": 0.998,
+    "cv_brier": 0.0218,
+    "event_rate": 0.124,
+    "alert_threshold": 0.8431,
+    "threshold_rule": "caught 70% of deteriorations in CV",
+    "at_threshold": {
+      "recall": 0.706,
+      "specificity": 1.0,
+      "ppv": 1.0,
+      "share_of_snapshots_above": 0.087,
+      "stable_snapshots_above": 0.0,
+      "declining_snapshots_above": 0.053
+    },
+    "same_rows_v1_0_0_auroc": 0.73,
+    "same_rows_news2_auroc": 0.875,
+    "trees": 274,
+    "note": "Grouped cross-validation on the shared data: much better than 1.0.0 (0.73) and than NEWS2 alone (0.875) on the same rows. The synthetic rows (0.998) are partly learning the data generator that also made their labels; the 63 real MIMIC patients (0.79, 23 events) are the more realistic figure. In the data a deterioration only starts within about 12 hours of discharge, so the model is untested at the 24 to 72 hours and later at which the platform monitors patients."
+  },
+  "libraries": {
+    "lightgbm": "4.7.0"
+  },
+  "trained_on": "The shared training data (rpm_training_sample.csv): every labelled snapshot, 263 patients at 1, 3, 6, 12 and 24 hours after discharge, 163 deteriorations; inputs built by the platform's feature builder",
+  "limitations": "Not validated: the shared data has no deterioration that starts later than about 12 hours after discharge, while the platform monitors patients from 24 (MIMIC) or 72 (synthetic) hours, so it informs but cannot page on its own. It predicts the start of a new deterioration from vital signs that are beginning to change; a deterioration already under way scores low (the rules alert on it). The hours since discharge and the six inputs carried forward from the last recorded snapshot are left out. For a patient without a hospital record, age comes from the registration and the record's labs and charted vital signs are set to the training medians: the result is marked as estimated. With model confirmation switched on (off by default), a home patient's medium NEWS2 becomes an alert only when this model or the other confirming model is at or above its alert threshold.",
+  "source": "Retrained on 16 Oct 2026 with models/training/early_deterioration/train.py from the shared training data; 1.0.0 is the author's hand-over",
+  "confirms_alerts": true
+}

@@ -68,7 +68,9 @@ def test_registry_serves_the_teams_three_models() -> None:
     assert not registry.errors
     assert {(m.name, m.meta["owner"]) for m in registry.models.values()} == {
         ("early_deterioration", "Harnoor"), ("readmission_risk", "Tiya"), ("recovery_monitoring", "Navya")}
-    assert all(m.version == "1.0.0" and m._booster is not None for m in registry.models.values())
+    assert {m.name: m.version for m in registry.models.values()} == {
+        "early_deterioration": "1.1.0", "readmission_risk": "1.0.0", "recovery_monitoring": "1.0.0"}  # 1.1.0: retrained
+    assert all(m._booster is not None for m in registry.models.values())
 
 
 def test_every_home_patient_is_scored_and_a_missing_record_is_marked_estimated() -> None:

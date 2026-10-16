@@ -18,12 +18,13 @@ data; the alert-quality replay was re-run on 16 October with the current rules a
 | How many alerts does a team get? | 0.61 per patient per day at home, 0.75 in ICU | `eval/replay.json` |
 | Are the agents' citations real? | 96 of 96 citations checked resolve to a retrieved passage | `eval/agents.json` |
 | Do the guardrails hold? | 13 of 13 red-team cases held | `eval/guardrails.json` |
-| How accurate are the risk models? | Recovery monitoring: held-out AUROC 0.91. Readmission: 0.97 on 16 admissions (3 events). Early deterioration: chance level on the shared data | model cards, `services/risk-service/tests/test_team_models.py` |
+| How accurate are the risk models? | Recovery monitoring: held-out AUROC 0.91. Readmission: 0.97 on 16 admissions (3 events). Early deterioration: the handed-over model was at chance level on the shared data; retrained on it (1.1.0), cross-validated AUROC 0.98 (0.79 on the real MIMIC patients) | model cards, `services/risk-service/tests/test_team_models.py` |
 
 ## 1. Prediction accuracy
 
-The three models are the team's, handed over on 2026-10-14 and served unchanged from their LightGBM files. The first
-column is each owner's held-out result; the next two were measured on the platform from the shared training data.
+The three models are the team's, handed over on 2026-10-14. Recovery monitoring and readmission risk are served
+unchanged from their LightGBM files; early deterioration was retrained on the shared data (below). The first column is
+each owner's held-out result; the next two were measured on the platform from the shared training data.
 
 | Model | Owner's held-out result | Platform rebuilds the inputs it was trained on | Scored through the platform's feature path |
 |---|---|---|---|
@@ -34,8 +35,26 @@ column is each owner's held-out result; the next two were measured on the platfo
 Recovery monitoring has held-out evidence on the data the platform runs on, so it is marked validated: a high score
 can raise an alert. Readmission risk has too few events (ten readmissions in all) and early deterioration does not
 hold up on the shared data, so both are marked `validated: false`: labelled as weak evidence in the console and to
-the agents, and they cannot page anyone. What would make early deterioration usable is retraining on the shared file
-with only the inputs the platform can supply (its `features.py` lists them).
+the agents, and they cannot page anyone.
+
+**Early deterioration retrained (1.1.0, 16 October).** `models/training/early_deterioration/train.py` refits it on
+all 1,315 labelled snapshots of the shared file (163 deteriorations), with every input built by the plug-in's own
+feature code, without the six inputs that are frozen when serving and without the hours since discharge (in this
+data a deterioration only starts within about 12 hours of discharge, so that input turned the model into a clock).
+Grouped 5-fold cross-validation over three seeds:
+
+| Same rows | AUROC |
+|---|---|
+| 1.1.0 | 0.98 (MIMIC rows 0.79, 23 events; synthetic rows 0.998) |
+| 1.0.0, the hand-over | 0.73 |
+| NEWS2 alone | 0.875 |
+
+At its threshold (84%, chosen to catch 70% of deteriorations) it raised no false alarm in cross-validation. Because
+the data holds no deterioration that starts after 12 hours, and the platform monitors patients from 24 to 72 hours
+on, it was also tested on simulated late deteriorations: it crossed its threshold for 6 of 18 (3 of 3 sepsis, 2 of 3
+heart failure, 1 of 3 COPD; none of the low-oxygen or heart-rhythm cases), never for the 8 patients without one, and
+always after the rules had paged. It therefore stays `validated: false`: it informs clinicians and agents and
+cannot page on its own. The model card has the details.
 
 Two cautions:
 
