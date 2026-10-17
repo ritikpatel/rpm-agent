@@ -24,7 +24,7 @@ function thirtyDays(p: PatientRow) {
   const r = Object.values(p.risk ?? {}).find((x) => x.horizon === "long");
   if (!r) return <span className="muted small">–</span>;
   return <Badge status={r.tone ? toneStatus(r.tone) : bandStatus(r.band)}
-    title="Research model: readmission within 30 days. It never raises or confirms an alert.">
+    title="Readmission within 30 days">
     {r.badge ?? `${(r.probability * 100).toFixed(0)}%`}</Badge>;
 }
 

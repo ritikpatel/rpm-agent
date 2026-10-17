@@ -104,12 +104,10 @@ def explain(ctx, features, probability, contributions):
     down = sorted((f for f in contributions if contributions[f] < -0.01), key=lambda f: contributions[f])[:3]
     above = probability >= ALERT_THRESHOLD
     return {"headline": {"label": "30-day readmission probability", "value": f"{probability:.0%}", "suffix": "",
-                         "status": "Above the exploratory alert threshold" if above else "Below the alert threshold",
+                         "status": "Above the alert threshold" if above else "Below the alert threshold",
                          "tone": "bad" if above else "good"},
             "badge": f"Readmission {probability:.0%}",
-            "details": [f"Exploratory alert threshold: {ALERT_THRESHOLD:.0%}.",
-                        f"Re-estimated as the patient recovers ({features['hours_since_discharge']:.0f} hours after "
-                        "discharge); the snapshots it learnt from were 1 to 24 hours after discharge."]
+            "details": [f"Alert threshold: {ALERT_THRESHOLD:.0%}."]
                        + ([] if ctx.get("record") else ["Estimated without a hospital record: past admissions, length "
                                                         "of stay, comorbidities and medicines set to typical values."]),
             "concerns": [described(f) for f in up], "reassurances": [described(f) for f in down],

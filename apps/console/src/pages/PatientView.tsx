@@ -153,9 +153,9 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
   const longTerm = risk.filter((r) => r.horizon === "long");
   const agree = agreement(shortTerm.map((r) => ({ name: r.short_label ?? r.model, band: r.band, validated: r.validated })));
   const riskCard = (r: RiskRow) => {
+    // Each model's evidence (validation, metrics, limits) is in its model card and reaches the agents; the console
+    // shows the reading itself.
     const o = r.output;
-    const tag = r.validated ? <span className="tag">validated</span>
-      : <span className="tag">not validated: weak evidence</span>;
     if (!o) {   // a model without its own explanation: the probability of the outcome it names
       return (
         <div key={r.model} style={{ marginBottom: 12 }}>
@@ -164,7 +164,7 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
             <Badge status={bandStatus(r.band)}>{(r.probability * 100).toFixed(0)}% · {r.band}</Badge>
           </div>
           <div className="muted small">{r.outcome}</div>
-          <div className="muted small">v{r.version} · {ago(r.computed_at, now)} {tag}</div>
+          <div className="muted small">Scored {ago(r.computed_at, now)}</div>
         </div>);
     }
     // The model's own reading, as its owner defined it (recovery score, readmission probability, ...).
@@ -183,8 +183,7 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
         <div className="small">Concerns: {(o.concerns ?? []).join(" · ")}</div>}
       {(o.reassurances ?? []).length > 0 &&
         <div className="small muted">Reassuring: {(o.reassurances ?? []).join(" · ")}</div>}
-      {o.note && <div className="small muted" style={{ fontStyle: "italic" }}>{o.note}</div>}
-      <div className="muted small">{r.title} v{r.version} · {ago(r.computed_at, now)} {tag}</div>
+      <div className="muted small">Scored {ago(r.computed_at, now)}</div>
     </div>);
   };
   const nextEsc = alert?.next_escalation_at ? Math.max(0, (new Date(alert.next_escalation_at).getTime() - now) / 1000) : null;
@@ -390,9 +389,6 @@ export default function PatientView({ id, now, live, demo, canAct }: { id: strin
               </>}
               {longTerm.length > 0 && <>
                 <h3 className="risk-group">Next 30 days</h3>
-                <div className="muted small" style={{ marginBottom: 8 }}>A research model that answers a different,
-                  slower question: in the training data, readmission did not follow recovery or deterioration. It never
-                  raises or confirms an alert.</div>
                 {longTerm.map(riskCard)}
               </>}
             </div>
