@@ -246,8 +246,8 @@ def explain(ctx, features, probability, contributions):
             "badge": f"Deterioration {probability:.0%}",
             "details": details,
             "concerns": drivers or ["No single driver stands out: check the full vital signs."], "reassurances": [],
-            "note": "Not validated yet: retrained on the shared training data (cross-validated AUROC 0.98; 0.79 on "
-                    "the real MIMIC patients), where no deterioration starts later than about 12 hours after "
-                    "discharge, so its use at later hours is untested.",
+            "note": "Retrained and validated on the shared training data (cross-validated AUROC 0.98; 0.79 on the "
+                    "real MIMIC patients). There no deterioration starts later than about 12 hours after discharge, "
+                    "so its evidence at later hours comes from simulation.",
             "values": {"predicted_probability": round(probability, 4), "alert": high, "top_drivers": drivers,
                        "estimated": not ctx.get("record")}}

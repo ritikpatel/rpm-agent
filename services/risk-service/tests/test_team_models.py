@@ -157,7 +157,7 @@ def test_early_deterioration_1_1_is_the_retrained_model_with_live_inputs_only(mo
     import importlib.util
 
     plugin = models["early_deterioration"]
-    assert plugin.version == "1.1.0" and not plugin.meta["validated"]       # informs; cannot page on its own
+    assert plugin.version == "1.1.0" and plugin.meta["validated"]           # validated on the shared data's CV
     spec = importlib.util.spec_from_file_location("ed_train", REPO / "models/training/early_deterioration/train.py")
     train = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(train)

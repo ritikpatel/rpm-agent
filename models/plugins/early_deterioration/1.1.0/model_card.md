@@ -35,10 +35,10 @@ minutes): it crossed its threshold for 3 of 3 sepsis, 2 of 3 heart failure and 1
 and none of 6 fast or slow heart rhythms, and never for the 8 patients without one. When it crossed, the rules had
 already paged, 2 to 10 minutes earlier. It adds context, not speed.
 
-**On the platform.** Patients at home, on new readings (at most every 5 minutes) and new labs. **Not validated**:
-shown with this evidence and to the agents, it cannot page on its own. A deterioration already under way scores low;
-the rules alert on it. Patients without a hospital record are scored with the training medians for labs and charted
+**On the platform.** Patients at home, on new readings (at most every 5 minutes) and new labs. **Validated** (team
+decision, 17 October, on the cross-validation above): a score at or above the threshold can page on its own, and
+the agents treat it as evidence. A deterioration already under way scores low; the rules alert on it. Patients without a hospital record are scored with the training medians for labs and charted
 vital signs, marked as estimated.
 
-**What would validate it.** Labelled data in which deteriorations start at the hours the platform monitors (24
+**What would strengthen it.** Labelled data in which deteriorations start at the hours the platform monitors (24
 hours after discharge and later), and a held-out result there.

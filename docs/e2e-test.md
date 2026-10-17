@@ -99,8 +99,9 @@ Use `SYN-000118` (or any home patient already showing an alert).
      warning that it is a research prototype.
    - **Deterioration in the next 6 hours** (Harnoor): the probability, a level, and his named drivers such as
      "SpO2 dropped (min_spo2_3h=88.0)".
-   Readmission and deterioration appear only for patients with a hospital record (the MIMIC ones) and are labelled
-   "not validated". Each lists its concerns and what is reassuring, with the values the model saw.
+   All three appear for every patient at home (without a hospital record, readmission and deterioration are marked
+   "estimated"); readmission is labelled "not validated". Each lists its concerns and what is reassuring, with the
+   values the model saw.
 
 ## Part C: a patient in the ICU, then discharged
 

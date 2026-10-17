@@ -20,7 +20,7 @@ export default function SignIn({ config, error }: { config: AuthConfig; error?: 
   return (
     <div className="page" style={{ maxWidth: 560, margin: "8vh auto" }}>
       <section className="card">
-        <header><h2>RPM Console</h2><span className="muted small">Synthetic data · decision support</span></header>
+        <header><h2>RPM Console</h2><span className="muted small">Decision support, not a diagnosis</span></header>
         <div className="body stack">
           {config.mode === "oidc" ? <>
             <p className="small">Sign in with your organisation account. Access depends on your care-team role.</p>

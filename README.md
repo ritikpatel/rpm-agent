@@ -118,8 +118,8 @@ model card). Their hand-over folders are git-ignored; only what serving needs is
 | Model | Owner | Runs for | Evidence | On the platform |
 |---|---|---|---|---|
 | Recovery monitoring | Navya | patients at home | held-out AUROC 0.91; the platform rebuilds her inputs exactly | validated: a high score can raise an alert |
-| Readmission risk | Tiya | patients at home with a hospital record | held-out AUROC 0.97, but 3 readmissions in the test set; the platform rebuilds her inputs exactly | not validated: shown as weak evidence |
-| Early deterioration (6 h) | Harnoor | patients at home with a hospital record | his report: AUROC 0.92 on a file not in the hand-over; on the shared data 0.51, and 0.75 through the platform's features | not validated: shown as weak evidence |
+| Readmission risk | Tiya | patients at home | held-out AUROC 0.97, but 3 readmissions in the test set; the platform rebuilds her inputs exactly | not validated: shown as weak evidence |
+| Early deterioration (6 h) | Harnoor; retrained on the shared data (1.1.0) | patients at home | the hand-over (1.0.0) scored 0.51 on the shared data; retrained with `models/training/early_deterioration/train.py`: cross-validated AUROC 0.98 (0.79 on the real MIMIC patients) | validated: a high score can raise an alert |
 
 `make model-check` checks every plug-in against [models/CONTRACT.md](models/CONTRACT.md) and that the platform builds
 the same inputs each model was trained on. The model cards explain the limits.

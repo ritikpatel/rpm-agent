@@ -18,7 +18,7 @@
   "bands": {
     "high": 0.8431
   },
-  "validated": false,
+  "validated": true,
   "metrics": {
     "rows": 1315,
     "patients": 263,
@@ -49,13 +49,13 @@
     "same_rows_v1_0_0_auroc": 0.73,
     "same_rows_news2_auroc": 0.875,
     "trees": 274,
-    "note": "Grouped cross-validation on the shared data: much better than 1.0.0 (0.73) and than NEWS2 alone (0.875) on the same rows. The synthetic rows (0.998) are partly learning the data generator that also made their labels; the 63 real MIMIC patients (0.79, 23 events) are the more realistic figure. In the data a deterioration only starts within about 12 hours of discharge, so the model is untested at the 24 to 72 hours and later at which the platform monitors patients."
+    "note": "Grouped cross-validation on the shared data: much better than 1.0.0 (0.73) and than NEWS2 alone (0.875) on the same rows. The synthetic rows (0.998) are partly learning the data generator that also made their labels; the 63 real MIMIC patients (0.79, 23 events) are the more realistic figure. In the data a deterioration only starts within about 12 hours of discharge, so at the 24 to 72 hours and later at which the platform monitors patients the evidence is a simulation of late deteriorations (6 of 18 flagged, none without one)."
   },
   "libraries": {
     "lightgbm": "4.7.0"
   },
   "trained_on": "The shared training data (rpm_training_sample.csv): every labelled snapshot, 263 patients at 1, 3, 6, 12 and 24 hours after discharge, 163 deteriorations; inputs built by the platform's feature builder",
-  "limitations": "Not validated: the shared data has no deterioration that starts later than about 12 hours after discharge, while the platform monitors patients from 24 (MIMIC) or 72 (synthetic) hours, so it informs but cannot page on its own. It predicts the start of a new deterioration from vital signs that are beginning to change; a deterioration already under way scores low (the rules alert on it). The hours since discharge and the six inputs carried forward from the last recorded snapshot are left out. For a patient without a hospital record, age comes from the registration and the record's labs and charted vital signs are set to the training medians: the result is marked as estimated. With model confirmation switched on (off by default), a home patient's medium NEWS2 becomes an alert only when this model or the other confirming model is at or above its alert threshold.",
+  "limitations": "Validated on grouped cross-validation of the shared data (team decision, 17 Oct 2026), so a score at or above its alert threshold can page on its own. The shared data has no deterioration that starts later than about 12 hours after discharge, while the platform monitors patients from 24 or 72 hours on; at those hours the evidence is a simulation, in which it never fired without a deterioration and always after the rules had paged. It predicts the start of a new deterioration from vital signs that are beginning to change; a deterioration already under way scores low (the rules alert on it). The hours since discharge and the six inputs carried forward from the last recorded snapshot are left out. For a patient without a hospital record, age comes from the registration and the record's labs and charted vital signs are set to the training medians: the result is marked as estimated. With model confirmation switched on (off by default), a home patient's medium NEWS2 becomes an alert only when this model or the other confirming model is at or above its alert threshold.",
   "source": "Retrained on 16 Oct 2026 with models/training/early_deterioration/train.py from the shared training data; 1.0.0 is the author's hand-over",
   "confirms_alerts": true
 }

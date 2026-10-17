@@ -143,7 +143,7 @@ function Console({ me }: { me: Me }) {
         <div className="brand"><h1><a href="#/" style={{ color: "inherit" }}>RPM Console</a></h1>
           <span className="muted small"><span className={`live-dot${up ? " on" : ""}`} /> {up ? "live" : "reconnecting"}</span>
         </div>
-        <span className="muted small">Synthetic data · decision support, not a diagnosis</span>
+        <span className="muted small">Decision support, not a diagnosis</span>
         <div className="spacer" />
         {me.can.audit && <a href="#/audit" className="small">Audit trail</a>}
         <UserMenu me={me} />

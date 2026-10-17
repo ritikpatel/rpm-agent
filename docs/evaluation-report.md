@@ -33,8 +33,8 @@ each owner's held-out result; the next two were measured on the platform from th
 | Early deterioration, 6 h (Harnoor) | AUROC 0.92, AUPRC 0.63, on a 300-patient file not in the hand-over | Partly: the platform has no activity, steps or patient-reported scores, so those are carried forward from the record | AUROC 0.51 on the shared data with its own columns; 0.75 on the MIMIC snapshots through the platform's features |
 
 Recovery monitoring has held-out evidence on the data the platform runs on, so it is marked validated: a high score
-can raise an alert. Readmission risk has too few events (ten readmissions in all) and early deterioration does not
-hold up on the shared data, so both are marked `validated: false`: labelled as weak evidence in the console and to
+can raise an alert. Readmission risk has too few events (ten readmissions in all) and the handed-over early
+deterioration (1.0.0) does not hold up on the shared data, so both were marked `validated: false`: labelled as weak evidence in the console and to
 the agents, and they cannot page anyone.
 
 **Early deterioration retrained (1.1.0, 16 October).** `models/training/early_deterioration/train.py` refits it on
@@ -53,8 +53,9 @@ At its threshold (84%, chosen to catch 70% of deteriorations) it raised no false
 the data holds no deterioration that starts after 12 hours, and the platform monitors patients from 24 to 72 hours
 on, it was also tested on simulated late deteriorations: it crossed its threshold for 6 of 18 (3 of 3 sepsis, 2 of 3
 heart failure, 1 of 3 COPD; none of the low-oxygen or heart-rhythm cases), never for the 8 patients without one, and
-always after the rules had paged. It therefore stays `validated: false`: it informs clinicians and agents and
-cannot page on its own. The model card has the details.
+always after the rules had paged. On the strength of the cross-validation the team marked it validated (17
+October): a score at or above its threshold can page on its own, and the agents treat it as evidence. The model
+card has the details.
 
 Two cautions:
 

@@ -130,7 +130,7 @@ The models are configuration (`RPM_MODEL_FAST`, `RPM_MODEL_REASONING`).
 | Real-time patient monitoring | IoT Core → SQS → stream processor → console | Full |
 | Agentic AI clinical monitoring engine | Agent service, four agents | Full |
 | Early warning and alert system | Alert rules, Care API escalation, console and e-mail to the care team's own mailboxes | Full; no SMS (blocked on the Free plan) |
-| Predictive risk modelling | Risk service with the team's three LightGBM models as plug-ins | Recovery monitoring validated; early deterioration retrained on the shared data (AUROC 0.98 cross-validated) but not yet validated at the hours monitored; readmission weak evidence (see the model cards) |
+| Predictive risk modelling | Risk service with the team's three LightGBM models as plug-ins | Recovery monitoring and early deterioration (retrained on the shared data, AUROC 0.98 cross-validated) validated; readmission weak evidence (see the model cards) |
 | FHIR-based integration | HAPI FHIR, subscriptions in, write-back out | Full |
 | RAG-powered clinical summarisation | Summary agent, pgvector, Titan embeddings, citation check | Full |
 | Smart hospital connectivity | Live console, two-way messages to the watch | Messaging; no video |
